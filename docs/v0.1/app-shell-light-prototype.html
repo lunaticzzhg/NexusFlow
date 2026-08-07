@@ -1,0 +1,776 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>Orbit V3</title
+  ><style>
+    :root {
+      --b: #f5f9fc;
+      --c: #ffffff;
+      --c2: #e1eaf3;
+      --priority: #d0e7ff;
+      --t: #0d2b45;
+      --m: #5d82a3;
+      --a: #9ae44b;
+      --s: #007fc4;
+      --l: #c5d8e9;
+      --shadow: 0 4px 12px rgb(13 43 69 / 5%);
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 10% 0, #e0f2ff, transparent 50%), var(--b);
+      color: var(--t);
+      font:
+        14px Inter,
+        -apple-system,
+        sans-serif;
+    }
+    .p {
+      width: min(100%, 430px);
+      min-height: 100vh;
+      margin: auto;
+      padding: 18px 18px 92px;
+      background: transparent;
+    }
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+    h1 {
+      font-size: 28px;
+      letter-spacing: -0.05em;
+    }
+    h2 {
+      font-size: 19px;
+    }
+    .e {
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      color: var(--m);
+      text-transform: uppercase;
+    }
+    .top,
+    .head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .card {
+      margin-top: 12px;
+      padding: 16px;
+      border: 1px solid var(--l);
+      border-radius: 20px;
+      background: var(--c);
+      box-shadow: var(--shadow);
+      color: var(--t);
+      text-align: left;
+    }
+    .row {
+      display: flex;
+      gap: 9px;
+      align-items: center;
+    }
+    .muted {
+      margin-top: 5px;
+      color: var(--m);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .tag {
+      display: inline-block;
+      padding: 5px 8px;
+      border-radius: 99px;
+      background: rgb(0 127 196 / 10%);
+      color: var(--s);
+      font-size: 10px;
+    }
+    .chip {
+      border: 1px solid var(--l);
+      border-radius: 99px;
+      padding: 7px 9px;
+      background: var(--c2);
+      color: var(--t);
+      font-size: 11px;
+    }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    button {
+      font: inherit;
+      cursor: pointer;
+      border: 0;
+    }
+    .primary,
+    .secondary {
+      width: 100%;
+      padding: 14px;
+      margin-top: 14px;
+      border-radius: 14px;
+      font-weight: 800;
+    }
+    .primary {
+      background: var(--a);
+      color: #132b17;
+    }
+    .secondary {
+      background: var(--c2);
+      color: var(--t);
+      border: 1px solid var(--l);
+    }
+    .link,
+    .back {
+      padding: 0;
+      background: none;
+      color: var(--s);
+      font-size: 12px;
+    }
+    .back {
+      margin: 0 0 17px;
+    }
+    .nav {
+      position: fixed;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(100%, 430px);
+      height: 76px;
+      display: flex;
+      justify-content: space-around;
+      padding: 10px 22px 16px;
+      background: #ffffff;
+      border-top: 1px solid var(--l);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 -4px 16px rgb(13 43 69 / 4%);
+    }
+    .nav button {
+      display: grid;
+      gap: 4px;
+      place-items: center;
+      background: none;
+      color: var(--m);
+      font-size: 10px;
+    }
+    .nav b {
+      font-size: 18px;
+    }
+    .nav .on {
+      color: var(--t);
+    }
+    .nav .on b {
+      color: var(--a);
+    }
+    .view {
+      display: none;
+    }
+    .view.on {
+      display: block;
+    }
+    .op {
+      width: 100%;
+    }
+    .state {
+      float: right;
+      color: var(--a);
+      font-size: 10px;
+    }
+    .state.run {
+      color: var(--s);
+    }
+    .bubble {
+      max-width: 84%;
+      padding: 12px;
+      margin-top: 12px;
+      border-radius: 16px;
+      background: var(--c2);
+      line-height: 1.45;
+    }
+    .bubble.me {
+      margin-left: auto;
+      background: var(--a);
+      color: #132b17;
+    }
+    .condition {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 16px;
+    }
+    .plan {
+      padding: 17px;
+    }
+    .plan .time {
+      display: flex;
+      justify-content: space-between;
+      padding: 13px 0;
+      margin: 14px 0;
+      border-top: 1px solid var(--l);
+      border-bottom: 1px solid var(--l);
+      color: var(--m);
+      font-size: 11px;
+    }
+    .plan .time b {
+      display: block;
+      color: var(--t);
+      font-size: 13px;
+    }
+    .reason {
+      padding: 7px 0;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .reason i {
+      color: var(--a);
+      font-style: normal;
+    }
+    .sheet {
+      position: fixed;
+      bottom: 0;
+      left: 50%;
+      transform: translate(-50%, 110%);
+      width: min(100%, 430px);
+      padding: 16px 18px 25px;
+      border-radius: 25px 25px 0 0;
+      background: #fbfdff;
+      border: 1px solid var(--l);
+      transition: 0.2s;
+      z-index: 3;
+    }
+    .sheet.on {
+      transform: translate(-50%, 0);
+    }
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #0b254a66;
+      z-index: 2;
+    }
+    .overlay.on {
+      display: block;
+    }
+    .check {
+      padding: 12px;
+      margin-top: 10px;
+      border: 1px solid var(--l);
+      border-radius: 14px;
+    }
+    .check button {
+      float: right;
+      border-radius: 99px;
+      padding: 4px 8px;
+      background: var(--a);
+      color: #132b17;
+    }
+    .trace {
+      padding: 11px 0;
+      border-bottom: 1px solid var(--l);
+    }
+    .trace:last-child {
+      border: 0;
+    }
+    .ok {
+      color: var(--a);
+    }
+    .toast {
+      position: fixed;
+      z-index: 5;
+      top: 18px;
+      left: 50%;
+      transform: translate(-50%, -160%);
+      width: min(390px, 90%);
+      padding: 12px;
+      border-radius: 13px;
+      background: #e1f0fc;
+      transition: 0.2s;
+    }
+    .toast.on {
+      transform: translate(-50%, 0);
+    }
+    input {
+      width: 100%;
+      padding: 13px;
+      border: 1px solid var(--l);
+      border-radius: 13px;
+      background: #ffffff;
+      color: var(--t);
+      outline: 0;
+    }
+    .input {
+      display: flex;
+      gap: 7px;
+      margin-top: 16px;
+    }
+    .input button {
+      width: 40px;
+      border-radius: 13px;
+      background: var(--a);
+    }
+    @media (min-width: 600px) {
+      .p {
+        min-height: 880px;
+        margin: 20px auto;
+        border: 12px solid #ffffff;
+        border-radius: 35px;
+        box-shadow: 0 30px 80px rgb(13 43 69 / 15%);
+      }
+      .nav {
+        bottom: 20px;
+      }
+    }
+    #home .head + .card { background:linear-gradient(135deg, #b8dcff, #d9ebff); border-color:#92c5f7; }
+    .why { margin-top:10px; padding:10px; border-left:2px solid var(--s); background:#e0f2ff; border-radius:0 10px 10px 0; color:#244f73; font-size:12px; line-height:1.45; }
+    .signal { display:flex; justify-content:space-between; gap:9px; padding:11px 0; border-bottom:1px solid var(--l); }
+    .signal:last-child { border:0; }
+    .signal small { color:var(--m); display:block; margin-top:3px; }
+    .warn { color:#a95600; font-size:11px; margin-top:8px; line-height:1.4; }
+    .field { margin-top:11px; }
+    .field label { display:block; margin-bottom:5px; color:var(--m); font-size:11px; }
+    .field input { padding:10px; }
+    .choice { border-color:#007fc4aa; color:#0d3b61; }
+    .action-off { opacity:.48; }
+  </style>
+  <main class="p">
+    <div id="toast" class="toast"></div>
+    <section id="welcome" class="view">
+      <div class="e">欢迎使用 Orbit</div>
+      <h1 style="margin-top: 8px">先找到你的生活亮点</h1>
+      <p class="muted">不用填写长问卷。先选几个兴趣，之后随时可调整。</p>
+      <button class="card op" data-go="home">
+        <span class="tag">第 1 步</span>
+        <h3 style="margin-top: 10px">我喜欢英超、电影和城市活动</h3>
+        <p class="muted">可跳过，Orbit 会在聊天中继续学习。</p></button
+      ><button class="primary" data-go="home">开始探索</button>
+    </section>
+    <section id="home" class="view on">
+      <header class="top">
+        <div>
+          <div class="e">8 月 5 日 · 周二</div>
+          <h1>今天有什么亮点？</h1>
+        </div>
+        <button class="chip" data-go="prefs">偏好</button>
+      </header>
+      <div class="head" style="margin-top: 23px">
+        <h2>需要你处理</h2>
+        <button class="link" data-go="tasks">查看全部</button>
+      </div>
+      <button class="card op" data-go="plan">
+        <span class="state">等待审批</span>
+        <h3>利物浦观赛夜</h3>
+        <p class="muted">创建日历事件与赛前提醒 · 现在处理</p>
+      </button>
+      <div class="head" style="margin-top: 24px">
+        <h2>为你准备的一件事</h2>
+        <button class="link" data-toast="每天最多推送一条高质量机会。">为什么？</button>
+      </div>
+      <button class="card op" id="dailyInvite">
+        <span class="tag">本周值得关注</span>
+        <h3 style="margin-top: 10px">这场利物浦比赛正好避开你的日历</h3>
+        <p class="muted">聊聊后，我可以准备轻松在家版和外出观赛版。</p>
+      </button>
+      <div class="head" style="margin-top: 24px">
+        <h2>本周安排</h2>
+        <button class="link" data-toast="原型演示：这里会打开系统日历。">
+          日历
+        </button>
+      </div>
+      <div class="card">
+        <b>周六 19:00</b>
+        <p class="muted">待确认 · 利物浦观赛夜 · 预计 ¥180</p>
+      </div>
+      <div class="head" style="margin-top: 24px">
+        <h2>发现的新机会</h2>
+        <button class="link" data-go="chat">告诉 Orbit</button>
+      </div>
+      <button id="matchOpportunity" class="card op" data-go="opportunity">
+        <span class="tag">英超 · 2 小时前更新</span>
+        <h3 style="margin-top: 10px">主队焦点战</h3>
+        <p class="muted">周六晚可看，没有与你的现有日程冲突。</p></button
+      ><button id="movieOpportunity" class="card op" data-go="opportunity">
+        <span class="tag">电影 · 今天更新</span>
+        <h3 style="margin-top: 10px">《星际回声》IMAX</h3>
+        <p class="muted">符合科幻偏好，预计通勤 25 分钟。</p>
+      </button>
+    </section>
+    <section id="opportunity" class="view">
+      <button class="back" data-go="home">← 首页</button>
+      <div id="opportunityContent"></div>
+    </section>
+    <section id="chat" class="view">
+      <button class="back" data-go="home">← 首页</button>
+      <div class="e">新建计划</div>
+      <h1>和 Orbit 聊聊</h1>
+      <p class="muted">每次对话从新需求开始；长期偏好只作为可采纳建议。</p>
+      <div class="condition">
+        <h3>本次条件</h3>
+        <button id="clear" class="link">清空</button>
+      </div>
+      <div id="conditions" class="chips">
+        <span class="muted">还没有确认条件。</span>
+      </div>
+      <div class="condition">
+        <h3>Orbit 的建议</h3>
+        <span class="muted">长期偏好</span>
+      </div>
+      <div class="chips">
+        <button class="chip" data-suggest="常用预算 ¥300">
+          采用常用预算 ¥300</button
+        ><button class="chip" data-suggest="通勤 25 分钟内">
+          采用低通勤偏好
+        </button>
+      </div>
+      <div id="messages">
+        <div class="bubble">这次最想做什么？我会只追问影响安排的必要信息。</div>
+        <div class="chips">
+          <button class="chip" data-mode="在家看">在家看</button>
+          <button class="chip" data-mode="去酒吧">去酒吧</button>
+          <button class="chip" data-mode="都准备">都准备</button>
+        </div>
+      </div>
+      <button id="generate" class="primary" style="display: none">
+        生成 3 个方案
+      </button>
+      <div class="input">
+        <input id="say" placeholder="例如：周末想看利物浦比赛" /><button
+          id="send"
+        >
+          ↑
+        </button>
+      </div>
+    </section>
+    <section id="plan" class="view">
+      <button class="back" data-go="tasks">← 任务</button>
+      <div class="e">任务 #ORBIT-0812</div>
+      <h1>你的周末，有了亮点</h1>
+      <div class="chips">
+        <button class="chip" data-plan="0">Plan A · 最匹配</button
+        ><button class="chip" data-plan="1">Plan B · 更轻松</button
+        ><button class="chip" data-plan="2">Plan C · 新体验</button>
+      </div>
+      <article id="planCard" class="card plan"></article>
+    </section>
+    <section id="tasks" class="view">
+      <div class="e">任务中心</div>
+      <h1>正在为你处理</h1>
+      <div class="condition"><h3>需要你处理</h3></div>
+      <button class="card op" data-go="plan">
+        <span class="state">等待审批</span>
+        <h3>利物浦观赛夜</h3>
+        <p class="muted">确认日历与提醒</p>
+      </button>
+      <div class="condition"><h3>进行中</h3></div>
+      <button class="card op" data-go="detail">
+        <span class="state run">正在校验</span>
+        <h3>安排下周末</h3>
+        <p class="muted">正在检查赛事、电影与空闲时间</p>
+      </button>
+      <div class="condition"><h3>已完成</h3></div>
+      <button class="card op" data-go="detail">
+        <span class="state run">已完成</span>
+        <h3>上周末电影计划</h3>
+        <p class="muted">日历和提醒已创建</p>
+      </button>
+    </section>
+    <section id="detail" class="view">
+      <button class="back" data-go="tasks">← 任务</button>
+      <div class="e">进行中</div>
+      <h1>安排下周末</h1>
+      <div class="card">
+        <div class="trace">
+          <b class="ok">✓ 已创建任务</b>
+          <p class="muted">想轻松安排，不要太远</p>
+        </div>
+        <div class="trace">
+          <b class="ok">✓ 已确认本次条件</b>
+          <p class="muted">低通勤 · 预算 ¥300</p>
+        </div>
+        <div class="trace">
+          <b>● 正在查询活动</b>
+          <p class="muted">等待赛事和电影场次数据</p>
+        </div>
+      </div>
+      <button class="secondary" data-toast="已安排后台重试；网络恢复后会继续。">
+        稍后重试
+      </button>
+    </section>
+    <section id="prefs" class="view">
+      <button class="back" data-go="home">← 首页</button>
+      <div class="e">长期偏好与授权</div>
+      <h1>让 Orbit 更懂你</h1>
+      <div class="card">
+        <h3>长期偏好</h3>
+        <p class="muted">英超 · 科幻电影 · 单次预算 ¥300 · 低通勤</p>
+        <button class="secondary" data-toast="原型演示：这里可编辑长期偏好。">
+          编辑偏好
+        </button>
+      </div>
+      <div class="card">
+        <div class="head"><h3>画像证据</h3><span class="tag">可撤销</span></div>
+        <p class="muted">只有确认过的偏好会成为长期默认；行为信号先只用于排序。</p>
+        <div id="profileSignals"></div>
+      </div>
+      <div class="card">
+        <h3>授权</h3>
+        <p class="muted">日历：未授权 · 通知：已开启 · 位置：未授权</p>
+        <button id="grantCalendar"
+          class="secondary"
+          data-toast="原型演示：这里会进入系统授权设置。"
+        >
+          管理授权
+        </button>
+      </div>
+    </section>
+  </main>
+  <nav class="nav">
+    <button class="on" data-go="home"><b>⌂</b>首页</button
+    ><button data-go="chat"><b>◌</b>聊聊</button
+    ><button data-go="tasks"><b>≋</b>任务</button
+    ><button data-go="prefs"><b>◒</b>偏好</button>
+  </nav>
+  <div id="overlay" class="overlay"></div>
+  <aside id="sheet" class="sheet">
+    <div class="e">审批后执行</div>
+    <h2>确认安排</h2>
+    <p class="muted">Orbit 不会自动写入日历。</p>
+    <div class="field"><label>日历事件标题</label><input id="eventTitle" value="利物浦观赛夜" /></div>
+    <div class="field"><label>开始时间</label><input id="eventTime" value="周六 18:30–23:15" /></div>
+    <div class="check">
+      ▣ 创建日历事件 <button data-toggle="cal">开启</button>
+      <p class="muted">利物浦观赛夜 · 周六 18:30–23:15</p>
+    </div>
+    <div class="check">
+      ◷ 创建赛前提醒 <button data-toggle="rem">开启</button>
+      <p class="muted">周六 19:00</p>
+    </div>
+    <button id="approve" class="primary">批准并安排</button
+    ><button id="reject" class="secondary">拒绝此计划</button
+    ><button
+      id="defer"
+      class="link"
+      style="margin: 14px auto 0; display: block"
+    >
+      稍后处理
+    </button>
+  </aside>
+  <div id="result" class="sheet">
+    <div class="e">执行结果</div>
+    <h2>已为你安排</h2>
+    <div class="check">
+      <b class="ok">✓ 日历事件已创建</b>
+      <p class="muted">利物浦观赛夜 · 周六 18:30</p>
+    </div>
+    <div class="check">
+      <b class="ok">✓ 赛前提醒已创建</b>
+      <p class="muted">周六 19:00</p>
+    </div>
+    <button class="primary" data-toast="原型演示：这里会打开日历事件。">
+      打开日历</button
+    ><button class="secondary" data-go="tasks">查看任务</button>
+  </div>
+  <script>
+    const $ = (s) => document.querySelector(s),
+      $$ = (s) => document.querySelectorAll(s);
+    let cs = [],
+      pi = 0,
+      cal = 1,
+      rem = 1;
+    const plans = [
+      [
+        "⚽ 利物浦观赛夜",
+        "最匹配",
+        "主队焦点战 · 在家观赛 + 附近晚餐",
+        "¥180",
+        "你关注利物浦，且不占用周日下午。",
+      ],
+      [
+        "🍿 轻松观影夜",
+        "更轻松",
+        "《星际回声》IMAX · 步行可达",
+        "¥128",
+        "只需 12 分钟通勤，保留周末白天。",
+      ],
+      [
+        "✨ 电影 + 夜间展览",
+        "新体验",
+        "一项新体验，仍满足预算和时间限制",
+        "¥260",
+        "符合你的惊喜设置，活动数据将在周六更新。",
+      ],
+    ];
+    function toast(x) {
+      let t = $("#toast");
+      t.textContent = x;
+      t.classList.add("on");
+      setTimeout(() => t.classList.remove("on"), 2200);
+    }
+    function go(x) {
+      $$(".view").forEach((v) => v.classList.toggle("on", v.id === x));
+      $$(".nav button").forEach((v) =>
+        v.classList.toggle("on", v.dataset.go === x),
+      );
+      close();
+    }
+    function close() {
+      $("#sheet").classList.remove("on");
+      $("#result").classList.remove("on");
+      $("#overlay").classList.remove("on");
+    }
+    function renderC() {
+      $("#conditions").innerHTML = cs.length
+        ? cs
+            .map(
+              (x, i) => `<button class="chip" data-del="${i}">${x} ×</button>`,
+            )
+            .join("")
+        : '<span class="muted">还没有确认条件。</span>';
+      $$("[data-del]").forEach(
+        (b) =>
+          (b.onclick = () => {
+            cs.splice(+b.dataset.del, 1);
+            renderC();
+          }),
+      );
+    }
+    function renderP() {
+      let p = plans[pi];
+      $("#planCard").innerHTML =
+        `<div class="head"><h2>${p[0]}</h2><span class="tag">${p[1]}</span></div><p class="muted">${p[2]}</p><div class="time"><div><b>${["18:30","18:40","17:50"][pi]}</b>开始</div><div><b>${["20:00 开球","19:10 电影","19:10 电影"][pi]}</b>重点活动</div><div><b>${["23:15","21:45","22:50"][pi]}</b>结束</div></div><div class="reason"><i>✓</i>预计预算 ${p[3]} · 通勤 ${["22","12","18"][pi]} 分钟 · 时间与日程不冲突。</div><div class="reason"><i>✓</i>${p[4]}</div><p class="muted">来源：${["模拟赛程 / 餐饮数据","模拟电影场次","模拟电影 / 活动数据"][pi]} · 有效至周六 ${["18:00","17:00","16:00"][pi]}。</p><div class="why">批准后将创建明确的日历/提醒动作；执行前会再次校验数据时效与权限。</div><button id="choose" class="primary">选择并审批</button><button id="savePlan" class="secondary">收藏方案</button><button id="regenerate" class="secondary">换个方向生成</button>`;
+      $("#choose").onclick = () => {
+        $("#overlay").classList.add("on");
+        $("#sheet").classList.add("on");
+      };
+      $("#planCard")
+        .querySelectorAll("[data-go]")
+        .forEach((b) => (b.onclick = () => go(b.dataset.go)));
+      $("#savePlan").onclick = () => toast("已收藏；这会成为未来排序的轻量信号。");
+      $("#regenerate").onclick = () => { go("chat"); toast("告诉我想更省钱、更轻松还是更多新鲜感。"); };
+    }
+    $$("[data-go]").forEach((b) => (b.onclick = () => go(b.dataset.go)));
+    $$("[data-toast]").forEach(
+      (b) => (b.onclick = () => toast(b.dataset.toast)),
+    );
+    $$("[data-plan]").forEach(
+      (b) =>
+        (b.onclick = () => {
+          pi = +b.dataset.plan;
+          renderP();
+        }),
+    );
+    $$("[data-suggest]").forEach(
+      (b) =>
+        (b.onclick = () => {
+          if (!cs.includes(b.dataset.suggest)) cs.push(b.dataset.suggest);
+          renderC();
+          toast("已采纳为本次条件。");
+        }),
+    );
+    $("#clear").onclick = () => {
+      cs = [];
+      renderC();
+    };
+    function send() {
+      let x = $("#say").value.trim();
+      if (!x) return toast("先告诉 Orbit 你的想法。");
+      if (x.includes("周末")) cs.push("本周末");
+      if (x.includes("利物浦")) cs.push("想看利物浦比赛");
+      cs = [...new Set(cs)];
+      renderC();
+      $("#messages").insertAdjacentHTML(
+        "beforeend",
+        `<div class="bubble me">${x}</div><div class="bubble">你更想在家看、去酒吧，还是都准备？预算需要设上限吗？</div>`,
+      );
+      $("#say").value = "";
+      $("#generate").style.display = "block";
+    }
+    $("#send").onclick = send;
+    $("#say").onkeydown = (e) => e.key === "Enter" && send();
+    $("#generate").onclick = () =>
+      cs.length ? go("plan") : toast("先确认至少一个本次条件。");
+    $$("[data-toggle]").forEach(
+      (b) =>
+        (b.onclick = () => {
+          if (b.dataset.toggle === "cal") cal = !cal;
+          else rem = !rem;
+          b.textContent = (b.dataset.toggle === "cal" ? cal : rem)
+            ? "开启"
+            : "关闭";
+        }),
+    );
+    $("#approve").onclick = () => {
+      if (!cal && !rem) return toast("请至少保留一个执行动作。");
+      $("#sheet").classList.remove("on");
+      $("#result").classList.add("on");
+      $("#result").insertAdjacentHTML("beforeend", `<div class="check" id="feedback"><b>这次安排怎么样？</b><p class="muted">你的反馈会帮助 Orbit 更懂你。</p><div class="chips"><button class="chip" data-feedback="很满意">很满意</button><button class="chip" data-feedback="下次少通勤">下次少通勤</button><button class="chip" data-feedback="不喜欢这种安排">不喜欢这种安排</button></div></div>`);
+      $$("[data-feedback]").forEach((b) => b.onclick = () => { $("#feedback").innerHTML = `<b class="ok">✓ 感谢反馈</b><p class="muted">Orbit 会在下一次推荐时参考这次选择。</p>`; toast("已记录你的反馈。"); });
+    };
+    $("#dailyInvite").onclick = () => { go("chat"); $("#say").value = "周六利物浦焦点战"; toast("已带入机会，请选择你更喜欢的方式。"); };
+    $$("[data-mode]").forEach((b) => b.onclick = () => { cs.push(b.dataset.mode); cs = [...new Set(cs)]; renderC(); $("#generate").style.display = "block"; toast("已加入本次条件。"); });
+    $("#reject").onclick = () => {
+      close();
+      go("tasks");
+      toast("已拒绝，Orbit 会参考这次反馈。");
+    };
+    $("#defer").onclick = () => {
+      close();
+      toast("已保留为待处理任务。");
+    };
+    $("#overlay").onclick = close;
+    // Prototype safety net: no visible control should feel broken.
+    $$('button').forEach((button) => {
+      if (!button.onclick && !button.dataset.go && !button.dataset.toast && !button.dataset.plan && !button.dataset.suggest && !button.dataset.mode) {
+        button.onclick = () => toast(`原型演示：${button.textContent.trim() || "此操作"} 已响应。`);
+      }
+    });
+    $$('button').forEach((button) => {
+      const label = button.textContent.trim();
+      if (label === '编辑偏好') button.onclick = () => { button.textContent = '保存偏好'; button.parentElement.querySelector('p').textContent = '编辑中：英超 · 科幻电影 · 单次预算 ¥300 · 低通勤'; toast('现在可在正式 App 中编辑兴趣、预算和通勤。'); };
+      if (label === '删除此推断') button.onclick = () => { button.parentElement.querySelector('p').textContent = '已删除“低通勤”画像推断；之后不会将它作为默认排序依据。'; button.textContent = '已删除'; button.disabled = true; toast('画像推断已删除。'); };
+      if (label === '管理授权') button.onclick = () => { button.parentElement.querySelector('p').textContent = '日历：已授权 · 通知：已开启 · 位置：未授权（点击后可在系统设置调整）'; button.textContent = '已更新授权'; toast('授权状态已更新。'); };
+      if (label === '不感兴趣' || label === '少推荐此类') button.onclick = () => { button.parentElement.style.display = 'none'; toast(label === '不感兴趣' ? '已隐藏这条机会。' : '之后会降低此类机会的推荐频率。'); };
+      if (label === '收藏方案') button.onclick = () => { button.textContent = '已收藏'; button.disabled = true; toast('方案已收藏，可在任务中回看。'); };
+      if (label === '换个方向生成') button.onclick = () => { toast('已创建新任务：将按“更轻松”的方向重新生成。'); go('tasks'); };
+    });
+    // Learning-loop overrides: opportunity context, transparent profile evidence,
+    // and action-level execution results replace the original demo-only shortcuts.
+    const orbitOpportunities = {
+      match: { domain: "英超", title: "利物浦焦点战", source: "模拟赛程 · 2 小时前更新", time: "周六 20:00 开球 · 数据有效至周六 18:00", context: "想看利物浦比赛", now: "本周唯一主队焦点战，且不会占用周日下午。", you: "你已确认英超兴趣；最近 3 次选择也偏好周六晚。" },
+      movie: { domain: "电影", title: "《星际回声》IMAX", source: "模拟电影场次 · 今天更新", time: "周六 19:10 · 通勤 12 分钟 · 数据有效至周六 17:00", context: "想看科幻电影", now: "本周末只剩两场适合时段，离常选影院较近。", you: "科幻电影是已确认偏好；低通勤目前只是排序建议。" }
+    };
+    let orbitCalendar = false, orbitReminder = true, orbitFeedback = "";
+    function showOpportunity(key) {
+      const o = orbitOpportunities[key];
+      $("#opportunityContent").innerHTML = `<div class="e">发现机会 · ${o.domain}</div><h1>${o.title}</h1><div class="card"><span class="tag">${o.source}</span><p class="muted">${o.time}</p><div class="why"><b>为什么是现在</b><br>${o.now}</div><div class="why"><b>为什么推荐给你</b><br>${o.you}</div></div><button id="talkOpportunity" class="primary">围绕它聊聊</button><div class="chips"><button class="chip" data-op-feedback="感兴趣">感兴趣</button><button class="chip" data-op-feedback="不感兴趣">不感兴趣</button><button class="chip" data-op-feedback="这周静默">这周不想收到</button></div>`;
+      $("#talkOpportunity").onclick = () => { cs = [o.context + " · 来自机会", "本周六晚 · 来自机会"]; renderC(); go("chat"); toast("机会已带入本次条件；你可以编辑或删除。"); };
+      $$('[data-op-feedback]').forEach(b => b.onclick = () => toast(b.dataset.opFeedback === "这周静默" ? "本周暂停主动推荐，不会影响长期兴趣。" : "已记录为轻量反馈。"));
+      go("opportunity");
+    }
+    $("#matchOpportunity").onclick = () => showOpportunity("match");
+    $("#movieOpportunity").onclick = () => showOpportunity("movie");
+    $("#dailyInvite").onclick = () => showOpportunity("match");
+    $("#grantCalendar").onclick = () => { orbitCalendar = true; $("#grantCalendar").textContent = "日历已授权"; $("#grantCalendar").parentElement.querySelector("p").textContent = "日历：已授权 · 通知：已开启 · 位置：未授权"; toast("日历授权已更新；之后可在审批中开启日历事件。"); };
+    function renderProfile() {
+      $("#profileSignals").innerHTML = `<div class="signal"><div><b>低通勤建议</b><small>近 30 天 4 次最终选择均 ≤25 分钟</small><small>置信度中 · 仅影响排序</small></div><button id="removeInference" class="link">删除</button></div><div class="signal"><div><b>科幻电影兴趣</b><small>你在偏好中明确确认</small><small>长期偏好</small></div></div>${orbitFeedback ? `<div class="signal"><div><b>最近反馈：${orbitFeedback}</b><small>仅影响未来排序，尚未写入长期画像</small></div></div>` : ""}`;
+      $("#removeInference").onclick = () => { $("#removeInference").parentElement.remove(); toast("已删除推断；之后不会将它作为默认排序依据。"); };
+    }
+    $("#approve").onclick = () => {
+      if (!orbitCalendar && !orbitReminder) return toast("请至少保留一个可执行动作。");
+      $("#sheet").classList.remove("on"); $("#result").classList.add("on");
+      const title = $("#eventTitle").value, time = $("#eventTime").value;
+      $("#result").innerHTML = `<div class="e">执行结果 · ${orbitCalendar ? "已完成" : "部分成功"}</div><h2>${orbitCalendar ? "已为你安排" : "提醒已创建，日历待处理"}</h2>${orbitCalendar ? `<div class="check"><b class="ok">✓ 日历事件已创建</b><p class="muted">${title} · ${time}</p></div>` : `<div class="check"><b class="warn">! 日历事件未创建</b><p class="muted">日历未授权；在偏好页授权后可重试。</p></div>`}${orbitReminder ? `<div class="check"><b class="ok">✓ 提醒已创建</b><p class="muted">活动前 60 分钟</p></div>` : ""}<div class="check" id="orbitFeedback"><b>这次安排怎么样？</b><p class="muted">反馈先影响未来排序；证据足够时才会建议保存为长期偏好。</p><div class="chips"><button class="chip" data-result-feedback="很满意">很满意</button><button class="chip" data-result-feedback="下次少通勤">下次少通勤</button><button class="chip" data-result-feedback="不喜欢这种安排">不喜欢这种安排</button></div></div><button class="primary" id="resultTasks">查看任务</button>`;
+      $$('[data-result-feedback]').forEach(b => b.onclick = () => { orbitFeedback = b.dataset.resultFeedback; $("#orbitFeedback").innerHTML = `<b class="ok">✓ 已记录：${orbitFeedback}</b><p class="muted">这会影响未来推荐，不会自动修改长期偏好。</p>`; renderProfile(); });
+      $("#resultTasks").onclick = () => go("tasks");
+    };
+    // Keep existing action controls but make their current limitation explicit.
+    $$('[data-toggle]').forEach(b => b.onclick = () => { if (b.dataset.toggle === "cal" && !orbitCalendar) return toast("日历尚未授权；请在偏好页授权后开启。"); if (b.dataset.toggle === "cal") orbitCalendar = !orbitCalendar; else orbitReminder = !orbitReminder; b.textContent = (b.dataset.toggle === "cal" ? orbitCalendar : orbitReminder) ? "开启" : "关闭"; });
+    renderC(); renderP(); renderProfile();
+  </script>
+</html>

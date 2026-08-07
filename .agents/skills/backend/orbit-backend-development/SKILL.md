@@ -44,7 +44,7 @@ api -> application -> domain <- infrastructure
 orchestrator -> application/domain + ports; never controller
 ```
 
-`domain` 不得依赖 Ktor、SQL、Kafka、HTTP client、模型 SDK 或连接器凭据。`contracts` 不得依赖后端/AI/框架。[可扩展架构](../../../../docs/scalable-backend-ai-architecture.md)中的未来部署单元是拆分触发条件，不是现在把每个 package 都拆成 Gradle 模块的理由。
+`domain` 不得依赖 Ktor、SQL、Kafka、HTTP client、模型 SDK 或连接器凭据。`contracts` 不得依赖后端/AI/框架。未来部署单元只有在独立吞吐、故障域、数据所有权和运行契约真实存在时才拆分，不是现在把每个 package 都拆成 Gradle 模块的理由。
 
 ## Reference 路由
 
@@ -71,6 +71,6 @@ orchestrator -> application/domain + ports; never controller
 
 ## 延伸参考
 
-- [架构方案](../../../../docs/scalable-backend-ai-architecture.md) 与[基建实施顺序](../../../../docs/backend-ai-bootstrap-plan.md)是拓扑和阶段的产品级事实来源。
-- [任务状态机](../../../../docs/task-state-machine.md)是简要产品生命周期事实来源；本 Skill 补充代码层实施约束。
+- [App 技术方案](../../../../docs/v0.1/app-module-technical-plan.md)是模块、接口与交付切片的产品级事实来源。
+- `contracts/task/TaskContracts.kt` 是任务生命周期的可执行事实来源；本 Skill 补充代码层实施约束。
 - [项目可观测性规范](../../../../docs/architecture/observability.md)和[审查证据门禁](../../../../docs/architecture/review-evidence-gate.md)与这些后端 reference 一并适用。

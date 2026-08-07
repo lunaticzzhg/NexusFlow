@@ -19,4 +19,4 @@ AI 停在 `RequestedAction` / 契约 `ActionRequest`。它没有工具 client、
 - 用户编辑会创建新的审批快照/版本；模型不会因提出动作就获得权限。
 - 重新用于规划的工具输出仍是不可信输入。
 
-新增动作类型必须端到端审查：契约 enum/schema、核心提案校验、后端策略、审批展示、执行器幂等、审计字段以及拒绝/重复执行测试。运行时所有权见 [docs/scalable-backend-ai-architecture.md](../../../../../docs/scalable-backend-ai-architecture.md)。
+新增动作类型必须端到端审查：契约 enum/schema、核心提案校验、后端策略、审批展示、执行器幂等、审计字段以及拒绝/重复执行测试。运行时所有权见 [docs/v0.1/app-module-technical-plan.md](../../../../../docs/v0.1/app-module-technical-plan.md)。

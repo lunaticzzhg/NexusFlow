@@ -30,9 +30,9 @@ ROI 是结论的裁决器：先主流程，再高频或高影响的常规边界�
    | Signal | Required reference | Required evidence |
    | --- | --- | --- |
    | API, DTO, HTTP, authentication header, Problem JSON, or `Idempotency-Key` | `orbit-feature-development/references/network-contract.md` | contract, compatibility, and failure mapping |
-   | Job, queue, retry, worker, user/tenant switch, SSE connection, or executor | `../../../docs/architecture/context-runtime.md` | owner, lifecycle, cancellation/retry, and late-result behavior |
-   | List, cache, refresh, pagination, or scoped local data | `orbit-feature-development/references/list-data-lifecycle.md` + `../../../docs/architecture/loading-feedback.md` | scope, key, invalidation, stale-write behavior, and `ListLoadPhase` conformance |
-   | Calendar, notification, permission, system UI, SSE, or deep link | `../../../docs/architecture/platform-capabilities.md` | common/platform boundary, platform constraint, and failure behavior |
+   | Job, queue, retry, worker, user/tenant switch, SSE connection, or executor | `../../../../docs/architecture/context-runtime.md` | owner, lifecycle, cancellation/retry, and late-result behavior |
+   | List, cache, refresh, pagination, or scoped local data | `orbit-feature-development/references/list-data-lifecycle.md` + `../../../../docs/architecture/loading-feedback.md` | scope, key, invalidation, stale-write behavior, and `ListLoadPhase` conformance |
+   | Calendar, notification, permission, system UI, SSE, or deep link | `../../../../docs/architecture/platform-capabilities.md` | common/platform boundary, platform constraint, and failure behavior |
 
 5. Audit every complex class that manages coroutine/Job state, queues, resource closing, a multi-stage state machine, or both persistence and external I/O. For each matched class, complete this card:
 

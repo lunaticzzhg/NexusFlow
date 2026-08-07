@@ -38,6 +38,6 @@ description: 实现或审查 Orbit Kotlin AI 规划代码，包括 PlanningConte
 
 ## 当前基建与演进
 
-当前 `ai/` 包含纯 Kotlin 规划核心：`Planner`、`ModelProvider`、`PlanningPolicy` 和 `DeterministicStubModelProvider`。`backend` 仅可在本地基建中进程内调用。 [docs/scalable-backend-ai-architecture.md](../../../../docs/scalable-backend-ai-architecture.md) 的目标拆分将 Provider 传输/路由移至 `ai-planning-service`；其公开输入/输出保持有边界且 schema 版本化。不要仅为预留拆分而引入网络跳转。
+当前 `ai/` 包含纯 Kotlin 规划核心：`Planner`、`ModelProvider`、`PlanningPolicy` 和 `DeterministicStubModelProvider`。`backend` 仅可在本地基建中进程内调用。未来若因吞吐、隔离或模型路由需求拆出规划服务，其公开输入/输出仍须保持有边界且 schema 版本化；不要仅为预留拆分而引入网络跳转。
 
-仓库级所有权、部署和任务恢复规则见 [docs/backend-ai-bootstrap-plan.md](../../../../docs/backend-ai-bootstrap-plan.md)；横切遥测要求见 [docs/architecture/observability.md](../../../../docs/architecture/observability.md)。
+仓库级模块边界、接口与交付切片见 [docs/v0.1/app-module-technical-plan.md](../../../../docs/v0.1/app-module-technical-plan.md)；横切遥测要求见 [docs/architecture/observability.md](../../../../docs/architecture/observability.md)。

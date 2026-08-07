@@ -27,6 +27,6 @@ Start local infrastructure when Docker is available:
 docker compose up -d
 ```
 
-See [infra/README.md](infra/README.md) for Keycloak, Redpanda and OpenTelemetry local endpoints, and [backend-ai-bootstrap-plan.md](docs/backend-ai-bootstrap-plan.md) for the implementation sequence.
+See [infra/README.md](infra/README.md) for Keycloak, Redpanda and OpenTelemetry local endpoints, and the [v0.1 App technical plan](docs/v0.1/app-module-technical-plan.md) for the implementation sequence.
 
 The KMP module structure is Android-first and can be opened from the repository root in Android Studio.

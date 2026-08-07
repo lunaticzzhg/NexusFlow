@@ -13,7 +13,7 @@ Every learned signal must clearly state whether it affects the current task, the
 ## Visual language
 
 - Android-first mobile shell, 390px-class viewport.
-- Dark calm orbital palette: deep navy page background; charcoal/slate elevated surfaces; off-white primary text; muted blue-grey supporting text; warm lime only for primary approval/success; sky blue for informational source/learning labels; subdued amber for warnings.
+- Orbital dual-tone palette: the dark reference uses deep navy backgrounds, slate surfaces, off-white text, sky-blue information and warm-lime primary actions; the light reference uses a cool mist-white background, blue-grey surface layers, deep navy text, sky-blue information and the same warm-lime primary actions. Preserve the two references' hue relationship and hierarchy. For the light shell, do not use deep navy as a filled surface: use only cool mist-white, blue-grey and sky-blue surface layers, with deep blue reserved for text. Avoid unrelated accent colors and generic white-and-blue dashboard styling.
 - Sans-serif system typography; no decorative or serif fonts.
 - Rounded cards (16–20px), compact chips, 12–24px spacing rhythm, quiet borders, modest shadow only for sheets.
 - Persistent bottom navigation. Approval and feedback use bottom sheets above the shell.
