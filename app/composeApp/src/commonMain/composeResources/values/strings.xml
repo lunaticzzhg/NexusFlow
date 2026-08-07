@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_home_label">Home</string>
+    <string name="app_home_content_description">Open home</string>
+    <string name="app_tasks_label">Tasks</string>
+    <string name="app_tasks_content_description">Open tasks</string>
+    <string name="app_preferences_label">Preferences</string>
+    <string name="app_preferences_content_description">Open preferences</string>
+    <string name="app_home_placeholder_title">Home</string>
+    <string name="app_home_placeholder_body">Home content will be available in a later module.</string>
+    <string name="app_tasks_placeholder_title">Tasks</string>
+    <string name="app_tasks_placeholder_body">Task content will be available in a later module.</string>
+    <string name="app_preferences_placeholder_title">Preferences</string>
+    <string name="app_preferences_placeholder_body">Preference controls will be available in a later module.</string>
+</resources>

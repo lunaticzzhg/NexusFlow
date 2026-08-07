@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_home_label">首页</string>
+    <string name="app_home_content_description">打开首页</string>
+    <string name="app_tasks_label">任务</string>
+    <string name="app_tasks_content_description">打开任务</string>
+    <string name="app_preferences_label">偏好</string>
+    <string name="app_preferences_content_description">打开偏好</string>
+    <string name="app_home_placeholder_title">首页</string>
+    <string name="app_home_placeholder_body">首页内容将在后续模块接入。</string>
+    <string name="app_tasks_placeholder_title">任务</string>
+    <string name="app_tasks_placeholder_body">任务内容将在后续模块接入。</string>
+    <string name="app_preferences_placeholder_title">偏好</string>
+    <string name="app_preferences_placeholder_body">偏好设置将在后续模块接入。</string>
+</resources>
