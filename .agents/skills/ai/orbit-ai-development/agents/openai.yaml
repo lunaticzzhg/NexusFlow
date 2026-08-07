@@ -1,0 +1,6 @@
+interface:
+  display_name: "Orbit AI 开发"
+  short_description: "构建安全、可观测的 Kotlin 规划 AI"
+  default_prompt: "使用 $orbit-ai-development 实现或审查一个有边界的 Orbit 规划改动。"
+policy:
+  allow_implicit_invocation: true

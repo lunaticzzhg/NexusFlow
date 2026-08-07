@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orbit Feature Development"
+  short_description: "Implement and review Orbit KMP feature work"
+  default_prompt: "Use $orbit-feature-development to implement this Orbit KMP feature."

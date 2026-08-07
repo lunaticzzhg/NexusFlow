@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CreateTaskRequest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestText", "timezone"],
+  "properties": {
+    "requestText": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "timezone": {"type": "string", "format": "iana-time-zone"},
+    "conversationId": {"type": "string", "minLength": 1},
+    "sourceDiscoveryId": {"type": "string", "minLength": 1},
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "value", "source"],
+        "properties": {
+          "key": {"type": "string", "minLength": 1},
+          "value": {"type": "string", "minLength": 1},
+          "source": {"type": "string", "enum": ["USER_EXPLICIT", "USER_CONFIRMED_PROFILE"]}
+        }
+      }
+    }
+  }
+}

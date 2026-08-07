@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orbit Code Review"
+  short_description: "Review Orbit changes and choose the smallest safe refactor"
+  default_prompt: "Use $code-review-and-refactoring to review this Orbit change."

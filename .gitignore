@@ -1,0 +1,12 @@
+.DS_Store
+.env
+.idea/
+local.properties
+.gradle/
+**/build/
+**/.kotlin/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.db

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ActionRequest v1",
+  "description": "AI-proposed external action. The task domain assigns any execution idempotency key when persisting it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["actionId", "type", "summary", "requiresApproval"],
+  "properties": {
+    "actionId": {"type": "string", "minLength": 1},
+    "type": {"type": "string", "enum": ["CREATE_CALENDAR_EVENT", "CREATE_REMINDER", "SEND_NOTIFICATION"]},
+    "summary": {"type": "string", "minLength": 1},
+    "requiresApproval": {"type": "boolean"}
+  }
+}

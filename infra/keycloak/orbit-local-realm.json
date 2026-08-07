@@ -1,0 +1,54 @@
+{
+  "realm": "orbit-local",
+  "enabled": true,
+  "displayName": "Orbit Local Development",
+  "registrationAllowed": false,
+  "clients": [
+    {
+      "clientId": "orbit-api",
+      "name": "Orbit API",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false
+    },
+    {
+      "clientId": "orbit-kmp",
+      "name": "Orbit KMP Local",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["orbit://oauth/callback", "http://localhost:*"],
+      "webOrigins": ["http://localhost:*"],
+      "protocolMappers": [
+        {
+          "name": "orbit-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "orbit-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    }
+  ],
+  "roles": {
+    "realm": [
+      { "name": "member", "description": "Default Orbit user" },
+      { "name": "planner", "description": "Can manage shared plans" },
+      { "name": "approver", "description": "Can approve shared actions" },
+      { "name": "admin", "description": "Can administer a tenant" }
+    ]
+  }
+}
