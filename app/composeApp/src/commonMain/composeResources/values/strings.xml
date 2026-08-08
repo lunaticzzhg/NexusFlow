@@ -18,4 +18,26 @@
     <string name="auth_unavailable_title">Unable to sign in</string>
     <string name="auth_retry">Try again</string>
     <string name="auth_logout">Sign out</string>
+    <string name="task_home_heading">YOUR DAY</string>
+    <string name="task_home_title">What could make today brighter?</string>
+    <string name="task_home_subtitle">Start a plan whenever you want help making time for something meaningful.</string>
+    <string name="task_home_latest">Needs your attention</string>
+    <string name="task_home_create">Create a plan</string>
+    <string name="task_home_empty_title">Nothing is waiting for you</string>
+    <string name="task_home_empty_body">Tell Orbit what you want to arrange, and it will prepare your next plan.</string>
+    <string name="task_home_unavailable_title">Unable to load your plans</string>
+    <string name="task_home_unavailable_body">Please try again to see your latest plans.</string>
+    <string name="task_retry">Try again</string>
+    <string name="task_create_title">Start a new plan</string>
+    <string name="task_create_back_home">Back to home</string>
+    <string name="task_create_description">Share what you would like to arrange. You can refine the details next.</string>
+    <string name="task_create_label">What would you like to plan?</string>
+    <string name="task_create_hint">For example: a relaxed date night this Saturday under ¥600</string>
+    <string name="task_create_submit">Create plan</string>
+    <string name="task_create_submitting">Creating plan…</string>
+    <string name="task_create_failed">We could not create this plan. Please try again.</string>
+    <string name="task_detail_created">PLAN CREATED</string>
+    <string name="task_detail_title">Your plan is ready to take shape</string>
+    <string name="task_detail_id">Plan ID: %1$s</string>
+    <string name="task_detail_back_home">Back to home</string>
 </resources>

@@ -21,9 +21,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.nexusflow.app.core.design.AppSpacing
+import com.nexusflow.app.feature.task.presentation.create.TaskCreateRoute
+import com.nexusflow.app.feature.task.presentation.detail.TaskDetailPlaceholderRoute
+import com.nexusflow.app.feature.task.presentation.home.TaskHomeRoute
 import nexusflow.app.composeapp.generated.resources.Res
-import nexusflow.app.composeapp.generated.resources.app_home_placeholder_body
-import nexusflow.app.composeapp.generated.resources.app_home_placeholder_title
 import nexusflow.app.composeapp.generated.resources.app_preferences_placeholder_body
 import nexusflow.app.composeapp.generated.resources.app_preferences_placeholder_title
 import nexusflow.app.composeapp.generated.resources.app_tasks_placeholder_body
@@ -37,26 +38,32 @@ import org.jetbrains.compose.resources.stringResource
 fun AppShell(onLogout: () -> Unit) {
     val navController = rememberNavController()
     val currentDestination = navController.currentBackStackEntryAsState().value?.destination
+    val showsBottomBar =
+        currentDestination.isCurrentDestination(AppHomeDestination) ||
+            currentDestination.isCurrentDestination(AppTasksDestination) ||
+            currentDestination.isCurrentDestination(AppPreferencesDestination)
 
     Scaffold(
         bottomBar = {
-            NavigationBar {
-                appDestinations.forEach { destination ->
-                    NavigationBarItem(
-                        selected = currentDestination.isCurrentDestination(destination),
-                        onClick = {
-                            navController.navigateTo(destination)
-                        },
-                        icon = {
-                            Icon(
-                                painter = painterResource(destination.icon),
-                                contentDescription = stringResource(destination.contentDescription),
-                            )
-                        },
-                        label = {
-                            Text(stringResource(destination.label))
-                        },
-                    )
+            if (showsBottomBar) {
+                NavigationBar {
+                    appDestinations.forEach { destination ->
+                        NavigationBarItem(
+                            selected = currentDestination.isCurrentDestination(destination),
+                            onClick = {
+                                navController.navigateTo(destination)
+                            },
+                            icon = {
+                                Icon(
+                                    painter = painterResource(destination.icon),
+                                    contentDescription = stringResource(destination.contentDescription),
+                                )
+                            },
+                            label = {
+                                Text(stringResource(destination.label))
+                            },
+                        )
+                    }
                 }
             }
         },
@@ -67,9 +74,8 @@ fun AppShell(onLogout: () -> Unit) {
             modifier = Modifier.fillMaxSize().padding(innerPadding),
         ) {
             composable<AppHomeDestination> {
-                appPlaceholder(
-                    title = stringResource(Res.string.app_home_placeholder_title),
-                    body = stringResource(Res.string.app_home_placeholder_body),
+                TaskHomeRoute(
+                    onOpenCreate = { navController.navigate(TaskCreateDestination) },
                 )
             }
             composable<AppTasksDestination> {
@@ -86,6 +92,27 @@ fun AppShell(onLogout: () -> Unit) {
                         Button(onClick = onLogout) {
                             Text(stringResource(Res.string.auth_logout))
                         }
+                    },
+                )
+            }
+            composable<TaskCreateDestination> {
+                TaskCreateRoute(
+                    onBackHome = { navController.navigateToTab(AppHomeDestination) },
+                    onOpenTask = { taskId, title ->
+                        navController.navigate(TaskDetailDestination(taskId, title)) {
+                            popUpTo(TaskCreateDestination) {
+                                inclusive = true
+                            }
+                        }
+                    },
+                )
+            }
+            composable<TaskDetailDestination> { entry ->
+                TaskDetailPlaceholderRoute(
+                    taskId = entry.arguments?.getString("taskId").orEmpty(),
+                    title = entry.arguments?.getString("title").orEmpty(),
+                    onBackHome = {
+                        navController.navigateToTab(AppHomeDestination)
                     },
                 )
             }

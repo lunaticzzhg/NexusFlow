@@ -18,4 +18,26 @@
     <string name="auth_unavailable_title">无法登录</string>
     <string name="auth_retry">重试</string>
     <string name="auth_logout">退出登录</string>
+    <string name="task_home_heading">今天</string>
+    <string name="task_home_title">今天有什么亮点？</string>
+    <string name="task_home_subtitle">想安排一件有意义的事时，随时开始一个计划。</string>
+    <string name="task_home_latest">需要你处理</string>
+    <string name="task_home_create">创建计划</string>
+    <string name="task_home_empty_title">暂时没有待处理的计划</string>
+    <string name="task_home_empty_body">告诉 Orbit 你想安排什么，它会为你准备下一步计划。</string>
+    <string name="task_home_unavailable_title">无法加载你的计划</string>
+    <string name="task_home_unavailable_body">请重试以查看最新计划。</string>
+    <string name="task_retry">重试</string>
+    <string name="task_create_title">新建计划</string>
+    <string name="task_create_back_home">返回首页</string>
+    <string name="task_create_description">告诉我们你想安排什么，稍后还可以继续补充细节。</string>
+    <string name="task_create_label">你想计划什么？</string>
+    <string name="task_create_hint">例如：本周六预算 ¥600 以内的轻松约会</string>
+    <string name="task_create_submit">创建计划</string>
+    <string name="task_create_submitting">正在创建计划…</string>
+    <string name="task_create_failed">无法创建这个计划，请重试。</string>
+    <string name="task_detail_created">计划已创建</string>
+    <string name="task_detail_title">你的计划已准备好继续完善</string>
+    <string name="task_detail_id">计划 ID：%1$s</string>
+    <string name="task_detail_back_home">返回首页</string>
 </resources>

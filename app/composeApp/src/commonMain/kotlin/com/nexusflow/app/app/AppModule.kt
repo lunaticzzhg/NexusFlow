@@ -8,6 +8,7 @@ import com.nexusflow.app.feature.auth.data.AuthSessionStore
 import com.nexusflow.app.feature.auth.data.DefaultAuthRepository
 import com.nexusflow.app.feature.auth.domain.AuthRepository
 import com.nexusflow.app.feature.auth.presentation.AuthSessionController
+import com.nexusflow.app.feature.task.di.taskModule
 import io.ktor.client.HttpClient
 import org.koin.core.KoinApplication
 import org.koin.core.context.startKoin
@@ -35,6 +36,7 @@ fun appModule(
     }
     single { AuthSessionStore(get()) }
     single { AuthSessionController(get(), get(), get(), get()) }
+    includes(taskModule)
 }
 
 private var koinApplication: KoinApplication? = null

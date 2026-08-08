@@ -41,6 +41,15 @@ data object AppPreferencesDestination : AppDestination {
     override val icon = Res.drawable.ic_app_preferences
 }
 
+@Serializable
+data object TaskCreateDestination
+
+@Serializable
+data class TaskDetailDestination(
+    val taskId: String,
+    val title: String,
+)
+
 val appDestinations: List<AppDestination> =
     listOf(
         AppHomeDestination,
