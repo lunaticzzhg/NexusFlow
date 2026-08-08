@@ -1,24 +1,24 @@
 # 后端验证
 
-先执行能证明变更边界的最窄命令，再为共享契约、迁移或异步恢复扩大验证。
+先执行能证明变更边界的最窄命令，再为共享契约、迁移或异步恢复扩大验证。当前可执行的基础验证为：
 
 ```bash
-./gradlew :contracts:test :ai:test :backend:test
-./gradlew :backend:ktlintCheck :contracts:ktlintCheck :ai:ktlintCheck
+./gradlew --no-daemon :contracts:jvmTest :backend:test
 git diff --check
 ```
 
-只运行已有 Gradle task；不得伪造 Testcontainers/broker 成功结论。引入 PostgreSQL、Redpanda、Redis 或 Keycloak 适配器时，使用这些依赖补确定性集成测试，并记录本地前置条件/命令。
+只运行已有 Gradle task；不得伪造 PostgreSQL、broker、连接器或设备验证结论。引入 PostgreSQL 集成验证、Redpanda、Redis、Worker 或连接器时，在该切片加入确定性测试/运行前置条件，并记录实际运行的命令和无法覆盖的环境限制。
 
 ## 交付检查表
 
 | 变更 | 必需证据 |
 | --- | --- |
-| API/DTO | 请求/响应兼容、Problem JSON、鉴权/tenant/幂等测试。 |
-| 领域状态/审批 | 生命周期和聚合测试、不可绕过测试、版本冲突/终态重复测试。 |
-| 迁移/Repository | 前向迁移、范围 SQL、原子变更/事件/Outbox、唯一/索引行为。 |
-| Worker/事件 | 重复投递、重试/退避、过期租约恢复、取消竞态、DLQ/耗尽行为。 |
-| 工具写入 | 审批/版本/过期 gate、动作幂等/对账、凭据与审计脱敏。 |
-| 安全/遥测 | trace/correlation 传播、安全日志审查、变更处的预算/限流和失败指标。 |
+| API / DTO | 请求/响应兼容、Problem JSON、身份/权限范围及适用的幂等测试。 |
+| 认证 / 会话 | Google/NexusFlow token 边界、刷新轮换、注销及生产失败关闭。 |
+| 迁移 / Repository | 干净数据库前向迁移、范围 SQL、适用的唯一/索引和事务原子性。 |
+| 状态机 / 审批（若引入） | 生命周期、不可绕过、版本冲突、终态重复与恢复测试。 |
+| Worker / 事件（若引入） | 重复投递、重试/退避、租约恢复、取消竞态、DLQ/耗尽行为。 |
+| 工具写入（若引入） | 授权/版本/过期 gate、动作幂等/对账、凭据与审计脱敏。 |
+| 安全 / 遥测 | 请求关联、安全日志审查、该变更需要的失败指标或限流证据。 |
 
-交付前报告变更的权威/边界、实际运行的测试与命令、未验证基础设施、已覆盖的失败/恢复用例、非目标和部署拆分条件。变更命中升级条件时使用[审查证据门禁](../../../../../docs/architecture/review-evidence-gate.md)。
+交付前报告权威状态/边界、实际运行的测试与命令、未验证基础设施、已覆盖的失败/恢复用例、非目标和部署拆分条件。变更命中升级条件时使用[审查证据门禁](../../../../../docs/architecture/review-evidence-gate.md)。

@@ -15,6 +15,7 @@ kotlin {
     iosSimulatorArm64()
     sourceSets {
         commonMain.dependencies {
+            implementation(project(":contracts"))
             implementation(compose.runtime)
             implementation(compose.foundation)
             implementation(compose.material3)
@@ -22,9 +23,24 @@ kotlin {
             implementation(libs.koin.core)
             implementation(libs.navigation.compose)
             implementation(libs.serialization.core)
+            implementation(libs.serialization.json)
+            implementation(libs.ktor.client.core)
+            implementation(libs.ktor.client.content.negotiation)
+            implementation(libs.ktor.serialization.json)
         }
         androidMain.dependencies {
             implementation("androidx.activity:activity-compose:${libs.versions.activityCompose.get()}")
+            implementation(libs.ktor.client.okhttp)
+            implementation(libs.androidx.credentials)
+            implementation(libs.androidx.credentials.play.services.auth)
+            implementation(libs.googleid)
+            implementation(libs.security.crypto)
+        }
+        iosMain.dependencies {
+            implementation(libs.ktor.client.darwin)
+        }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
         }
     }
 }
@@ -38,6 +54,30 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField(
+            "String",
+            "GOOGLE_SERVER_CLIENT_ID",
+            "\"${providers.gradleProperty("GOOGLE_SERVER_CLIENT_ID").getOrElse("")}\"",
+        )
+    }
+    buildTypes {
+        debug {
+            buildConfigField(
+                "String",
+                "API_BASE_URL",
+                "\"${providers.gradleProperty("DEBUG_API_BASE_URL").getOrElse("http://127.0.0.1:8080")}\"",
+            )
+        }
+        release {
+            buildConfigField(
+                "String",
+                "API_BASE_URL",
+                "\"${providers.gradleProperty("RELEASE_API_BASE_URL").getOrElse("")}\"",
+            )
+        }
+    }
+    buildFeatures {
+        buildConfig = true
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

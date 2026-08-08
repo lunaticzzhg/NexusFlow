@@ -3,6 +3,7 @@ package com.nexusflow.app.core.config
 /** Non-sensitive runtime facts. Secrets and user credentials never belong here. */
 data class RuntimeConfig(
     val apiBaseUrl: String,
+    val googleServerClientId: String,
     val buildMode: BuildMode,
 )
 

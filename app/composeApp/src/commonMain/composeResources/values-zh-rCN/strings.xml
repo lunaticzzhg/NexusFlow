@@ -11,4 +11,10 @@
     <string name="app_tasks_placeholder_body">任务内容将在后续模块接入。</string>
     <string name="app_preferences_placeholder_title">偏好</string>
     <string name="app_preferences_placeholder_body">偏好设置将在后续模块接入。</string>
+    <string name="auth_login_title">欢迎使用 Orbit</string>
+    <string name="auth_login_description">登录后即可安全地继续使用你的工作空间。</string>
+    <string name="auth_continue_with_google">使用 Google 登录</string>
+    <string name="auth_unavailable_description">当前无法登录，请稍后重试。</string>
+    <string name="auth_retry">重试</string>
+    <string name="auth_logout">退出登录</string>
 </resources>

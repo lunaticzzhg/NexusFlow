@@ -13,8 +13,9 @@ usage() {
 Usage: scripts/run_android_debug.sh [--help]
 
 Builds the Android debug APK, installs it on an online Android device, and
-starts NexusFlow. When multiple devices are connected, select one interactively
-or set ANDROID_SERIAL. Set ADB to override the adb executable.
+./starts NexusFlow. It forwards the debug API address 127.0.0.1:8080 to the
+Mac host with adb reverse. When multiple devices are connected, select one
+interactively or set ANDROID_SERIAL. Set ADB to override the adb executable.
 
 Environment:
   ADB=/path/to/adb          adb executable to use (default: adb)
@@ -102,6 +103,12 @@ fi
 
 if [[ "$("$ADB_BIN" -s "$DEVICE_ID" get-state 2>/dev/null || true)" != "device" ]]; then
   echo "Android device '$DEVICE_ID' is not connected or not authorized." >&2
+  exit 1
+fi
+
+echo "Forwarding debug API: device 127.0.0.1:8080 -> Mac 127.0.0.1:8080"
+if ! "$ADB_BIN" -s "$DEVICE_ID" reverse tcp:8080 tcp:8080; then
+  echo "Failed to configure adb reverse for device '$DEVICE_ID'." >&2
   exit 1
 fi
 

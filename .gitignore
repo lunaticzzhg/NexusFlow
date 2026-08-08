@@ -10,3 +10,6 @@ __pycache__/
 .pytest_cache/
 .venv/
 *.db
+logs/
+/auth-private.pem
+/auth-public.pem

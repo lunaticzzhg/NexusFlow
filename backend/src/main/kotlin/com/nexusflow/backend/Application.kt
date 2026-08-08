@@ -1,18 +1,13 @@
 package com.nexusflow.backend
 
-import com.fasterxml.jackson.databind.SerializationFeature
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
-import com.nexusflow.backend.api.nexusFlowRoutes
-import com.nexusflow.backend.api.DevelopmentActorResolver
-import com.nexusflow.backend.application.TaskApplicationService
-import com.nexusflow.backend.infrastructure.InMemoryTaskRepository
-import io.ktor.serialization.jackson.jackson
+import com.nexusflow.backend.bootstrap.BackendRuntimeProfile
+import com.nexusflow.backend.bootstrap.bootstrapBackend
+import com.nexusflow.backend.bootstrap.configureCoreRoutes
+import com.nexusflow.backend.bootstrap.configureFeatureRoutes
+import com.nexusflow.backend.core.http.configureHttpPlatform
 import io.ktor.server.application.Application
-import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
-import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.server.routing.routing
 
 fun main() {
     embeddedServer(Netty, port = 8080, host = "0.0.0.0", module = Application::module)
@@ -20,18 +15,10 @@ fun main() {
 }
 
 fun Application.module(
-    taskService: TaskApplicationService = defaultTaskService(),
-    runtimeProfile: String = System.getenv("ORBIT_RUNTIME_PROFILE") ?: "production",
+    profile: BackendRuntimeProfile = BackendRuntimeProfile.fromEnvironment(),
 ) {
-    install(ContentNegotiation) {
-        jackson {
-            registerModule(JavaTimeModule())
-            disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
-        }
-    }
-    routing { nexusFlowRoutes(taskService, DevelopmentActorResolver(runtimeProfile)) }
+    configureHttpPlatform()
+    val runtime = bootstrapBackend(profile)
+    configureCoreRoutes(runtime.readinessProbe)
+    configureFeatureRoutes(runtime)
 }
-
-private fun defaultTaskService(): TaskApplicationService = TaskApplicationService(
-    repository = InMemoryTaskRepository(),
-)

@@ -1,40 +1,28 @@
 # API 契约
 
-所有公开 Ktor 路由或契约变更都读取本文。权威来源是 `contracts/src/main/kotlin/com/nexusflow/contracts/api/ApiContracts.kt`；DTO 会被适配器外部使用时，不得在 `backend` 重复定义。
+所有公开 Ktor 路由或契约变更都读取本文。权威 HTTP DTO 位于 `contracts/src/commonMain/kotlin/com/nexusflow/contracts/api/ApiContracts.kt`；当 DTO 被 App 或其他适配器消费时，不得在 `backend` 重复定义。当前错误信封、Kotlinx JSON、请求 ID 和框架级失败映射由 `core/http` 实现。
 
 ## 路由规则
 
-- 解析/校验传输输入，解析 `ActorContext`，调用一个应用层 use case，并将预期失败映射为 `ApiErrorResponse`。路由不得直接改变 `TaskStatus` 或调用 AI/工具 client。
-- 会排队执行长任务的命令返回 `202 Accepted`；精确的幂等重放返回原结果（种子工程为 `200 OK`）。返回规范 ID、版本、状态和恢复 URL，不返回推测性的模型文本。
-- 每个外部命令都使用 `Idempotency-Key`。绑定 `(tenant_id, owner_user_id, key)` 与请求指纹；相同 key 不同规范化请求必须为 `409 IDEMPOTENCY_CONFLICT`。
-- 改变既有聚合的命令必须在已校验 body 中携带 `expectedVersion`。在命令事务中比较；版本过期为 `409 TASK_STATE_CONFLICT`。不得从客户端缓存推断，也不得把缺失版本当作“最新”。
-- 保持版本化信封和可追加字段。不得原地重命名/删除序列化字段或枚举值，应增加 API/事件版本和迁移路径。
-
-```kotlin
-post("/v1/tasks") {
-    val actor = actorResolver.resolve(call)
-    requireScope(actor, "orbit.tasks.write")
-    val request = call.receive<CreateTaskRequest>()
-    val key = call.request.headers["Idempotency-Key"]
-        ?: return@post call.problem(HttpStatusCode.BadRequest, VALIDATION_FAILED, "Idempotency-Key is required")
-    val result = taskService.createTask(actor, request, key, call.traceId())
-    call.respond(if (result.replayed) HttpStatusCode.OK else HttpStatusCode.Accepted, result.toResponse())
-}
-```
+- 路由解析和结构校验传输输入，解析 `ActorContext`（若端点需要身份），调用一个应用层 use case，并将预期业务失败映射为 `ApiErrorResponse`。路由不得直接持久化业务状态或调用第三方客户端。
+- 需要异步推进的命令在同一 feature 已具备持久化状态和恢复语义时才可返回 `202 Accepted`；同步完成的命令返回与其结果匹配的成功状态。不得为尚不存在的 Worker 伪造异步接口。
+- 仅对会产生重复副作用的外部命令使用 `Idempotency-Key`。键必须绑定 actor 范围与规范化请求指纹；同 key 不同请求返回 `409 IDEMPOTENCY_CONFLICT`。
+- 仅对存在并发编辑风险的已持久化聚合引入 `expectedVersion`。在命令事务中比较；版本过期映射为契约定义的 `409 CONFLICT`，不得把缺失版本当作“最新”。
+- 保持版本化路径、可追加字段和消费者兼容性。不得原地重命名或删除已发布的序列化字段/枚举值；需要破坏性演进时，新增版本与迁移路径。
 
 ## 失败映射
 
 | 条件 | HTTP / 错误码 | 说明 |
 | --- | --- | --- |
-| token 缺失/无效 | 401 `UNAUTHENTICATED` | 不泄露租户/资源事实。 |
-| 有效身份缺少 scope 或资源所有权 | 403 `FORBIDDEN` 或不可区分的 404 | 选择并记录策略；列表接口必须静默按范围过滤。 |
-| DTO/schema/输入无效 | 422 `VALIDATION_FAILED` | 仅含结构性字段详情。 |
-| 幂等请求指纹不同 | 409 `IDEMPOTENCY_CONFLICT` | 绝不创建第二个任务。 |
-| 版本/状态过期 | 409 `TASK_STATE_CONFLICT` | 安全时返回当前版本/状态。 |
-| 依赖不可用 | 503 `DEPENDENCY_UNAVAILABLE` | 不得静默变为已完成/失败。 |
+| token 缺失或无效 | 401 `UNAUTHENTICATED` | 不泄露租户或资源事实。 |
+| 有效身份缺少权限或资源所有权 | 403 `FORBIDDEN` 或不可区分的 404 | 选择并记录策略；列表接口按范围过滤。 |
+| DTO / 输入结构无效 | 422 `VALIDATION_FAILED` | 只返回安全的结构性信息。 |
+| 幂等键与请求指纹不匹配 | 409 `IDEMPOTENCY_CONFLICT` | 不创建第二次副作用。 |
+| 并发或状态冲突 | 409 `CONFLICT` | 只在安全时返回当前版本/状态。 |
+| 依赖不可用 | 503 `DEPENDENCY_UNAVAILABLE` | 不得伪装为业务成功或终态失败。 |
 
-所有错误使用 `ApiErrorResponse(code, message, traceId, details)`。在边缘生成/传播请求关联 ID，并以 `X-Request-Id` 返回。新增过滤器或异常层前先阅读既有 `Routes.kt`。
+所有错误使用 `ApiErrorResponse(code, message, traceId, details)`。HTTP 平台生成或校验 `X-Request-Id`，并将其回写响应；feature 通过 `ApplicationCall.traceId()` 复用该 ID，不得自行生成第二套关联 ID。`StatusPages` 负责畸形请求与未处理异常，feature route 只映射其可预期的业务失败。
 
 ## 契约测试
 
-变更接口需证明成功路径、畸形输入、缺少 scope、租户/owner 隔离、重放和适用的冲突。任何移动端改动前先更新面向消费者兼容的 JSON/schema 检查。
+变更接口需证明成功路径、畸形输入、身份/权限范围和该端点实际适用的幂等或冲突路径。涉及 App 消费时，先更新共享 DTO 与序列化测试，再接入两端适配器。

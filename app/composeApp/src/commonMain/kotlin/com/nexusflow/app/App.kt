@@ -1,13 +1,25 @@
 package com.nexusflow.app
 
 import androidx.compose.runtime.Composable
-import com.nexusflow.app.app.AppShell
+import androidx.compose.runtime.LaunchedEffect
 import com.nexusflow.app.core.design.AppTheme
+import com.nexusflow.app.core.systemui.SystemUiGateway
+import com.nexusflow.app.feature.auth.presentation.AuthGate
+import com.nexusflow.app.feature.auth.presentation.AuthSessionController
 
 @Composable
 @Suppress("FunctionNaming", "ktlint:standard:function-naming")
-fun AppRoot() {
+fun AppRoot(
+    authSessionController: AuthSessionController,
+    systemUiGateway: SystemUiGateway,
+) {
     AppTheme {
-        AppShell()
+        LaunchedEffect(authSessionController) {
+            authSessionController.restore()
+        }
+        AuthGate(
+            controller = authSessionController,
+            systemUiGateway = systemUiGateway,
+        )
     }
 }

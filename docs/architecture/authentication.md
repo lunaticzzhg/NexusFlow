@@ -1,46 +1,111 @@
 # Authentication integration convention
 
-## Ownership
+## Decision and scope
 
-`feature/auth` owns the client authentication flow. `SessionController` is the only reader and writer of `AuthSessionStore`, and the only publisher of `AuthState`. UI, repositories, HTTP transport, and platform SDK bridges must not persist a session, clear one, or navigate based on authentication themselves.
+v0.1 uses **direct Google identity validation and a NexusFlow-owned business session**. The Android client starts Google sign-in with Credential Manager's system account-selection sheet, sends the resulting Google ID token to the backend, and receives NexusFlow access and refresh tokens in return.
 
-The authentication request boundary is explicit: `AuthenticationCoordinator` depends on the domain `AuthRepository` interface; `DefaultAuthRepository` maps OIDC/HTTP responses, feature DTOs and failures to domain models; feature-local `AuthApi` owns endpoint paths and request bodies. It is constructed only for `DefaultAuthRepository`, not exposed as a Koin binding. The shared `HttpClient` reuses the application API URL and attaches client context centrally, so authentication introduces neither a second client nor a provider. See [networking.md](networking.md) for the HTTP/protocol boundary. Do not add a forwarding DataSource or a global API service unless a real second source or consumer gives it an independent responsibility.
+```text
+Android Credential Manager
+  -> Google ID token
+  -> POST /v1/auth/google/exchange
+  -> verify Google identity
+  -> NexusFlow access token + refresh token
+```
 
-`AuthGate` is the root-level consumer: `Restoring` shows a loading state, `Unauthenticated` the login flow, `Authenticated` the app shell, and `Unavailable` a retry state. Tokens never enter UI state, logs or navigation arguments. Regular preferences remain prohibited for tokens except for the explicit temporary session-storage deviation below.
+Apple sign-in is explicitly deferred. There is no Apple client UI, verifier, configuration, browser fallback, or Apple secret in this delivery. Keycloak, browser OIDC + PKCE, WebView login, and provider refresh-token storage are also out of scope. They must not be introduced as a parallel runtime path.
 
-## Session lifecycle
+The direct-provider decision is intentionally narrow: it supports the confirmed Google-first requirement and preserves the native Android sheet. Re-evaluate an identity broker only when a real requirement needs multiple active identity providers, enterprise SSO, password login, managed MFA, or account-linking administration.
 
-The long-term baseline is that `AuthSessionStore` uses `SecureStore` only. A successful session must contain a non-empty access token and user ID. At launch, `SessionController` parses the access-token JWT `exp` solely to decide whether local recovery is possible. A non-expired token restores the app without a request; an expired or malformed access token uses the refresh token. Refresh success overwrites the entire stored session before publishing `Authenticated`. A rejected refresh clears session storage before publishing `Unauthenticated`; storage or temporary transport failure becomes `Unavailable`.
+## Infrastructure-first delivery order
 
-The controller uses a mutex to serialize restore, activation, and invalidation. Repository requests preserve coroutine cancellation. The shared HTTP boundary owns one refresh attempt and one original-request retry. Only a replayed 401 asks the controller to clear the session, and it does so only when the current stored access token still equals the replayed token; an old request can never clear a newer session.
+Authentication is not a client-only feature. Before the Android login UI is connected, build the minimum durable infrastructure that owns identities and sessions:
 
-### Temporary session-storage deviation
+1. Keep PostgreSQL as the authority and establish the identity/session schema as the initial Flyway migration (`V001`). Future feature schemas extend this ordered history additively; they do not create a second initialization mechanism.
+2. Add configuration validation and secret injection for database access and NexusFlow signing keys. Production startup fails when a required production secret or Google audience is absent; it never falls back to a development identity.
+3. Add backend Google verification, user/tenant/identity/session persistence, access-token signing, refresh rotation, logout, and Bearer-to-`ActorContext` resolution.
+4. Add the App session store, recovery, refresh, logout, context invalidation, and only then Android Credential Manager exchange UI.
 
-Both current platform builds temporarily store the `auth/session` snapshot in the shared `KeyValueStore` / Preferences DataStore instead of `SecureStore`, because Android Keystore AES-GCM initialization is failing during login integration. This exception exists only to unblock integration and is not a replacement for the secure-storage baseline.
+Mocks are permitted in focused tests only. They are not an alternative login or session implementation for an executable build.
 
-- Scope: only the auth session snapshot; tokens remain prohibited from UI state, logs, navigation arguments, request query and every other preference namespace.
-- Risk: access and refresh tokens are no longer protected by Android Keystore or iOS Keychain. Any release carrying this behavior requires explicit product and security risk acceptance.
-- Migration: secure and DataStore sessions are not migrated. Restoring `SecureStore` must ignore or clear the temporary `auth/session` value and require a new login rather than copying a token between stores.
-- Re-evaluation trigger: fix or positively classify the Keystore failure, then restore `SecureStore` before treating this storage path as a long-term behavior.
+## Ownership and boundaries
 
-## Adding a login method
+`feature/auth` owns the App authentication flow. `AuthSessionController` is the only reader and writer of `AuthSessionStore`, and the only publisher of `AuthState`. UI, repositories, HTTP transport, and platform SDK bridges must not persist a session, clear one, or navigate based on authentication themselves.
 
-- A verified channel (email, phone) implements `VerificationLoginProvider`: request challenge, then verify it.
-- OIDC login starts with a feature `UiEffect`. Its Route sends a typed browser-login request through the Activity/window-owned `SystemUiGateway`; the platform UI Host completes Keycloak Authorization Code + PKCE and returns a matching result as a feature Intent.
-- `AuthenticationCoordinator` consumes only an already-acquired credential, maps it through `AuthRepository`, then asks `SessionController.activate` to persist it. Neither the Route nor the platform UI Host mutates navigation or session state.
-- System UI requests carry a requestId and are single-active per Activity/window. Host detach, Route cancellation, and late platform callbacks must resolve or ignore the same requestId so a login submission cannot remain pending.
-- Add an explicit UI entry, error mapping, platform configuration, and focused tests.
+The request boundary is explicit: `AuthSessionController` depends on the domain `AuthRepository`; `DefaultAuthRepository` maps the Google exchange/refresh/logout HTTP contracts and failures to domain models; feature-local `AuthApi` owns endpoint paths and DTOs. It is constructed only for `DefaultAuthRepository`, not exposed as a general Koin binding. The current shared `HttpClient` provides JSON transport for these three auth endpoints only; authentication does not create a second client.
 
-The stable random `X-Client-Instance-Id` is a non-sensitive UUID owned by `core/network` and its `KeyValueStore` namespace. It is not a hardware, advertising, or fingerprint identifier. Access and refresh tokens remain secrets by policy and return to `SecureStore` when the temporary session-storage deviation is removed.
+`AuthGate` is the root-level consumer: `Restoring` shows loading, `Unauthenticated` shows Google login, `Authenticated` renders the app shell, and `Unavailable` offers retry. Tokens, authorization codes, Google ID tokens, emails and provider profile fields never enter UI state, logs, analytics attributes, or navigation arguments.
 
-## Response contract
+The Android platform bridge is an atomic adapter only: it opens Credential Manager, returns a structured Google credential, cancellation or failure, and does not store tokens or navigate. The shared flow owns all session decisions.
 
-Authentication accepts only the currently agreed backend success codes: `0` and `200`. Any other business code is an authentication failure even when the HTTP response itself is successful.
+## Identity and session model
 
-## Platform and configuration
+The backend accepts no user, tenant, role or provider subject supplied as an asserted identity by the client. It verifies the Google ID token signature and required claims before resolving an external identity:
 
-`RuntimeConfig.apiBaseUrl` and OIDC issuer/client ID are non-secret build values; an empty value is a build configuration error rather than an authentication-specific runtime state. Before release, Keycloak must register Orbit's Android package/signing SHA, iOS bundle ID/URL scheme and API audience. The app never embeds a client secret. Browser callback handling is added only with the configured OIDC dependency and URL scheme; unhandled URLs are forwarded to the deep-link bridge.
+- Google verifier checks the token signature against Google JWKS plus `iss`, allowed `aud`, and `exp`; `sub` is the provider identity key.
+- The stable external-identity key is `(provider, provider_subject)`. It is never an email address.
+- The first verified Google identity creates its NexusFlow user, personal tenant, membership, external identity and session in one short transaction. A repeat login finds the same identity and user.
+- This delivery writes only `GOOGLE` provider values. The generic identity key is retained so a future Apple slice can be additive without treating email as an account-linking key.
 
-`acceptedPolicyVersion` is optional and additive in client requests, but the existing backend does not yet persist or audit it. Persisting it is a separate additive backend prerequisite; existing clients must remain valid when it is omitted.
+The initial Flyway identity/session schema owns `users`, `tenants`, `tenant_memberships`, `external_identities` and `auth_sessions`. `auth_sessions` stores only a hash of each refresh token, its expiry, revocation/rotation state and session-family relationship; it never stores the raw refresh token or Google credential.
 
-The current reused email contract returns `cooldownUntil` as a Java `LocalDateTime` without an offset or server time-zone contract. The client therefore exposes resend and relies on the server's rate-limit response; it must not infer a client cooldown from that ambiguous value. Accurate client-side disable/countdown requires an additive backend `resendAfterSeconds` (preferred) or ISO-8601 UTC instant. Terms and Privacy Policy links also require configured HTTPS URLs; no embedded WebView is added until those URLs exist.
+NexusFlow issues its own tokens after verification:
+
+- Access token: short-lived signed JWT for business APIs, carrying at least subject, tenant, session ID, issuer, audience, expiry and key ID.
+- Refresh token: long-lived random opaque secret used only at the refresh endpoint. Each refresh atomically invalidates the old value and issues a new pair. Reuse of an invalidated refresh token revokes its session family and requires new Google login.
+
+`POST /v1/auth/logout` revokes the current session ID and the App clears local session storage. Business routes construct `ActorContext` only from a validated NexusFlow Bearer access token. `TestActorResolver` is registered only by the explicit backend test profile and is never a production fallback.
+
+## HTTP contract
+
+The initial API surface is deliberately small:
+
+```text
+POST /v1/auth/google/exchange
+POST /v1/auth/refresh
+POST /v1/auth/logout
+```
+
+The exchange body contains the Google ID token only. The backend derives user, tenant and provider subject itself. A successful exchange and successful refresh return the same session payload: short-lived access token, refresh token, expirations, internal user ID and tenant ID. Exact request/response DTOs, Problem JSON mappings, validation rules, and negative-path tests are the executable backend-contract work for this slice.
+
+Those HTTP DTOs live once in the shared `contracts` KMP module and use `kotlinx.serialization`; the App and backend must not maintain parallel auth request or response models. The backend HTTP platform owns Kotlinx JSON configuration, request IDs, framework error responses and readiness routes. Authentication retains ownership only of auth-specific validation and business-error mappings.
+
+Business API clients do not exist in the current App implementation, so it does not yet inject `Authorization: Bearer` on general requests or perform a shared 401 refresh/retry. When the first business API is introduced, its shared HTTP boundary must add the access token, attempt one serialized refresh, then retry the original request once. Only that replayed request's 401 may invalidate a session, and only when the stored access token still matches the token used by that replay. A late response for an old session cannot clear a newer login.
+
+## App lifecycle and secure storage
+
+`AuthSessionStore` uses Android Keystore and iOS Keychain. Access tokens may be held in memory while valid; refresh tokens are stored only in the platform secure store. Neither token may appear in preferences, ordinary databases, logs, crash reports, UI state, query parameters or source control.
+
+On launch, `AuthSessionController` restores a non-expired access token locally. If it is expired or missing, it uses the refresh token. Successful refresh overwrites the entire stored session before publishing `Authenticated`; a rejected refresh clears storage and publishes `Unauthenticated`; a storage or transport failure becomes `Unavailable` without silently manufacturing an identity.
+
+The controller serializes restore, activation and invalidation. `AppContextSnapshot` is the sole observable current-identity fact. Its stable context ID wraps the authenticated shell with `key(contextId)`, so login, logout, refresh failure or a future account switch destroys the previous `AppShell`, `NavHost`, feature ViewModels, scoped caches and SSE runtime.
+
+## Configuration and operational safety
+
+The backend requires non-secret identifiers and secret values with distinct handling:
+
+| Configuration | Secret | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL`, `DATABASE_USER` | No | PostgreSQL connection location and principal. |
+| `DATABASE_PASSWORD` | Yes | PostgreSQL password. |
+| `AUTH_JWT_ISSUER`, `AUTH_JWT_AUDIENCE`, `AUTH_JWT_KEY_ID` | No | NexusFlow access-token validation and key-rotation metadata. |
+| `AUTH_JWT_PRIVATE_KEY_PEM_BASE64` | Yes | Private signing key for NexusFlow access tokens. |
+| `AUTH_ACCESS_TTL_SECONDS`, `AUTH_REFRESH_TTL_DAYS` | No | Access and refresh lifetime policy. |
+| `GOOGLE_ALLOWED_AUDIENCES` | No | Allowed Google OAuth Web Client IDs for ID-token audience validation. |
+
+Production secrets come from the deployment secret manager. Repository examples may contain empty placeholders only. The Android build receives only non-secret `API_BASE_URL` and `GOOGLE_SERVER_CLIENT_ID`; it must never contain backend signing material, database credentials, or a Google client secret.
+
+Authentication telemetry uses low-cardinality provider/result/error categories only. It must not record raw token values, authorization headers, provider subject, email, Google profile data, refresh-token hash, or request bodies.
+
+## Verification and future triggers
+
+The slice is complete only when all of the following are proven:
+
+- A clean local PostgreSQL database applies the initial identity/session Flyway migration reproducibly.
+- Backend accepts a valid Google credential and rejects invalid signature, issuer, audience and expiry cases.
+- The same verified Google subject resolves to one NexusFlow user; a client-supplied user, tenant or role cannot change the result.
+- Refresh rotation invalidates the old refresh token, detects replay, and logout prevents another refresh for that session.
+- Business routes reject Google credentials and development headers in production; they accept only a valid NexusFlow access token.
+- Android opens Credential Manager's native account picker, cancellation returns to a retryable login state, and successful exchange enters a fresh authenticated shell.
+- Logout or identity change cannot reveal the old navigation stack, cached data or scoped runtime.
+
+Apple, iOS Google login, Android Apple browser fallback, explicit account linking, multi-device session management, MFA, and any identity-broker introduction remain separate future decisions. Each needs its own provider configuration, backend verifier/contract, lifecycle tests and product acceptance before implementation.

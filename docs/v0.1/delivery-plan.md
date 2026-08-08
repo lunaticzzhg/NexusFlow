@@ -7,24 +7,24 @@
 - 任务按技术方案的 F0–F5 阶段排序；每项只交付一个可验证行为。
 - “已验证”仅表示对应代码与自动化测试已经存在并通过；不代表整个用户模块完成。
 - “进行中”表示已有可复用骨架，但尚未满足该任务验收；“未开始”表示没有对应实现。
-- 当前验证记录：`./gradlew :contracts:test :ai:test :backend:test` 于 2026-08-07 通过。App UI 未运行验收。
+- 当前验证记录：`./gradlew :contracts:jvmTest :backend:test` 与 `./gradlew :app:composeApp:ktlintCheck :app:composeApp:allTests :app:composeApp:assembleDebug :app:composeApp:iosSimulatorArm64Test` 已通过。Docker 当前不可用，尚未实跑 PostgreSQL/Flyway；本环境无 Android 真机，未验证 Credential Manager 实际交互。
 
 ## 2. 当前需求进度总览
 
 | 模块 | 当前进度 | 已有证据 | 主要缺口 |
 | --- | --- | --- | --- |
-| A0 应用基础壳 | 进行中 | KMP 启动入口、主题、`RuntimeConfig` 已存在。 | 根导航、AppShell 内容、全局反馈、Debug 入口。 |
-| A1 会话与启动恢复 | 未开始 | 后端有本地 `DevelopmentActorResolver`。 | App Session Gate、OIDC、安全存储、上下文失效。 |
+| A0 应用基础壳 | 进行中 | KMP 启动入口、主题、`RuntimeConfig`、根导航与三 Tab 占位页已存在。 | 全局反馈、Debug 入口。 |
+| A1 会话与启动恢复 | 已完成 | Google Session Gate、Android Credential Manager、平台安全存储、NexusFlow Access/Refresh 业务 Token、PostgreSQL 会话与 Bearer 鉴权已落地。 | Docker PostgreSQL/Flyway 与 Android 真机 Credential Manager 仍待环境验证。 |
 | A2 首次引导 | 未开始 | — | 偏好 API、引导 UI、草稿和保存。 |
 | A3 偏好与设置 | 未开始 | — | 版本化偏好、冲突处理、设置页。 |
 | A4 首页 | 未开始 | — | 首页摘要、待审批入口、创建入口。 |
-| A5 创建任务 | 进行中 | `POST /v1/tasks`、幂等重放/冲突测试已通过。 | App 表单、偏好快照、时间范围和持久化。 |
+| A5 创建任务 | 未开始 | — | App 表单、偏好快照、时间范围、任务 API、PostgreSQL 持久化与 Outbox。 |
 | A6 任务中心 | 未开始 | — | 列表 API、缓存、刷新与分组 UI。 |
-| A7 任务详情/订阅 | 进行中 | `GET /v1/tasks/{taskId}` 与进程内规划骨架存在。 | App 详情、SSE/events、持久化恢复。 |
-| A8 方案比较/重生成 | 未开始 | AI 可生成结构化提案。 | App Plan A/B/C、确定性完整校验、重新生成命令。 |
+| A7 任务详情/订阅 | 未开始 | — | App 详情、详情 API、SSE/events、持久化恢复。 |
+| A8 方案比较/重生成 | 未开始 | — | App Plan A/B/C、结构化提案、确定性完整校验、重新生成命令。 |
 | A9 审批 | 未开始 | 契约有待审批响应占位。 | Approval 聚合、API、编辑 UI、版本校验。 |
 | A10 执行结果/重试 | 未开始 | — | 外部动作、结果模型、部分失败和重试。 |
-| A11 时间线 | 进行中 | `TaskEvent`、内存事件与 Outbox 形状存在。 | 持久化事件、事件接口、时间线 UI。 |
+| A11 时间线 | 未开始 | — | 持久化事件、Outbox、事件接口、时间线 UI。 |
 | A12 缓存与恢复 | 未开始 | — | 本地存储、scope 隔离、前后台同步。 |
 | A13 权限 | 未开始 | — | SystemUiGateway、日历/通知能力端口。 |
 | A14 通知与深链 | 未开始 | — | 设备注册、通知、任务深链协调。 |
@@ -35,8 +35,8 @@
 
 | ID | 任务 | 依赖 | 状态 | 独立验收 |
 | --- | --- | --- | --- | --- |
-| F0-01 | 建立根 `NavHost` 与 `AppShell`，包含首页、任务、偏好三个占位入口。 | 无 | 进行中 | Android Debug APK 启动后可在三个入口间导航；路由只携带 ID。 |
-| F0-02 | 建立开发身份 Session Gate 与 `AppContextSnapshot`。 | F0-01 | 未开始 | 无会话、开发身份、登出三种状态进入正确 graph；身份切换销毁旧 Shell。 |
+| F0-01 | 建立根 `NavHost` 与 `AppShell`，包含首页、任务、偏好三个占位入口。 | 无 | 已验证 | Android Debug APK 可启动后可在三个入口间导航；路由只携带 ID。 |
+| F0-02 | 搭建认证基础设施并建立 Google Session Gate 与 `AppContextSnapshot`：PostgreSQL/Flyway 身份会话表、Google 验证、NexusFlow Access/Refresh Token、Bearer 鉴权、Android Credential Manager、安全存储与登出。 | F0-01 | 已完成 | 无会话进入 Google 原生登录；有效 Google ID Token 建立业务会话；刷新/登出正确轮换或撤销；身份变化销毁旧 Shell。已通过 `./gradlew :contracts:jvmTest :backend:test`、`./gradlew :app:composeApp:ktlintCheck :app:composeApp:allTests :app:composeApp:assembleDebug :app:composeApp:iosSimulatorArm64Test`。未覆盖：Docker 当前不可用，尚未实跑 PostgreSQL/Flyway；本环境无 Android 真机，未验证 Credential Manager 实际交互。 |
 | F0-03 | 建立全局 Toast、Loading/Error 基础接入与中英文资源约束。 | F0-01 | 未开始 | 根部仅一个 Toast Host；空内容失败显示 ErrorState；新增文案有英文和中文资源。 |
 
 ### F1：固定数据的任务体验
@@ -52,8 +52,8 @@
 
 | ID | 任务 | 依赖 | 状态 | 独立验收 |
 | --- | --- | --- | --- | --- |
-| F2-01 | 固化任务状态迁移、结构化提案和幂等创建契约。 | 无 | 已验证 | `contracts` 生命周期/策略测试、AI Planner 测试和 backend 创建任务重放测试通过。 |
-| F2-02 | 将任务 Repository 从内存适配器替换为 PostgreSQL + Flyway + 原子 Task/Event/Outbox 写入。 | F2-01 | 未开始 | 重复 key 只产生一个任务；任务状态与事件/Outbox 同事务提交。 |
+| F2-01 | 固化任务状态迁移、结构化提案和幂等创建契约。 | 无 | 未开始 | 生命周期/策略契约、结构化提案验证与创建任务幂等测试通过。 |
+| F2-02 | 建立 PostgreSQL + Flyway 任务 Repository 与原子 Task/Event/Outbox 写入。 | F2-01、F0-02 | 未开始 | 重复 key 只产生一个任务；任务状态与事件/Outbox 同事务提交，并以已验证 Bearer actor 作为所有者范围。 |
 | F2-03 | 实现持久化 Worker 领取、阶段 checkpoint、有限重试与崩溃恢复。 | F2-02 | 未开始 | 重复事件不重复推进；过期 lease 可恢复；耗尽重试得到可解释失败。 |
 | F2-04 | 实现 App 侧 Task API、RemoteDataSource、Repository 与 `task-create`/`task-detail` 接入。 | F1-02、F2-01 | 未开始 | App 正确处理 202、幂等重放、422/409/5xx 与网络中断。 |
 | F2-05 | 提供 REST events 或 SSE，接入任务详情刷新和时间线读取。 | F2-02、F2-04 | 未开始 | SSE 仅作刷新提示；断线、前后台或版本缺口后重新拉取详情快照。 |
@@ -64,7 +64,7 @@
 | --- | --- | --- | --- | --- |
 | F3-01 | 实现版本化 Preference Profile API、校验和创建任务快照。 | F2-02 | 未开始 | 非法兴趣/预算/通勤被拒绝；新任务保存快照，旧任务不随偏好变化。 |
 | F3-02 | 实现 onboarding 与 preferences UI，包括版本冲突与本地草稿。 | F0-02、F3-01 | 未开始 | 未授予日历权限仍可完成；版本冲突不静默覆盖。 |
-| F3-03 | 补齐 PlanningContext、Fake sports/movies/calendar 数据和硬约束校验。 | F2-03、F3-01 | 进行中 | 固定 Fixture 下候选不违反时间、预算、通勤、避开项和来源时效；无可行项给调整原因。 |
+| F3-03 | 补齐 PlanningContext、Fake sports/movies/calendar 数据和硬约束校验。 | F2-03、F3-01 | 未开始 | 固定 Fixture 下候选不违反时间、预算、通勤、避开项和来源时效；无可行项给调整原因。 |
 | F3-04 | 实现任务列表、首屏缓存和 scope 隔离。 | F2-04、F3-01 | 未开始 | 冷启动先显示当前用户缓存，远端成功后覆盖；切换用户/租户不串读。 |
 
 ### F4：审批与可控执行闭环
@@ -95,13 +95,9 @@
 
 ## 4. 当前优先级与下一步
 
-当前不应直接开始审批或通知模块。推荐下一组可并行但彼此独立的任务为：
+当前仅 A0 应用基础壳与 A1 会话基础设施具备实现证据。下一步必须从需求基线中选择一个新的产品模块，并为它建立独立的最小薄切片；不得恢复或扩展已移除的 Task/AI 种子代码。
 
-1. **F0-01**：完成可运行的 App 壳与根导航。
-2. **F1-01**：定义正式 Mock 的任务 Repository/Contract，作为 UI 和真实 API 的共同边界。
-3. **F2-02**：将已验证的任务创建骨架落到 PostgreSQL + Event/Outbox，避免继续在内存适配器上堆业务能力。
-
-F0-01 与 F2-02 可以并行；F1-01 需要在 F0-01 的导航/页面入口确定后实施。每项完成后更新本文的状态、证据、验证命令和未覆盖风险。
+建议优先在 A2 首次引导、A3 偏好与设置、A4 首页中选择一个模块，确认其权威状态、必要的后端基础设施和独立验收后再开始实现。若选择任务链路，则应从 F2-01 开始重新设计和实现，不能以任何旧内存 API、规划器或契约作为已完成前提。Apple 登录、Keycloak、浏览器 OIDC/PKCE 和其他 Provider 不属于本期任务。每项完成后更新本文的状态、证据、验证命令和未覆盖风险。
 
 ## 5. 更新规则
 

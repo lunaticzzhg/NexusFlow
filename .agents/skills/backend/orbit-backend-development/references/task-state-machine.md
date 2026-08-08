@@ -1,33 +1,15 @@
 # 任务、审批与动作状态
 
-变更状态或事件前，与 `contracts/task/TaskContracts.kt`、`TaskTransitionPolicy.kt`、`backend/domain/TaskAggregate.kt` 一起阅读。领域层是合法迁移的唯一权威。
+本专题是未来引入任务、审批或外部动作 feature 时的约束模板；当前工程没有 Task 契约、聚合、状态机或审批接口。首次实现该 feature 时，必须在同一切片定义可执行的状态/事件契约、领域聚合、持久化迁移、授权规则与恢复测试，不能引用本文件假定它们已经存在。
 
 ## 不变量
 
-1. `TaskLifecycle.requireTransition` 校验每一次迁移。
-2. 已校验且含一个或多个 `ActionRequest` 的提案迁移到 `AWAITING_APPROVAL`；纯建议提案才可完成。使用 `TaskTransitionPolicy.afterValidation`，绝不能以 `ActionRequest.requiresApproval` 或生成文本绕过。
-3. 审批保存提议动作快照和预期任务版本。批准/编辑/拒绝命令必须原子检查 owner、tenant、过期、状态、版本、schema 和风险策略。
-4. 只有已批准且已持久化的动作可进入执行。每个动作都有服务端生成的稳定幂等键和终态结果/审计事件。
-5. 取消、重试、部分失败和迟到 Worker 完成均是显式迁移；重复事件不能让终态任务复活。
+1. 领域层是每个合法状态迁移的唯一权威；路由、客户端、Prompt 和 Worker 都不得绕过它。
+2. 包含外部写入的提案在明确、持久化的批准前不得执行。批准、编辑、拒绝必须原子检查 actor、tenant、过期、状态、版本、schema 和风险策略。
+3. 每个外部动作使用服务端生成的稳定幂等键，并持久化终态结果或审计事件。
+4. 取消、重试、部分失败和迟到 Worker 完成都是显式迁移；重复事件不得让终态对象复活。
+5. 执行中取消、补偿和未知外部结果需要明确的产品决策及可恢复语义，不能由接口层临时推断。
 
-`contracts/TaskContracts.kt` 是当前可执行迁移表。简要产品文档对取消的描述比该表更宽：它称活动任务可取消，而当前表不允许 `EXECUTING → CANCELLED`。不得在接口或 Worker 中自行解决。执行中取消需要先取得覆盖在途外部副作用与补偿的明确产品决策，再原子更新契约、聚合、恢复测试、API 文档和产品状态机文档。
+## 首次切片验收
 
-```kotlin
-fun TaskAggregate.approve(approval: Approval, expectedVersion: Long, at: Instant): TaskAggregate {
-    check(version == expectedVersion) { "Task version conflict" }
-    check(status == TaskStatus.AWAITING_APPROVAL) { "Task is not awaiting approval" }
-    check(approval.isPendingAt(at)) { "Approval is no longer valid" }
-    return transitionTo(TaskStatus.EXECUTING, at)
-}
-```
-
-## 按任务类型的验收矩阵
-
-| 变更类型 | 必需不变量/测试 |
-| --- | --- |
-| 纯建议规划 | `VALIDATING → COMPLETED`；重复 Worker 投递不产生额外迁移。 |
-| 含写操作的计划 | `VALIDATING → AWAITING_APPROVAL`；决定前不得调用连接器。 |
-| 批准/编辑/拒绝 | actor/版本/过期/schema 检查；拒绝/取消不产生外部动作。 |
-| 外部动作 | 动作幂等；重复投递只产生一次连接器写入；部分结果可见且可重试。 |
-| 重试/回收 | 重试预算/退避；过期租约可安全恢复；忽略终态任务。 |
-| 新状态/事件 | 生命周期、聚合、持久化、API/事件兼容、时间线和恢复测试均更新。 |
+首次引入该能力时至少证明：每个迁移合法性、越权/过期/版本冲突拒绝、未批准动作不可写入、同一动作的重复投递只产生一次副作用、失败/取消/恢复路径不会越过终态。状态/事件/契约变更同时更新领域、迁移、API、恢复测试和产品状态机文档。

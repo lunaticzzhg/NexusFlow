@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -27,12 +28,13 @@ import nexusflow.app.composeapp.generated.resources.app_preferences_placeholder_
 import nexusflow.app.composeapp.generated.resources.app_preferences_placeholder_title
 import nexusflow.app.composeapp.generated.resources.app_tasks_placeholder_body
 import nexusflow.app.composeapp.generated.resources.app_tasks_placeholder_title
+import nexusflow.app.composeapp.generated.resources.auth_logout
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
 @Suppress("FunctionName", "FunctionNaming", "ktlint:standard:function-naming")
-fun AppShell() {
+fun AppShell(onLogout: () -> Unit) {
     val navController = rememberNavController()
     val currentDestination = navController.currentBackStackEntryAsState().value?.destination
 
@@ -80,6 +82,11 @@ fun AppShell() {
                 appPlaceholder(
                     title = stringResource(Res.string.app_preferences_placeholder_title),
                     body = stringResource(Res.string.app_preferences_placeholder_body),
+                    action = {
+                        Button(onClick = onLogout) {
+                            Text(stringResource(Res.string.auth_logout))
+                        }
+                    },
                 )
             }
         }
@@ -90,6 +97,7 @@ fun AppShell() {
 private fun appPlaceholder(
     title: String,
     body: String,
+    action: @Composable () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -100,6 +108,7 @@ private fun appPlaceholder(
             text = title,
             style = MaterialTheme.typography.displaySmall,
         )
+        action()
         Text(
             text = body,
             style = MaterialTheme.typography.bodyLarge,

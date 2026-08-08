@@ -11,4 +11,10 @@
     <string name="app_tasks_placeholder_body">Task content will be available in a later module.</string>
     <string name="app_preferences_placeholder_title">Preferences</string>
     <string name="app_preferences_placeholder_body">Preference controls will be available in a later module.</string>
+    <string name="auth_login_title">Welcome to Orbit</string>
+    <string name="auth_login_description">Sign in to securely continue to your workspace.</string>
+    <string name="auth_continue_with_google">Continue with Google</string>
+    <string name="auth_unavailable_description">Sign-in is unavailable right now. Please try again.</string>
+    <string name="auth_retry">Try again</string>
+    <string name="auth_logout">Sign out</string>
 </resources>

@@ -7,8 +7,8 @@
 - **MVP 产品范围**：[requirements.md](requirements.md)。
 - **需求验收**：本文件各模块的“独立验收”小节与 [requirements.md](requirements.md) 的 MVP 验收共同构成实施验收依据。
 - **任务与进度**：[delivery-plan.md](delivery-plan.md)。
-- **后端状态与契约权威**：`contracts/src/main/kotlin/com/nexusflow/contracts/`；特别是 `TaskContracts.kt` 的任务状态机。
-- **当前实现事实**：后端已有健康检查、`POST /v1/tasks`、`GET /v1/tasks/{taskId}` 与进程内规划骨架；其余接口在本文均标为“拟新增”。
+- **后端状态与契约权威**：已落地 HTTP 契约位于 `contracts/src/commonMain/kotlin/com/nexusflow/contracts/api/`；任务模块启动时，其任务状态机与 HTTP DTO 必须先作为共享 `contracts` 建立，再由 App 与 backend 共同使用。
+- **当前实现事实**：后端当前仅有健康检查和认证 API；任务 API、任务状态机与规划运行时均未实现，本文其余任务相关接口均为“拟新增”。
 - **非目标**：不在本文创建新的通用框架、Service Locator、全局 Navigator、业务平台分叉或过早的 Gradle 模块拆分。
 
 ## 2. 统一 App 架构
@@ -32,7 +32,7 @@ flowchart LR
 - `Route` 负责 ViewModel、导航和系统 UI Result 映射；`Screen`/组件不持有 `NavController`、Repository、ViewModel 或平台对象。
 - REST 详情是任务状态权威；SSE 仅传递增量提示。收到事件、断线重连、前后台恢复或版本缺口后重新拉取 REST 快照。
 - 用户、租户或会话变化时，以稳定 context key 重建对应 App Shell、导航树、ViewModel、缓存观察和 SSE 运行态；旧请求的迟到结果不得写入新身份。
-- 业务规则、审批、缓存策略、重试和文案在 `commonMain`；Android/iOS 仅实现权限、通知、日历、浏览器登录和深链入口等原子能力。
+- 业务规则、审批、缓存策略、重试和文案在 `commonMain`；Android/iOS 仅实现权限、通知、日历、原生身份授权和深链入口等原子能力。
 
 ### 2.2 Core 与 feature 的边界
 
@@ -47,7 +47,7 @@ flowchart LR
 
 ## 3. 任务状态与接口原则
 
-任务状态以当前可执行契约为准：
+任务模块开始时须先冻结以下状态契约：
 
 ```text
 QUEUED → GATHERING_CONTEXT → PLANNING → VALIDATING
@@ -61,8 +61,8 @@ App 不推断或本地推进任务状态。它仅提交命令、展示服务器�
 | 接口类别 | 接口 | 状态 |
 | --- | --- | --- |
 | 健康检查 | `GET /health/live`、`GET /health/ready` | 已有 |
-| 创建任务 | `POST /v1/tasks` | 已有骨架 |
-| 任务详情 | `GET /v1/tasks/{taskId}` | 已有骨架 |
+| 创建任务 | `POST /v1/tasks` | 拟新增 |
+| 任务详情 | `GET /v1/tasks/{taskId}` | 拟新增 |
 | 偏好 | `GET/PUT /v1/preferences/me` | 拟新增 |
 | 任务列表 | `GET /v1/tasks?status=&cursor=` | 拟新增 |
 | 任务事件 | `GET /v1/tasks/{taskId}/events?after=` | 拟新增 |
@@ -70,8 +70,10 @@ App 不推断或本地推进任务状态。它仅提交命令、展示服务器�
 | 审批决定 | `POST /v1/tasks/{taskId}/approvals/{approvalId}/decisions` | 拟新增，需冻结路径 |
 | 失败动作重试 | `POST /v1/tasks/{taskId}/actions/{actionId}/retry` | 拟新增 |
 | 设备通知注册 | `POST /v1/devices/push-tokens` | 拟新增 |
+| Google 登录交换 | `POST /v1/auth/google/exchange` | 已有 |
+| 会话刷新 / 登出 | `POST /v1/auth/refresh`、`POST /v1/auth/logout` | 已有 |
 
-所有写命令均使用 `Idempotency-Key`。改变既有任务的命令还必须携带 `expectedVersion`；后端返回 `409 TASK_STATE_CONFLICT` 时，App 拉取最新快照并要求用户重新确认。
+任务模块实现后，所有任务写命令均使用 `Idempotency-Key`。改变既有任务的命令还必须携带 `expectedVersion`；后端返回 `409 TASK_STATE_CONFLICT` 时，App 拉取最新快照并要求用户重新确认。
 
 ## 4. MVP 模块
 
@@ -104,12 +106,13 @@ sequenceDiagram
     participant App as AppRoot
     participant S as SessionController
     participant Store as SecureStore
-    participant Auth as OIDC Browser / API
+    participant Google as Credential Manager / Google
+    participant Auth as Auth API
     App->>S: restore()
     S->>Store: read token snapshot
     alt 可恢复
-        S->>Auth: validate or refresh
-        Auth-->>S: authenticated identity
+        S->>Auth: refresh NexusFlow session
+        Auth-->>S: refreshed session or rejection
         S-->>App: AppContextSnapshot
     else 无会话或失效
         S-->>App: Unauthenticated
@@ -118,10 +121,12 @@ sequenceDiagram
 
 | 项目 | 方案 |
 | --- | --- |
-| 后端 | 是。OIDC/JWT 鉴权边界；业务接口使用 Bearer Token。 |
+| 后端 | 是。后端验证 Google ID Token 后签发 NexusFlow JWT；业务接口只使用 NexusFlow Bearer Token。 |
 | 主要类型 | `SessionController`、`AuthRepository`、`AuthGate`、`AppContextSnapshot`。 |
-| 注意事项 | Token 仅存安全平台存储，绝不进入 UI 状态/日志；用户或租户切换时关闭旧 SSE、取消旧请求、失效缓存并用 `key(contextId)` 重建 Shell。 |
-| 独立验收 | 无会话进入登录/开发身份入口；登录后进入引导/首页；登出后无法查看旧任务缓存。 |
+| 注意事项 | 先完成 PostgreSQL/Flyway、后端会话与 Bearer 鉴权，再接 Android Credential Manager；Token 仅存安全平台存储，绝不进入 UI 状态/日志；用户或租户切换时关闭旧 SSE、取消旧请求、失效缓存并用 `key(contextId)` 重建 Shell。 |
+| 独立验收 | 无会话进入 Google 登录入口；Android 弹出 Credential Manager 原生账号选择；登录后进入引导/首页；登出后无法查看旧任务缓存。 |
+
+本期只实现 Android Google 登录。Apple 登录、iOS Google、Android Apple 浏览器降级、Keycloak 与浏览器 OIDC/PKCE 不属于当前交付；它们不得作为本期的隐藏实现或并行身份路径。Google 身份验证、NexusFlow Access/Refresh Token、用户/租户/身份/会话持久化与 Bearer `ActorContext` 是本模块的最小基础设施，而不是后续替换的 Mock。
 
 ### A2. 首次引导（`feature/onboarding`）
 
@@ -209,7 +214,7 @@ sequenceDiagram
 
 | 项目 | 方案 |
 | --- | --- |
-| 后端 | 是。现有 `POST /v1/tasks` 扩展为包含 `timeRange`、`constraints` 与偏好快照语义。 |
+| 后端 | 是。拟新增 `POST /v1/tasks`，包含 `timeRange`、`constraints` 与偏好快照语义。 |
 | 失败 | 空文本为本地错误；网络超时允许重试同一 key；`409 IDEMPOTENCY_CONFLICT` 显示不可重放错误。 |
 | 注意事项 | `202 Accepted` 只表示任务已接收，不表示计划已经生成；提交时禁用按钮，直到获得明确结果。 |
 | 独立验收 | 连续点击与网络重放只创建一个任务，且立即获得 task ID。 |

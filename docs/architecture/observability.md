@@ -116,10 +116,6 @@ rg -n "LogLevel\\.WARN|logger\\.warn|fun warn\\(|\\.warn\\(|\\bWARN\\b" app/comp
 4. Mapper 或 SDK 的故障不改变业务行为。
 5. DI 能解析 Reporter 与当前 mapper。
 
-新 feature 在对应 feature 的决策卡中填写字段、事件与验证记录，并遵循本规范的最小字段与脱敏要求。任务/审批模块是当前参考方向：
-
-- `app/composeApp/src/commonMain/kotlin/com/nexusflow/orbit/feature/tasks/observability/`
-- `app/composeApp/src/commonMain/kotlin/com/nexusflow/orbit/feature/tasks/data/DefaultTaskRepository.kt`
-- `app/composeApp/src/commonMain/kotlin/com/nexusflow/orbit/feature/approval/data/ApprovalExecutor.kt`
+新 feature 在对应 feature 的决策卡中填写字段、事件与验证记录，并遵循本规范的最小字段与脱敏要求。任务、审批等未来 feature 可按其各自 `feature/<name>/observability/` 与 data/application 边界放置 Reporter 调用；这些路径不是当前已存在的实现。
 
 例外必须记录真实限制、替代方案、用户/安全影响和重新评估条件；“可能以后会有更多消费者”不是引入全局总线的充分理由。

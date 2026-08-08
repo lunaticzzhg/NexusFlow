@@ -1,6 +1,6 @@
 # 跨端系统 UI 接入规范
 
-本规范约束所有需要前台原生界面的能力：OIDC 浏览器登录、运行时权限、系统日历授权、通知设置、深链，以及未来同类能力。
+本规范约束所有需要前台原生界面的能力：Google Credential Manager 登录、运行时权限、系统日历授权、通知设置、深链，以及未来同类能力。
 
 目标是让 shared feature 保持平台无关，并使取消、异常、窗口销毁和迟到回调都有确定结果。它不是通用事件总线，也不承载导航或业务状态。
 
@@ -108,7 +108,7 @@ Gateway 的当前任务是窗口级瞬态状态，不保存、不恢复、不重
 
 ## 已有能力的参考
 
-- OIDC 登录：`feature/auth/presentation/LoginRoute.kt`。
+- Google 登录与业务 Session 边界：[认证集成规范](authentication.md)。
 - 权限：`core/calendar/CalendarPermissionRoute.kt`。
 - Android 平台执行：`core/platform/AndroidPlatformUiHost.kt`。
 - iOS 平台执行：`core/systemui/IosSystemUiCoordinator.kt` 和 `iosApp/Orbit/IosPlatformUiHost.swift`。
@@ -121,7 +121,7 @@ Gateway 的当前任务是窗口级瞬态状态，不保存、不恢复、不重
 
 - [ ] ViewModel、domain、repository 不依赖平台 UI 类型或原生 SDK。
 - [ ] Request、Result、Effect、Intent 以同一个 `requestId` 串联。
-- [ ] Android 与 iOS 都有明确的成功、取消、不支持和异常结果。
+- [ ] 已支持的平台有明确的成功、取消和异常结果；未支持的平台明确返回 `Failed(Unavailable)`，不得伪造成功。
 - [ ] Host detach、Route 取消、异常和迟到回调不会留下 active/pending 状态。
 - [ ] 为 gateway 关联/取消行为补充测试；为 feature 的 Effect→Intent 映射补充测试。
 - [ ] 运行 `./gradlew :app:composeApp:allTests`、`./scripts/check.sh android`、`./scripts/check.sh ios`；涉及原生授权或第三方 SDK 时补真机烟测。
