@@ -15,6 +15,7 @@
     <string name="auth_login_description">Sign in to securely continue to your workspace.</string>
     <string name="auth_continue_with_google">Continue with Google</string>
     <string name="auth_unavailable_description">Sign-in is unavailable right now. Please try again.</string>
+    <string name="auth_unavailable_title">Unable to sign in</string>
     <string name="auth_retry">Try again</string>
     <string name="auth_logout">Sign out</string>
 </resources>

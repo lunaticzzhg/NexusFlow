@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -19,6 +18,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.nexusflow.app.app.AppShell
 import com.nexusflow.app.core.design.AppSpacing
+import com.nexusflow.app.core.design.feedback.AppErrorState
+import com.nexusflow.app.core.design.feedback.AppFullScreenLoading
 import com.nexusflow.app.core.systemui.GoogleSignInRequest
 import com.nexusflow.app.core.systemui.GoogleSignInResult
 import com.nexusflow.app.core.systemui.SystemUiGateway
@@ -28,6 +29,7 @@ import nexusflow.app.composeapp.generated.resources.auth_login_description
 import nexusflow.app.composeapp.generated.resources.auth_login_title
 import nexusflow.app.composeapp.generated.resources.auth_retry
 import nexusflow.app.composeapp.generated.resources.auth_unavailable_description
+import nexusflow.app.composeapp.generated.resources.auth_unavailable_title
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
@@ -60,7 +62,7 @@ fun AuthGate(
     when (val current = state) {
         AuthState.Restoring,
         AuthState.AuthenticatingGoogle,
-        -> AuthLoading()
+        -> AppFullScreenLoading()
         AuthState.Unauthenticated -> AuthLogin(onGoogleSignIn = { controller.dispatch(AuthIntent.StartGoogleSignIn) })
         is AuthState.Authenticated -> {
             key(current.context.contextId) {
@@ -68,17 +70,6 @@ fun AuthGate(
             }
         }
         AuthState.Unavailable -> AuthUnavailable(onRetry = { controller.dispatch(AuthIntent.Retry) })
-    }
-}
-
-@Composable
-private fun AuthLoading() {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        CircularProgressIndicator()
     }
 }
 
@@ -96,14 +87,13 @@ private fun AuthLogin(onGoogleSignIn: () -> Unit) {
 
 @Composable
 private fun AuthUnavailable(onRetry: () -> Unit) {
-    AuthPage(
-        title = stringResource(Res.string.auth_login_title),
+    AppErrorState(
+        title = stringResource(Res.string.auth_unavailable_title),
         description = stringResource(Res.string.auth_unavailable_description),
-    ) {
-        Button(onClick = onRetry) {
-            Text(stringResource(Res.string.auth_retry))
-        }
-    }
+        actionLabel = stringResource(Res.string.auth_retry),
+        onAction = onRetry,
+        modifier = Modifier.fillMaxSize().padding(AppSpacing.page),
+    )
 }
 
 @Composable
