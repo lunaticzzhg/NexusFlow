@@ -23,6 +23,7 @@ import com.nexusflow.app.core.design.feedback.AppFullScreenLoading
 import com.nexusflow.app.core.systemui.GoogleSignInRequest
 import com.nexusflow.app.core.systemui.GoogleSignInResult
 import com.nexusflow.app.core.systemui.SystemUiGateway
+import kotlinx.coroutines.CancellationException
 import nexusflow.app.composeapp.generated.resources.Res
 import nexusflow.app.composeapp.generated.resources.auth_continue_with_google
 import nexusflow.app.composeapp.generated.resources.auth_login_description
@@ -44,16 +45,7 @@ fun AuthGate(
         controller.effects.collect { effect ->
             when (effect) {
                 is AuthEffect.RequestGoogleSignIn -> {
-                    val result =
-                        systemUiGateway.requestGoogleSignIn(
-                            GoogleSignInRequest(effect.requestId, effect.serverClientId),
-                        )
-                    controller.dispatch(
-                        AuthIntent.GoogleSignInResolved(
-                            requestId = effect.requestId,
-                            result = result.toOutcome(),
-                        ),
-                    )
+                    dispatchGoogleSignInResult(systemUiGateway, effect, controller::dispatch)
                 }
             }
         }
@@ -70,6 +62,24 @@ fun AuthGate(
             }
         }
         AuthState.Unavailable -> AuthUnavailable(onRetry = { controller.dispatch(AuthIntent.Retry) })
+    }
+}
+
+/** Completes the pending auth request before the Route's effect owner is cancelled. */
+private suspend fun dispatchGoogleSignInResult(
+    systemUiGateway: SystemUiGateway,
+    effect: AuthEffect.RequestGoogleSignIn,
+    dispatch: (AuthIntent) -> Unit,
+) {
+    try {
+        val result =
+            systemUiGateway.requestGoogleSignIn(
+                GoogleSignInRequest(effect.requestId, effect.serverClientId),
+            )
+        dispatch(AuthIntent.GoogleSignInResolved(effect.requestId, result.toOutcome()))
+    } catch (error: CancellationException) {
+        dispatch(AuthIntent.GoogleSignInResolved(effect.requestId, GoogleSignInOutcome.Cancelled))
+        throw error
     }
 }
 

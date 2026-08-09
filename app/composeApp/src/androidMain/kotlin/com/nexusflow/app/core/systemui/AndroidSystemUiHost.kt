@@ -10,29 +10,40 @@ import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
-import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.CancellationException
 
-class AndroidSystemUiGateway(
-    private val activity: Activity,
-) : SystemUiGateway {
-    private val activeRequest = Mutex()
-    private val credentialManager = CredentialManager.create(activity)
+/** Activity-owned executor for the existing Android Google Credential Manager interaction. */
+internal class AndroidSystemUiHost {
+    private var activity: Activity? = null
 
-    override suspend fun requestGoogleSignIn(request: GoogleSignInRequest): GoogleSignInResult {
-        if (request.serverClientId.isBlank() || !activeRequest.tryLock()) {
-            return GoogleSignInResult.Unavailable(request.id)
+    fun attach(value: Activity) {
+        val current = activity
+        check(current == null || current === value) {
+            "AndroidSystemUiHost is already attached to a different activity."
         }
+        activity = value
+    }
+
+    fun detach() {
+        activity = null
+    }
+
+    suspend fun execute(request: GoogleSignInRequest): GoogleSignInResult {
+        val foregroundActivity = activity ?: return GoogleSignInResult.Unavailable(request.id)
+        if (request.serverClientId.isBlank()) return GoogleSignInResult.Unavailable(request.id)
 
         return try {
             val result =
-                credentialManager.getCredential(
-                    context = activity,
-                    request =
-                        GetCredentialRequest.Builder()
-                            .addCredentialOption(
-                                GetSignInWithGoogleOption.Builder(request.serverClientId).build(),
-                            ).build(),
-                )
+                CredentialManager
+                    .create(foregroundActivity)
+                    .getCredential(
+                        context = foregroundActivity,
+                        request =
+                            GetCredentialRequest.Builder()
+                                .addCredentialOption(
+                                    GetSignInWithGoogleOption.Builder(request.serverClientId).build(),
+                                ).build(),
+                    )
             result.credential.toGoogleSignInResult(request.id)
         } catch (_: GetCredentialCancellationException) {
             GoogleSignInResult.Cancelled(request.id)
@@ -45,14 +56,14 @@ class AndroidSystemUiGateway(
                     "credentialType=${exception.type}",
             )
             GoogleSignInResult.Failed(request.id)
+        } catch (exception: CancellationException) {
+            throw exception
         } catch (exception: Exception) {
             Log.e(
                 LOG_TAG,
                 "google_credential_request_failed exceptionClass=${exception.javaClass.simpleName}",
             )
             GoogleSignInResult.Failed(request.id)
-        } finally {
-            activeRequest.unlock()
         }
     }
 }
@@ -75,4 +86,4 @@ private fun androidx.credentials.Credential.toGoogleSignInResult(requestId: Syst
         else -> GoogleSignInResult.Failed(requestId)
     }
 
-private const val LOG_TAG = "AndroidSystemUiGateway"
+private const val LOG_TAG = "AndroidSystemUiHost"
