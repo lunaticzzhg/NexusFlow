@@ -2,10 +2,10 @@
 
 ## Decision and scope
 
-v0.1 uses **direct Google identity validation and a NexusFlow-owned business session**. The Android client starts Google sign-in with Credential Manager's system account-selection sheet, sends the resulting Google ID token to the backend, and receives NexusFlow access and refresh tokens in return.
+v0.1 uses **direct Google identity validation and a NexusFlow-owned business session**. Android starts Google sign-in with Credential Manager's system account-selection sheet; iOS starts the native Google Sign-In SDK from its UIKit host. Both send only the resulting Google ID token to the backend and receive NexusFlow access and refresh tokens in return.
 
 ```text
-Android Credential Manager
+Android Credential Manager / iOS Google Sign-In SDK
   -> Google ID token
   -> POST /v1/auth/google/exchange
   -> verify Google identity
@@ -35,7 +35,7 @@ The request boundary is explicit: `AuthSessionController` depends on the domain 
 
 `AuthGate` is the root-level consumer: `Restoring` shows loading, `Unauthenticated` shows Google login, `Authenticated` renders the app shell, and `Unavailable` offers retry. Tokens, authorization codes, Google ID tokens, emails and provider profile fields never enter UI state, logs, analytics attributes, or navigation arguments.
 
-The Android platform bridge is an atomic adapter only: it opens Credential Manager, returns a structured Google credential, cancellation or failure, and does not store tokens or navigate. The shared flow owns all session decisions.
+Each platform bridge is an atomic adapter only: it opens the native Google account UI, returns a structured Google credential, cancellation or failure, and does not store tokens or navigate. iOS keeps UIKit presentation, Google SDK callbacks and URL handling in the Swift host; its Kotlin bridge owns only the active request continuation. The shared flow owns all session decisions.
 
 ## Identity and session model
 
@@ -105,7 +105,7 @@ The slice is complete only when all of the following are proven:
 - The same verified Google subject resolves to one NexusFlow user; a client-supplied user, tenant or role cannot change the result.
 - Refresh rotation invalidates the old refresh token, detects replay, and logout prevents another refresh for that session.
 - Business routes reject Google credentials and development headers in production; they accept only a valid NexusFlow access token.
-- Android opens Credential Manager's native account picker, cancellation returns to a retryable login state, and successful exchange enters a fresh authenticated shell.
+- Android opens Credential Manager's native account picker and iOS opens the Google Sign-In SDK account UI; cancellation returns to a retryable login state, and successful exchange enters a fresh authenticated shell.
 - Logout or identity change cannot reveal the old navigation stack, cached data or scoped runtime.
 
-Apple, iOS Google login, Android Apple browser fallback, explicit account linking, multi-device session management, MFA, and any identity-broker introduction remain separate future decisions. Each needs its own provider configuration, backend verifier/contract, lifecycle tests and product acceptance before implementation.
+Apple, Android Apple browser fallback, explicit account linking, multi-device session management, MFA, and any identity-broker introduction remain separate future decisions. Each needs its own provider configuration, backend verifier/contract, lifecycle tests and product acceptance before implementation.

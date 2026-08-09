@@ -7,14 +7,15 @@
 - 任务按技术方案的 F0–F5 阶段排序；每项只交付一个可验证行为。
 - “已验证”仅表示对应代码与自动化测试已经存在并通过；不代表整个用户模块完成。
 - “进行中”表示已有可复用骨架，但尚未满足该任务验收；“未开始”表示没有对应实现。
-- 当前验证记录：`./gradlew :contracts:jvmTest :backend:test` 与 `./gradlew :app:composeApp:ktlintCheck :app:composeApp:allTests :app:composeApp:assembleDebug :app:composeApp:iosSimulatorArm64Test` 已通过。Docker 当前不可用，尚未实跑 PostgreSQL/Flyway；本环境无 Android 真机，未验证 Credential Manager 实际交互。
+- 当前自动化验证记录：`./gradlew --no-daemon :contracts:jvmTest :backend:test :app:composeApp:ktlintCheck :app:composeApp:allTests :app:composeApp:assembleDebug` 已通过，`git diff --check` 已通过。
+- 当前本地联调记录：Docker PostgreSQL 已启动且 Flyway 已实跑 V001 身份/会话迁移；Android 真机已通过 `adb reverse` 连通本机后端，完成 Google Credential Manager 登录、`POST /v1/auth/google/exchange` 与 NexusFlow 业务会话建立。后端本地启动脚本已验证 HTTP(S) 代理下的 Google JWKS 获取。
 
 ## 2. 当前需求进度总览
 
 | 模块 | 当前进度 | 已有证据 | 主要缺口 |
 | --- | --- | --- | --- |
-| A0 应用基础壳 | 进行中 | KMP 启动入口、主题、`RuntimeConfig`、根导航与三 Tab 占位页已存在。 | 全局反馈、Debug 入口。 |
-| A1 会话与启动恢复 | 已完成 | Google Session Gate、Android Credential Manager、平台安全存储、NexusFlow Access/Refresh 业务 Token、PostgreSQL 会话与 Bearer 鉴权已落地。 | Docker PostgreSQL/Flyway 与 Android 真机 Credential Manager 仍待环境验证。 |
+| A0 应用基础壳 | 已完成 | KMP 启动入口、设计 Token、`RuntimeConfig`、根导航与三 Tab 占位页已在 Android Debug 真机启动并验证导航。 | 全局 Toast/通用 Loading/Error 仍作为 F0-03 单独交付。 |
+| A1 会话与启动恢复 | 已完成 | Google Session Gate、Android Credential Manager、安全存储、NexusFlow Access/Refresh 业务 Token、PostgreSQL 会话、Bearer 鉴权与本地端到端 Google 登录均已验证。 | iOS Google 登录与 Apple 登录不在本期范围；真实设备上的刷新、登出和会话失效边界仍可补充回归。 |
 | A2 首次引导 | 未开始 | — | 偏好 API、引导 UI、草稿和保存。 |
 | A3 偏好与设置 | 未开始 | — | 版本化偏好、冲突处理、设置页。 |
 | A4 首页 | 未开始 | — | 首页摘要、待审批入口、创建入口。 |
@@ -36,7 +37,7 @@
 | ID | 任务 | 依赖 | 状态 | 独立验收 |
 | --- | --- | --- | --- | --- |
 | F0-01 | 建立根 `NavHost` 与 `AppShell`，包含首页、任务、偏好三个占位入口。 | 无 | 已验证 | Android Debug APK 可启动后可在三个入口间导航；路由只携带 ID。 |
-| F0-02 | 搭建认证基础设施并建立 Google Session Gate 与 `AppContextSnapshot`：PostgreSQL/Flyway 身份会话表、Google 验证、NexusFlow Access/Refresh Token、Bearer 鉴权、Android Credential Manager、安全存储与登出。 | F0-01 | 已完成 | 无会话进入 Google 原生登录；有效 Google ID Token 建立业务会话；刷新/登出正确轮换或撤销；身份变化销毁旧 Shell。已通过 `./gradlew :contracts:jvmTest :backend:test`、`./gradlew :app:composeApp:ktlintCheck :app:composeApp:allTests :app:composeApp:assembleDebug :app:composeApp:iosSimulatorArm64Test`。未覆盖：Docker 当前不可用，尚未实跑 PostgreSQL/Flyway；本环境无 Android 真机，未验证 Credential Manager 实际交互。 |
+| F0-02 | 搭建认证基础设施并建立 Google Session Gate 与 `AppContextSnapshot`：PostgreSQL/Flyway 身份会话表、Google 验证、NexusFlow Access/Refresh Token、Bearer 鉴权、Android Credential Manager、安全存储与登出。 | F0-01 | 已完成 | Android 真机已完成 Google 原生账号选择，后端收到 `POST /v1/auth/google/exchange` 并建立业务会话；PostgreSQL/Flyway V001 已实跑；设备经 `adb reverse` 连通本机服务。自动化验证已覆盖会话恢复、刷新 Token 轮换与复用撤销、无效 Google 身份拒绝、KMP 编译/测试与 Debug APK 构建。未覆盖：真实设备上的刷新、登出及会话失效回归；iOS Google 登录、Apple 登录不在本期范围。 |
 | F0-03 | 建立全局 Toast、Loading/Error 基础接入与中英文资源约束。 | F0-01 | 未开始 | 根部仅一个 Toast Host；空内容失败显示 ErrorState；新增文案有英文和中文资源。 |
 
 ### F1：固定数据的任务体验
@@ -95,7 +96,7 @@
 
 ## 4. 当前优先级与下一步
 
-当前仅 A0 应用基础壳与 A1 会话基础设施具备实现证据。下一步必须从需求基线中选择一个新的产品模块，并为它建立独立的最小薄切片；不得恢复或扩展已移除的 Task/AI 种子代码。
+当前 A0 应用基础壳与 A1 会话基础设施已完成并具备真机联调证据。下一步必须从需求基线中选择一个新的产品模块，并为它建立独立的最小薄切片；不得恢复或扩展已移除的 Task/AI 种子代码。
 
 建议优先在 A2 首次引导、A3 偏好与设置、A4 首页中选择一个模块，确认其权威状态、必要的后端基础设施和独立验收后再开始实现。若选择任务链路，则应从 F2-01 开始重新设计和实现，不能以任何旧内存 API、规划器或契约作为已完成前提。Apple 登录、Keycloak、浏览器 OIDC/PKCE 和其他 Provider 不属于本期任务。每项完成后更新本文的状态、证据、验证命令和未覆盖风险。
 
