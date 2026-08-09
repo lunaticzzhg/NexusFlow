@@ -1,35 +1,39 @@
 ---
 name: boltzlog-sync
-description: Perform a full comparison of NexusFlow with the local Boltzlog KMP/Compose reference project and turn its mature architecture, core capabilities, and feature implementations into NexusFlow-compatible migration proposals. Use when asked to periodically sync Boltzlog design/implementation, inspect it comprehensively, identify reusable patterns, or selectively port a Boltzlog capability into NexusFlow.
+description: Compare every maintained NexusFlow KMP App implementation against the local Boltzlog reference, treating Boltzlog's mature architecture, lifecycle, module boundaries, platform ports, and test depth as the default implementation standard while preserving NexusFlow product/backend contracts. Use when asked to periodically sync Boltzlog design/implementation, inspect it comprehensively, identify alignment gaps, or selectively port a Boltzlog capability.
 ---
 
 # Boltzlog Sync
 
-Use Boltzlog as a source of proven patterns, not as an authority over Orbit product rules or backend contracts. Default to a read-only assessment. Do not modify NexusFlow or copy code until the user selects a proposal or explicitly requests implementation.
+Use Boltzlog as the default App implementation standard: its mature architecture, lifecycle ownership, module boundaries, shared/platform split, state handling, failure behavior, and relevant test depth should be adopted unless NexusFlow has concrete contrary evidence. NexusFlow product facts and backend contracts remain authoritative over Boltzlog product semantics and wire contracts. Default to a read-only assessment. Do not modify NexusFlow or copy code until the user selects a proposal or explicitly requests implementation.
 
 ## Source and authority
 
 - Read `AGENTS.md` and `.agents/skills/INDEX.md` first.
 - Treat NexusFlow's product facts, backend contracts, architecture documents, and existing mature implementations as authoritative.
+- Treat a Boltzlog implementation difference as an alignment gap by default. Classify it as an intentional divergence only when a NexusFlow product/backend contract, platform limitation, or demonstrably smaller existing equivalent proves that it must differ. Record that evidence; do not use project age, file count, or a generic ROI claim as a divergence reason.
 - Use the reference-project location and candidate map in [references/reference-map.md](references/reference-map.md).
-- For each candidate, inspect the complete source and its direct callers/tests; never assess it by filename alone.
-- Read the receiving NexusFlow implementation before proposing a new abstraction. Reuse or extend it when that is smaller.
+- Build the review index from **every maintained NexusFlow App source and test** first, then map every entry to its Boltzlog counterpart or explicitly record the absence of one. Cover `commonMain`, Android/iOS platform ports, app entry/composition, feature code, and relevant tests; do not begin from Boltzlog filenames alone.
+- For each mapped implementation, inspect the complete NexusFlow source, complete Boltzlog source, direct callers, and relevant tests. Never assess either project by filename, package shape, or a representative sample alone.
+- Read the receiving NexusFlow implementation before proposing a port. For compatible feature-free foundations, prefer the complete Boltzlog implementation and tests over a new NexusFlow-specific rewrite.
 - For a feature-free foundation module whose dependency closure and contracts are compatible, prefer a direct source port with only mechanical adaptation (package/import names, target runtime/configuration interfaces, and platform bindings). Port its relevant tests with it. Do not rewrite a proven core mechanism merely to make it look native to NexusFlow.
 
 ## Synchronization workflow
 
-1. Compare project norms and accumulated experience first: read both projects' `AGENTS.md`, skill indexes/workflows, architecture documents, product/backend contracts, verification conventions, and mature tests. Establish NexusFlow's authoritative rules and record intentional differences before reviewing source modules.
-2. Compare all maintained Boltzlog foundation modules second: `core/`, app entry/composition, shared runtime/configuration, platform ports, and their tests. Match each against the equivalent NexusFlow mechanism or explicitly record its absence. Ignore generated output, build artifacts, and branding.
-3. Compare business modules last: inspect every maintained Boltzlog feature's `presentation`, `domain`, `data`, and `di` patterns, including representative callers and tests. Assess only transferable architecture and implementation patterns; ignore product-specific flows, fixtures, copy, and models.
-4. Use Git history and working-tree status only as supplementary evidence for a candidate's maturity or recent evolution; do not use it to restrict this full comparison.
-5. Compare each candidate against NexusFlow's existing code and its authoritative backend/product rules. Read the matching Orbit skill before evaluating or implementing a candidate in its domain.
-6. Classify every reviewed candidate:
+1. Compare project norms and accumulated experience first: read both projects' `AGENTS.md`, skill indexes/workflows, architecture documents, product/backend contracts, verification conventions, and mature tests. Establish the narrow set of NexusFlow facts that may require intentional divergence before reviewing source modules.
+2. Build a complete NexusFlow App inventory second. Enumerate each maintained implementation and test in app entry/composition, `core`, `feature`, `commonMain`, Android, and iOS. For each row, name the owning behavior, current callers, current tests, and its expected Boltzlog comparison area.
+3. Compare all maintained Boltzlog foundation modules third: `core/`, app entry/composition, shared runtime/configuration, platform ports, and their tests. Match every NexusFlow inventory row to an equivalent Boltzlog mechanism, a Boltzlog absence, or an explicitly product-specific non-equivalence. Ignore generated output, build artifacts, branding, copy, and identifiers.
+4. Compare business modules fourth: inspect every maintained Boltzlog feature's `presentation`, `domain`, `data`, and `di` patterns, including representative callers and tests. For each current NexusFlow feature implementation, assess the closest mature Boltzlog pattern for layering, state ownership, lifecycle, errors, DI, and test coverage; never port business models or workflows wholesale.
+5. For every mapped row, record one parity verdict: **aligned**, **direct-port candidate**, **adapted-port candidate**, **intentional divergence**, **defer until named consumer**, or **no reference equivalent**. An intentional divergence must cite the NexusFlow authority that requires it; a defer must name the exact product/contract trigger that will reopen it.
+6. Use Git history and working-tree status only as supplementary evidence for a candidate's maturity or recent evolution; do not use it to restrict this full comparison.
+7. Compare each candidate against NexusFlow's existing code and its authoritative backend/product rules. Read the matching Orbit skill before evaluating or implementing a candidate in its domain.
+8. Classify every reviewed candidate:
    - **Adopt**: an app-wide mechanism with an invariant NexusFlow currently lacks.
    - **Adapt**: a useful pattern whose protocol, model, lifecycle, or UI behavior must be rewritten for Orbit.
    - **Defer**: useful only after a concrete NexusFlow consumer exists.
    - **Reject**: conflicts with Orbit facts, duplicates existing capability, or adds complexity without current ROI.
-7. Rank Adopt/Adapt items by current NexusFlow need and dependency order. Propose the smallest vertical slice; do not create a framework, Gradle module, Koin scope, event bus, or generic manager in anticipation of reuse.
-8. Stop after the candidate table unless implementation is explicitly authorized. Do not begin a migration from a positive classification alone; wait for the user to approve one or more named candidates, or the table as a whole. For selected work, follow the relevant Orbit feature/backend/AI workflow and run its required verification.
+9. Rank Adopt/Adapt items by dependency order, correctness, and user-visible risk. Propose the smallest vertical slice. Do not create a framework, Gradle module, Koin scope, event bus, or generic manager unless the Boltzlog mechanism itself is required by a current NexusFlow behavior or its missing lifecycle invariant has been demonstrated.
+10. Stop after the report and approval gate unless implementation is explicitly authorized. Do not begin a migration from a positive classification alone; wait for the user to approve one or more named candidates, or the table as a whole. For selected work, follow the relevant Orbit feature/backend/AI workflow and run its required verification.
 
 ## Foundation port decision
 
@@ -63,11 +67,12 @@ After approval, return a concise decision table with:
 
 Also state:
 
+- a complete parity ledger for every maintained NexusFlow App implementation: current file(s), Boltzlog counterpart or absence, callers/tests checked, parity verdict, and exact evidence for every divergence or defer;
 - confirmation that this was a full current-state comparison, plus the checked revisions/status as supplementary evidence when useful;
-- evidence that the review followed the required order: norms/experience, foundation modules, then business modules;
+- evidence that the review followed the required order: norms/experience, NexusFlow inventory, foundation modules, then business modules;
 - authoritative NexusFlow contracts/rules checked;
 - a recommended implementation order and explicit non-goals;
-- unchanged or rejected areas only when that prevents duplicate work.
+- unchanged, deferred, and rejected areas when that prevents duplicate work; do not hide an unaligned current implementation merely because it is not proposed for immediate migration.
 
 Keep Defer and Reject candidates out of the initial approval table. Summarize them after the table only when they prevent duplicate work or clarify why a seemingly obvious capability is absent. A user approval may be broad (all listed items) or narrow (specific named rows); treat all unapproved candidates as out of scope.
 
@@ -79,4 +84,4 @@ Link exact local files for both projects. Keep business concepts in `feature/<na
 - Do not introduce caching, pagination, runtime coordination, SSE, push, media, deep links, or platform ports until an Orbit product path needs them.
 - For user/tenant/session-scoped state, preserve Orbit's REST authority, server validation, and context invalidation requirements; a client pattern is only an implementation candidate.
 - Preserve cancellation by rethrowing `CancellationException`; do not turn it into a user error.
-- Treat a Boltzlog difference as evidence to investigate, not a defect in NexusFlow.
+- Treat a Boltzlog difference as a required alignment investigation. Keep a NexusFlow difference only with the explicit authority or platform evidence required above.

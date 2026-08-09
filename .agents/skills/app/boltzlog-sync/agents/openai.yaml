@@ -1,4 +1,4 @@
 interface:
   display_name: "Boltzlog 架构同步"
-  short_description: "筛选并迁移适配 NexusFlow 的 Boltzlog 优秀设计"
-  default_prompt: "使用 $boltzlog-sync 审查 Boltzlog 增量，并提出适配 NexusFlow 的候选迁移项。"
+  short_description: "以 Boltzlog 为基线逐项审查并对齐 NexusFlow App"
+  default_prompt: "使用 $boltzlog-sync 逐项对比 NexusFlow 当前 App 与 Boltzlog，并提出按优先级对齐的候选迁移项。"

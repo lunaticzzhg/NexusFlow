@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -26,9 +25,6 @@ fun AppRoot(
 ) {
     AppTheme {
         val toastHostState = rememberAppToastHostState()
-        LaunchedEffect(authSessionController) {
-            authSessionController.restore()
-        }
         CompositionLocalProvider(LocalAppToast provides toastHostState) {
             Box(modifier = Modifier.fillMaxSize()) {
                 AuthGate(

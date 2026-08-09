@@ -2,6 +2,7 @@ package com.nexusflow.app
 
 import android.app.Application
 import com.nexusflow.app.app.initKoin
+import com.nexusflow.app.app.startup.startAppStartup
 import com.nexusflow.app.core.config.platformRuntimeConfig
 import com.nexusflow.app.core.network.platformHttpClient
 import com.nexusflow.app.core.security.AndroidSecureStore
@@ -21,5 +22,6 @@ class App : Application() {
                 appClock = platformAppClock(),
                 httpClient = platformHttpClient(),
             )
+        startAppStartup(koinApplication)
     }
 }

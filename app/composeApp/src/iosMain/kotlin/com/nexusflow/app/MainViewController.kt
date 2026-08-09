@@ -2,6 +2,7 @@ package com.nexusflow.app
 
 import androidx.compose.ui.window.ComposeUIViewController
 import com.nexusflow.app.app.initKoin
+import com.nexusflow.app.app.startup.startAppStartup
 import com.nexusflow.app.core.config.platformRuntimeConfig
 import com.nexusflow.app.core.network.platformHttpClient
 import com.nexusflow.app.core.security.IosKeychainExecutor
@@ -22,6 +23,7 @@ fun mainViewController(
             appClock = platformAppClock(),
             httpClient = platformHttpClient(),
         )
+    startAppStartup(koinApplication)
     val authSessionController = koinApplication.koin.get<AuthSessionController>()
     return ComposeUIViewController {
         AppRoot(

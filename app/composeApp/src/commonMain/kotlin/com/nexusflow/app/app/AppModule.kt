@@ -1,5 +1,6 @@
 package com.nexusflow.app.app
 
+import com.nexusflow.app.app.startup.appStartupModule
 import com.nexusflow.app.core.config.RuntimeConfig
 import com.nexusflow.app.core.network.networkModule
 import com.nexusflow.app.core.observability.observabilityModule
@@ -44,7 +45,7 @@ fun appModule(
     single { AuthSessionStore(get()) }
     single<AuthDiagnosticReporter> { AppLoggerAuthDiagnosticReporter(get()) }
     single { AuthSessionController(get(), get(), get(), get(), get()) }
-    includes(observabilityModule, networkModule(httpClient), taskModule)
+    includes(observabilityModule, networkModule(httpClient), taskModule, appStartupModule)
 }
 
 private var koinApplication: KoinApplication? = null
