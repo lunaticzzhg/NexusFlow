@@ -7,38 +7,13 @@ object ApiVersion {
     const val V1 = "v1"
 }
 
-/** Standard, versioned error body returned by all API services. */
+/** Standard, versioned response body returned by all JSON API services. */
 @Serializable
-data class ApiErrorResponse(
-    val code: ApiErrorCode,
-    val message: String,
-    val traceId: String,
-    val details: List<ApiFieldViolation> = emptyList(),
-) {
-    init {
-        require(message.isNotBlank()) { "message must not be blank" }
-        require(traceId.isNotBlank()) { "traceId must not be blank" }
-    }
-}
-
-@Serializable
-data class ApiFieldViolation(
-    val field: String,
-    val reason: String,
+data class KResponse<T>(
+    val code: Int,
+    val message: String? = null,
+    val data: T? = null,
 )
-
-@Serializable
-enum class ApiErrorCode {
-    VALIDATION_FAILED,
-    UNAUTHENTICATED,
-    FORBIDDEN,
-    NOT_FOUND,
-    CONFLICT,
-    IDEMPOTENCY_CONFLICT,
-    RATE_LIMITED,
-    DEPENDENCY_UNAVAILABLE,
-    INTERNAL_ERROR,
-}
 
 /** Google-issued ID tokens are exchanged exactly once for a NexusFlow session. */
 @Serializable

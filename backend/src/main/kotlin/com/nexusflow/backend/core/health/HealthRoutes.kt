@@ -1,21 +1,22 @@
 package com.nexusflow.backend.core.health
 
+import com.nexusflow.backend.core.http.respondError
+import com.nexusflow.backend.core.http.respondSuccess
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
-import io.ktor.server.response.respond
 import io.ktor.server.routing.Routing
 import io.ktor.server.routing.get
 import kotlinx.serialization.Serializable
 
 fun Routing.healthRoutes(readinessProbe: ReadinessProbe) {
     get("/health/live") {
-        call.respond(HealthResponse(status = "ok"))
+        call.respondSuccess(HealthResponse(status = "ok"))
     }
     get("/health/ready") {
         if (readinessProbe.isReady()) {
-            call.respond(HealthResponse(status = "ready"))
+            call.respondSuccess(HealthResponse(status = "ready"))
         } else {
-            call.respond(HttpStatusCode.ServiceUnavailable, HealthResponse(status = "not_ready"))
+            call.respondError(HttpStatusCode.ServiceUnavailable, "Service is not ready")
         }
     }
 }

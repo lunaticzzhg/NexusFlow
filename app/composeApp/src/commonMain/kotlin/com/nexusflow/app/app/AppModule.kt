@@ -1,12 +1,15 @@
 package com.nexusflow.app.app
 
 import com.nexusflow.app.core.config.RuntimeConfig
+import com.nexusflow.app.core.network.networkModule
 import com.nexusflow.app.core.observability.observabilityModule
 import com.nexusflow.app.core.security.SecureStore
 import com.nexusflow.app.core.time.AppClock
 import com.nexusflow.app.feature.auth.data.AuthApi
+import com.nexusflow.app.feature.auth.data.AuthRemoteDataSource
 import com.nexusflow.app.feature.auth.data.AuthSessionStore
 import com.nexusflow.app.feature.auth.data.DefaultAuthRepository
+import com.nexusflow.app.feature.auth.data.createAuthApi
 import com.nexusflow.app.feature.auth.domain.AuthRepository
 import com.nexusflow.app.feature.auth.observability.AppLoggerAuthDiagnosticReporter
 import com.nexusflow.app.feature.auth.observability.AuthDiagnosticReporter
@@ -30,17 +33,18 @@ fun appModule(
     single { runtimeConfig }
     single<SecureStore> { secureStore }
     single<AppClock> { appClock }
-    single { httpClient }
+    single<AuthApi> { get<de.jensklingenberg.ktorfit.Ktorfit>().createAuthApi() }
+    single { AuthRemoteDataSource(get(), get()) }
     single<AuthRepository> {
         DefaultAuthRepository(
-            authApi = AuthApi(get(), get()),
+            authRemoteDataSource = get(),
             clock = get(),
         )
     }
     single { AuthSessionStore(get()) }
     single<AuthDiagnosticReporter> { AppLoggerAuthDiagnosticReporter(get()) }
     single { AuthSessionController(get(), get(), get(), get(), get()) }
-    includes(observabilityModule, taskModule)
+    includes(observabilityModule, networkModule(httpClient), taskModule)
 }
 
 private var koinApplication: KoinApplication? = null

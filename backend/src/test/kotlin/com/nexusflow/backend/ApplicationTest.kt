@@ -30,7 +30,7 @@ class ApplicationTest {
     }
 
     @Test
-    fun `unexpected failures produce a safe internal problem`() = testApplication {
+    fun `unexpected failures produce a safe unified response`() = testApplication {
         application {
             configureHttpPlatform()
             routing {
@@ -41,7 +41,8 @@ class ApplicationTest {
         val response = client.get("/boom")
         val body = response.bodyAsText()
         assertEquals(HttpStatusCode.InternalServerError, response.status)
-        assertTrue(body.contains("\"code\":\"INTERNAL_ERROR\""))
+        assertTrue(body.contains("\"code\":500"))
+        assertTrue(body.contains("\"message\":\"An unexpected error occurred\""))
         assertTrue(!body.contains("secret implementation detail"))
     }
 
@@ -54,6 +55,6 @@ class ApplicationTest {
 
         val response = client.get("/health/ready")
         assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
-        assertEquals("{\"status\":\"not_ready\"}", response.bodyAsText())
+        assertEquals("{\"code\":503,\"message\":\"Service is not ready\"}", response.bodyAsText())
     }
 }

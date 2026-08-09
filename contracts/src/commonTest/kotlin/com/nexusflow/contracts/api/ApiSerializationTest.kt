@@ -30,4 +30,15 @@ class ApiSerializationTest {
         )
         assertEquals(session, json.decodeFromString<AuthSessionResponse>(encoded))
     }
+
+    @Test
+    fun `responses use one stable envelope for success and failure`() {
+        val success = KResponse(code = 200, data = "payload")
+        val failure = KResponse<String>(code = 422, message = "Invalid request")
+
+        assertEquals("{\"code\":200,\"data\":\"payload\"}", json.encodeToString(success))
+        assertEquals("{\"code\":422,\"message\":\"Invalid request\"}", json.encodeToString(failure))
+        assertEquals(success, json.decodeFromString<KResponse<String>>(json.encodeToString(success)))
+        assertEquals(failure, json.decodeFromString<KResponse<String>>(json.encodeToString(failure)))
+    }
 }

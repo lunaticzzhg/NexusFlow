@@ -1,6 +1,5 @@
 package com.nexusflow.backend.core.http
 
-import com.nexusflow.contracts.api.ApiErrorCode
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.ContentConvertException
@@ -49,16 +48,16 @@ fun Application.configureHttpPlatform() {
 
     install(StatusPages) {
         exception<BadRequestException> { call, _ ->
-            call.respondError(HttpStatusCode.UnprocessableEntity, ApiErrorCode.VALIDATION_FAILED, "Request body is invalid")
+            call.respondError(HttpStatusCode.UnprocessableEntity, "Request body is invalid")
         }
         exception<ContentConvertException> { call, _ ->
-            call.respondError(HttpStatusCode.UnprocessableEntity, ApiErrorCode.VALIDATION_FAILED, "Request body is invalid")
+            call.respondError(HttpStatusCode.UnprocessableEntity, "Request body is invalid")
         }
         exception<Throwable> { call, cause ->
             call.application.environment.log.error(
                 "Unhandled request failure [requestId=${call.callId}, type=${cause::class.simpleName}]",
             )
-            call.respondError(HttpStatusCode.InternalServerError, ApiErrorCode.INTERNAL_ERROR, "An unexpected error occurred")
+            call.respondError(HttpStatusCode.InternalServerError, "An unexpected error occurred")
         }
     }
 }

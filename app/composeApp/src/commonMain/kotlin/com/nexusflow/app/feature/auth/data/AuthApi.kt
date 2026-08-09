@@ -1,80 +1,82 @@
 package com.nexusflow.app.feature.auth.data
 
-import com.nexusflow.app.core.config.RuntimeConfig
+import com.nexusflow.app.core.error.AppException
+import com.nexusflow.app.core.network.ApiCallExecutor
 import com.nexusflow.app.feature.auth.domain.AuthFailure
 import com.nexusflow.contracts.api.AuthSessionResponse
 import com.nexusflow.contracts.api.GoogleExchangeRequest
+import com.nexusflow.contracts.api.KResponse
 import com.nexusflow.contracts.api.LogoutRequest
 import com.nexusflow.contracts.api.RefreshSessionRequest
-import io.ktor.client.HttpClient
-import io.ktor.client.call.body
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.http.ContentType
-import io.ktor.http.HttpStatusCode
-import io.ktor.http.contentType
-import io.ktor.http.isSuccess
-import kotlinx.coroutines.CancellationException
+import de.jensklingenberg.ktorfit.http.Body
+import de.jensklingenberg.ktorfit.http.Headers
+import de.jensklingenberg.ktorfit.http.POST
 
-class AuthApi(
-    private val httpClient: HttpClient,
-    private val runtimeConfig: RuntimeConfig,
+/** Paths owned by the NexusFlow authentication contract. */
+internal object AuthEndpoints {
+    const val GOOGLE_EXCHANGE = "v1/auth/google/exchange"
+    const val REFRESH = "v1/auth/refresh"
+    const val LOGOUT = "v1/auth/logout"
+}
+
+/** The feature-local Ktorfit API. [AuthRemoteDataSource] consumes the common response envelope. */
+internal interface AuthApi {
+    @POST(AuthEndpoints.GOOGLE_EXCHANGE)
+    @Headers(JSON_CONTENT_TYPE_HEADER)
+    suspend fun exchangeGoogleIdToken(
+        @Body request: GoogleExchangeRequest,
+    ): KResponse<AuthSessionResponse>
+
+    @POST(AuthEndpoints.REFRESH)
+    @Headers(JSON_CONTENT_TYPE_HEADER)
+    suspend fun refresh(
+        @Body request: RefreshSessionRequest,
+    ): KResponse<AuthSessionResponse>
+
+    @POST(AuthEndpoints.LOGOUT)
+    @Headers(JSON_CONTENT_TYPE_HEADER)
+    suspend fun logout(
+        @Body request: LogoutRequest,
+    ): KResponse<Unit>
+}
+
+/** Remote Auth protocol boundary: transport envelopes and failures do not escape this type. */
+internal class AuthRemoteDataSource(
+    private val api: AuthApi,
+    private val apiCalls: ApiCallExecutor,
 ) {
     suspend fun exchangeGoogleIdToken(idToken: String): Result<AuthSessionResponse> =
-        postSession(
-            path = "/v1/auth/google/exchange",
-            body = GoogleExchangeRequest(idToken),
-        )
+        apiCalls.execute(AuthEndpoints.GOOGLE_EXCHANGE) {
+            api.exchangeGoogleIdToken(GoogleExchangeRequest(idToken))
+        }.toAuthResult()
 
     suspend fun refresh(refreshToken: String): Result<AuthSessionResponse> =
-        postSession(
-            path = "/v1/auth/refresh",
-            body = RefreshSessionRequest(refreshToken),
-        )
+        apiCalls.execute(AuthEndpoints.REFRESH) {
+            api.refresh(RefreshSessionRequest(refreshToken))
+        }.toAuthResult()
 
     suspend fun logout(refreshToken: String): Result<Unit> =
-        try {
-            val response =
-                httpClient.post(runtimeConfig.apiBaseUrl.trimEnd('/') + "/v1/auth/logout") {
-                    contentType(ContentType.Application.Json)
-                    setBody(LogoutRequest(refreshToken))
-                }
-            when {
-                response.status == HttpStatusCode.NoContent -> Result.success(Unit)
-                response.status == HttpStatusCode.Unauthorized -> throw AuthApiException(AuthFailure.Unauthenticated)
-                else -> throw AuthApiException(AuthFailure.Unavailable)
-            }
-        } catch (exception: CancellationException) {
-            throw exception
-        } catch (exception: Exception) {
-            Result.failure(exception)
-        }
-
-    private suspend fun postSession(
-        path: String,
-        body: Any,
-    ): Result<AuthSessionResponse> =
-        try {
-            val response =
-                httpClient.post(runtimeConfig.apiBaseUrl.trimEnd('/') + path) {
-                    contentType(ContentType.Application.Json)
-                    setBody(body)
-                }
-            when {
-                response.status.isSuccess() -> Result.success(response.body())
-                response.status == HttpStatusCode.Unauthorized -> throw AuthApiException(AuthFailure.Unauthenticated)
-                response.status == HttpStatusCode.UnprocessableEntity -> {
-                    throw AuthApiException(AuthFailure.InvalidCredential)
-                }
-                else -> throw AuthApiException(AuthFailure.Unavailable)
-            }
-        } catch (exception: CancellationException) {
-            throw exception
-        } catch (exception: Exception) {
-            Result.failure(exception)
-        }
+        apiCalls.executeUnit(AuthEndpoints.LOGOUT) {
+            api.logout(LogoutRequest(refreshToken))
+        }.toAuthResult()
 }
 
 class AuthApiException(
     val failure: AuthFailure,
 ) : IllegalStateException()
+
+private fun <T> Result<T>.toAuthResult(): Result<T> =
+    fold(
+        onSuccess = Result.Companion::success,
+        onFailure = { failure -> Result.failure(AuthApiException(failure.toAuthFailure())) },
+    )
+
+private fun Throwable.toAuthFailure(): AuthFailure =
+    when (this) {
+        is AppException.Unauthorized -> AuthFailure.Unauthenticated
+        is AppException.Rejected -> if (code == HTTP_UNPROCESSABLE_ENTITY) AuthFailure.InvalidCredential else AuthFailure.Unavailable
+        else -> AuthFailure.Unavailable
+    }
+
+private const val JSON_CONTENT_TYPE_HEADER = "Content-Type: application/json"
+private const val HTTP_UNPROCESSABLE_ENTITY = 422

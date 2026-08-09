@@ -48,7 +48,7 @@ fun Application.module(profile: BackendRuntimeProfile = BackendRuntimeProfile.fr
 
 `contracts` is the single wire-contract module shared by the App and backend. HTTP DTOs use `kotlinx.serialization`; neither feature owns a duplicate transport DTO or an independent JSON policy. This rule applies only to network contracts, not JDBC records or third-party SDK objects.
 
-The HTTP platform generates or accepts a valid `X-Request-Id` through Ktor `CallId`, returns that ID on every response, and uses it for structured request logs and all Problem responses. `StatusPages` owns malformed-request and unexpected-error responses; feature routes retain ownership of their explicit business-error mappings. The platform never logs authorization headers, tokens, request bodies, or raw exception messages.
+The HTTP platform generates or accepts a valid `X-Request-Id` through Ktor `CallId`, returns that ID on every response, and uses it for structured request logs. All JSON API responses use `KResponse`; `StatusPages` owns malformed-request and unexpected-error responses, while feature routes retain ownership of their explicit business-error mappings. The platform never logs authorization headers, tokens, request bodies, or raw exception messages.
 
 ## Dependency and lifecycle rules
 

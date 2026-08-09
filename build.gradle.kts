@@ -6,4 +6,6 @@ plugins {
     alias(libs.plugins.kotlin.compose) apply false
     alias(libs.plugins.compose.multiplatform) apply false
     alias(libs.plugins.ktlint) apply false
+    id("de.jensklingenberg.ktorfit") version "2.5.2" apply false
+    id("com.google.devtools.ksp") version "2.1.10-1.0.31" apply false
 }

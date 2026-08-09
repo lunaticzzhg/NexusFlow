@@ -1,4 +1,5 @@
 import org.jlleitschuh.gradle.ktlint.KtlintExtension
+import org.jlleitschuh.gradle.ktlint.tasks.BaseKtLintCheckTask
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -7,7 +8,11 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.compose.multiplatform)
     alias(libs.plugins.ktlint)
+    id("com.google.devtools.ksp")
+    id("de.jensklingenberg.ktorfit")
 }
+
+val generatedKspDirectory = layout.buildDirectory.dir("generated/ksp").get().asFile
 
 kotlin {
     androidTarget()
@@ -34,6 +39,7 @@ kotlin {
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.serialization.json)
+            implementation("de.jensklingenberg.ktorfit:ktorfit-lib-light:2.5.2")
         }
         androidMain.dependencies {
             implementation("androidx.activity:activity-compose:${libs.versions.activityCompose.get()}")
@@ -52,6 +58,22 @@ kotlin {
         }
     }
 }
+
+val maintainedCommonMainSources =
+    kotlin.sourceSets
+        .getByName("commonMain")
+        .kotlin
+        .srcDirs
+        .filterNot { directory -> directory.absolutePath.startsWith(generatedKspDirectory.absolutePath) }
+
+tasks
+    .matching {
+        it.name == "runKtlintCheckOverCommonMainSourceSet" ||
+            it.name == "runKtlintFormatOverCommonMainSourceSet"
+    }.configureEach {
+        dependsOn("kspCommonMainKotlinMetadata")
+        (this as BaseKtLintCheckTask).setSource(maintainedCommonMainSources)
+    }
 
 android {
     namespace = "com.nexusflow.app"
@@ -96,5 +118,12 @@ android {
 configure<KtlintExtension> {
     filter {
         exclude("**/generated/**")
+    }
+}
+
+tasks.withType<BaseKtLintCheckTask>().configureEach {
+    doFirst {
+        val generatedDirectory = layout.buildDirectory.get().asFile.absolutePath
+        setSource(source.files.filterNot { file -> file.absolutePath.startsWith(generatedDirectory) })
     }
 }
