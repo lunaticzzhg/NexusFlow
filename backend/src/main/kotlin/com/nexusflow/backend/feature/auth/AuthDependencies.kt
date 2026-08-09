@@ -17,9 +17,13 @@ import io.ktor.server.application.Application
 import io.ktor.server.plugins.di.dependencies
 
 fun Application.configureAuthDependencies() {
+    val applicationLogger = environment.log
     dependencies {
         provide<GoogleIdentityVerifier> {
-            GoogleJwtIdentityVerifier(resolve<BackendRuntimeConfig>().googleAllowedAudiences)
+            GoogleJwtIdentityVerifier(
+                allowedAudiences = resolve<BackendRuntimeConfig>().googleAllowedAudiences,
+                logger = applicationLogger,
+            )
         }
         provide<IdentitySessionRepository> {
             JdbcIdentitySessionRepository(resolve<HikariDataSource>())

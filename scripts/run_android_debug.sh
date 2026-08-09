@@ -7,15 +7,18 @@ PACKAGE_NAME="com.nexusflow.app"
 ACTIVITY_NAME="${PACKAGE_NAME}/.MainActivity"
 APK_PATH="$ROOT_DIR/app/composeApp/build/outputs/apk/debug/composeApp-debug.apk"
 DEVICE_ID="${ANDROID_SERIAL:-}"
+TARGET_KIND="auto"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/run_android_debug.sh [--help]
+Usage: scripts/run_android_debug.sh [--emulator|--device] [--help]
 
 Builds the Android debug APK, installs it on an online Android device, and
-./starts NexusFlow. It forwards the debug API address 127.0.0.1:8080 to the
-Mac host with adb reverse. When multiple devices are connected, select one
-interactively or set ANDROID_SERIAL. Set ADB to override the adb executable.
+starts NexusFlow. Android emulators access the Mac host at 10.0.2.2:8080;
+physical devices use 127.0.0.1:8080 through adb reverse. The target type is
+detected automatically unless --emulator or --device is supplied. When multiple
+devices are connected, select one interactively or set ANDROID_SERIAL. Set ADB
+to override the adb executable.
 
 Environment:
   ADB=/path/to/adb          adb executable to use (default: adb)
@@ -23,19 +26,34 @@ Environment:
 EOF
 }
 
-case "${1:-}" in
-  "")
-    ;;
-  -h|--help)
-    usage
-    exit 0
-    ;;
-  *)
-    echo "Unknown option: $1" >&2
-    usage >&2
-    exit 2
-    ;;
-esac
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --emulator)
+      if [[ "$TARGET_KIND" == "device" ]]; then
+        echo "Conflicting target options: use only one of --emulator or --device." >&2
+        exit 2
+      fi
+      TARGET_KIND="emulator"
+      ;;
+    --device)
+      if [[ "$TARGET_KIND" == "emulator" ]]; then
+        echo "Conflicting target options: use only one of --emulator or --device." >&2
+        exit 2
+      fi
+      TARGET_KIND="device"
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
 
 if ! command -v "$ADB_BIN" >/dev/null 2>&1; then
   echo "adb not found. Install Android platform-tools or set ADB=/path/to/adb." >&2
@@ -106,15 +124,32 @@ if [[ "$("$ADB_BIN" -s "$DEVICE_ID" get-state 2>/dev/null || true)" != "device" 
   exit 1
 fi
 
-echo "Forwarding debug API: device 127.0.0.1:8080 -> Mac 127.0.0.1:8080"
-if ! "$ADB_BIN" -s "$DEVICE_ID" reverse tcp:8080 tcp:8080; then
-  echo "Failed to configure adb reverse for device '$DEVICE_ID'." >&2
-  exit 1
+if [[ "$DEVICE_ID" == emulator-* ]] || [[ "$("$ADB_BIN" -s "$DEVICE_ID" shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')" == "1" ]]; then
+  ACTUAL_TARGET_KIND="emulator"
+else
+  ACTUAL_TARGET_KIND="device"
+fi
+
+if [[ "$TARGET_KIND" != "auto" && "$TARGET_KIND" != "$ACTUAL_TARGET_KIND" ]]; then
+  echo "Target '$DEVICE_ID' is a $ACTUAL_TARGET_KIND, but --$TARGET_KIND was requested." >&2
+  exit 2
+fi
+
+if [[ "$ACTUAL_TARGET_KIND" == "emulator" ]]; then
+  DEBUG_API_BASE_URL="http://10.0.2.2:8080"
+  echo "Using emulator debug API: $DEBUG_API_BASE_URL"
+else
+  DEBUG_API_BASE_URL="http://127.0.0.1:8080"
+  echo "Forwarding debug API: device 127.0.0.1:8080 -> Mac 127.0.0.1:8080"
+  if ! "$ADB_BIN" -s "$DEVICE_ID" reverse tcp:8080 tcp:8080; then
+    echo "Failed to configure adb reverse for device '$DEVICE_ID'." >&2
+    exit 1
+  fi
 fi
 
 cd "$ROOT_DIR"
 echo "Building Android debug APK..."
-./gradlew :app:composeApp:assembleDebug
+./gradlew :app:composeApp:assembleDebug "-PDEBUG_API_BASE_URL=$DEBUG_API_BASE_URL"
 
 if [[ ! -f "$APK_PATH" ]]; then
   echo "Debug APK not found. Expected: $APK_PATH" >&2

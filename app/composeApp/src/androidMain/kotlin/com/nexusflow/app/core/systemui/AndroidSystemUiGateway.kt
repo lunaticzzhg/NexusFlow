@@ -1,10 +1,12 @@
 package com.nexusflow.app.core.systemui
 
 import android.app.Activity
+import android.util.Log
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -36,7 +38,18 @@ class AndroidSystemUiGateway(
             GoogleSignInResult.Cancelled(request.id)
         } catch (_: NoCredentialException) {
             GoogleSignInResult.Cancelled(request.id)
-        } catch (_: Exception) {
+        } catch (exception: GetCredentialException) {
+            Log.e(
+                LOG_TAG,
+                "google_credential_request_failed exceptionClass=${exception.javaClass.simpleName} " +
+                    "credentialType=${exception.type}",
+            )
+            GoogleSignInResult.Failed(request.id)
+        } catch (exception: Exception) {
+            Log.e(
+                LOG_TAG,
+                "google_credential_request_failed exceptionClass=${exception.javaClass.simpleName}",
+            )
             GoogleSignInResult.Failed(request.id)
         } finally {
             activeRequest.unlock()
@@ -50,8 +63,16 @@ private fun androidx.credentials.Credential.toGoogleSignInResult(requestId: Syst
             runCatching { GoogleIdTokenCredential.createFrom(data).idToken }
                 .fold(
                     onSuccess = { idToken -> GoogleSignInResult.Success(requestId, idToken) },
-                    onFailure = { GoogleSignInResult.Failed(requestId) },
+                    onFailure = { exception ->
+                        Log.e(
+                            LOG_TAG,
+                            "google_credential_parse_failed exceptionClass=${exception.javaClass.simpleName}",
+                        )
+                        GoogleSignInResult.Failed(requestId)
+                    },
                 )
         }
         else -> GoogleSignInResult.Failed(requestId)
     }
+
+private const val LOG_TAG = "AndroidSystemUiGateway"
