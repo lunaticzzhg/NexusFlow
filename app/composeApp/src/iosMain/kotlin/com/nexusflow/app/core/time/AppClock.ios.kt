@@ -1,11 +1,12 @@
 package com.nexusflow.app.core.time
 
-import kotlinx.cinterop.ExperimentalForeignApi
-import platform.posix.time
+import platform.Foundation.NSDate
+import platform.Foundation.timeIntervalSince1970
 
-@OptIn(ExperimentalForeignApi::class)
 private object IosAppClock : AppClock {
-    override fun currentTimeMillis(): Long = time(null) * 1_000
+    override fun currentTimeMillis(): Long = epochSecondsToMillis(NSDate().timeIntervalSince1970)
 }
 
 actual fun platformAppClock(): AppClock = IosAppClock
+
+internal fun epochSecondsToMillis(epochSeconds: Double): Long = (epochSeconds * 1_000.0).toLong()
