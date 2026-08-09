@@ -6,5 +6,5 @@ actual fun platformRuntimeConfig(): RuntimeConfig =
     RuntimeConfig(
         apiBaseUrl = BuildConfig.API_BASE_URL,
         googleServerClientId = BuildConfig.GOOGLE_SERVER_CLIENT_ID,
-        buildMode = BuildMode.DEBUG,
+        buildMode = BuildMode.from(BuildConfig.DEBUG),
     )

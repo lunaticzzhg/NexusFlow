@@ -10,6 +10,12 @@ data class RuntimeConfig(
 enum class BuildMode {
     DEBUG,
     RELEASE,
+
+    ;
+
+    companion object {
+        fun from(isDebug: Boolean): BuildMode = if (isDebug) DEBUG else RELEASE
+    }
 }
 
 expect fun platformRuntimeConfig(): RuntimeConfig

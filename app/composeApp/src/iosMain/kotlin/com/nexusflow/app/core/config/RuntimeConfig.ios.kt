@@ -9,7 +9,7 @@ actual fun platformRuntimeConfig(): RuntimeConfig =
     RuntimeConfig(
         apiBaseUrl = configuredApiBaseUrl(),
         googleServerClientId = configuredString("GIDServerClientID"),
-        buildMode = if (Platform.isDebugBinary) BuildMode.DEBUG else BuildMode.RELEASE,
+        buildMode = BuildMode.from(Platform.isDebugBinary),
     )
 
 private fun configuredApiBaseUrl(): String = configuredString("OrbitApiBaseUrl")
