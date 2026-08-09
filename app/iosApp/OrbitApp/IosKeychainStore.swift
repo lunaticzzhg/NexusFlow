@@ -4,10 +4,10 @@ import Security
 
 /** Native Keychain adapter for the shared App session store. */
 final class IosKeychainStore: NSObject, IosKeychainExecutor {
-    private static let service = "com.nexusflow.app.secure"
+    private static let servicePrefix = "com.nexusflow.app.secure"
 
-    func read(key: String) -> IosKeychainReadResult {
-        var query = itemQuery(for: key)
+    func read(namespace: String, key: String) -> IosKeychainReadResult {
+        var query = itemQuery(namespace: namespace, key: key)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
@@ -27,12 +27,12 @@ final class IosKeychainStore: NSObject, IosKeychainExecutor {
         }
     }
 
-    func write(key: String, value: String) -> IosKeychainOperationResult {
+    func write(namespace: String, key: String, value: String) -> IosKeychainOperationResult {
         guard let data = value.data(using: .utf8) else {
             return IosKeychainOperationResult(status: .failure)
         }
 
-        let query = itemQuery(for: key)
+        let query = itemQuery(namespace: namespace, key: key)
         let updateStatus = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         switch updateStatus {
         case errSecSuccess:
@@ -47,16 +47,31 @@ final class IosKeychainStore: NSObject, IosKeychainExecutor {
         }
     }
 
-    func remove(key: String) -> IosKeychainOperationResult {
-        operationResult(for: SecItemDelete(itemQuery(for: key) as CFDictionary))
+    func remove(namespace: String, key: String) -> IosKeychainOperationResult {
+        operationResult(for: SecItemDelete(itemQuery(namespace: namespace, key: key) as CFDictionary))
     }
 
-    private func itemQuery(for key: String) -> [String: Any] {
+    func clear(namespace: String) -> IosKeychainOperationResult {
+        operationResult(for: SecItemDelete(namespaceQuery(namespace) as CFDictionary))
+    }
+
+    private func itemQuery(namespace: String, key: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
+            kSecAttrService as String: service(for: namespace),
             kSecAttrAccount as String: key,
         ]
+    }
+
+    private func namespaceQuery(_ namespace: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service(for: namespace),
+        ]
+    }
+
+    private func service(for namespace: String) -> String {
+        "\(Self.servicePrefix).\(namespace)"
     }
 
     private func operationResult(for status: OSStatus) -> IosKeychainOperationResult {

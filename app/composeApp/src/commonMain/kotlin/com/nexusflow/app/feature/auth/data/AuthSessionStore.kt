@@ -1,10 +1,9 @@
 package com.nexusflow.app.feature.auth.data
 
+import com.nexusflow.app.core.security.SecureKeys
 import com.nexusflow.app.core.security.SecureStore
 import com.nexusflow.app.feature.auth.domain.AppContextSnapshot
 import com.nexusflow.app.feature.auth.domain.AuthSession
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -13,27 +12,24 @@ class AuthSessionStore(
     private val secureStore: SecureStore,
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) {
+    private val authStore = secureStore.namespace(AUTH_NAMESPACE)
+
     suspend fun read(): AuthSession? =
-        withContext(Dispatchers.Default) {
-            secureStore.read(SESSION_KEY)?.let { encoded ->
-                json.decodeFromString<StoredAuthSession>(encoded).toDomain()
-            }
+        authStore.read(SESSION_KEY)?.let { encoded ->
+            json.decodeFromString<StoredAuthSession>(encoded).toDomain()
         }
 
     suspend fun write(session: AuthSession) {
-        withContext(Dispatchers.Default) {
-            secureStore.write(SESSION_KEY, json.encodeToString(StoredAuthSession.from(session)))
-        }
+        authStore.write(SESSION_KEY, json.encodeToString(StoredAuthSession.from(session)))
     }
 
     suspend fun clear() {
-        withContext(Dispatchers.Default) {
-            secureStore.remove(SESSION_KEY)
-        }
+        authStore.clear()
     }
 
     private companion object {
-        const val SESSION_KEY = "feature.auth.session.v1"
+        const val AUTH_NAMESPACE = "auth"
+        val SESSION_KEY = SecureKeys.string("session_v1")
     }
 }
 

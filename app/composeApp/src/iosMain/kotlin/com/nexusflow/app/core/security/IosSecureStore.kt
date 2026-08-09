@@ -1,15 +1,27 @@
 package com.nexusflow.app.core.security
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
 /** Atomic Keychain operations implemented by the iOS host. */
 interface IosKeychainExecutor {
-    fun read(key: String): IosKeychainReadResult
+    fun read(
+        namespace: String,
+        key: String,
+    ): IosKeychainReadResult
 
     fun write(
+        namespace: String,
         key: String,
         value: String,
     ): IosKeychainOperationResult
 
-    fun remove(key: String): IosKeychainOperationResult
+    fun remove(
+        namespace: String,
+        key: String,
+    ): IosKeychainOperationResult
+
+    fun clear(namespace: String): IosKeychainOperationResult
 }
 
 enum class IosKeychainStatus {
@@ -27,28 +39,54 @@ class IosKeychainOperationResult(
     val status: IosKeychainStatus,
 )
 
-/** Persists App session material through the native iOS Keychain adapter. */
+/** Persists App secrets through the native iOS Keychain adapter. */
 class IosSecureStore(
     private val keychain: IosKeychainExecutor,
 ) : SecureStore {
-    override fun read(key: String): String? {
-        val result = keychain.read(key)
-        return when (result.status) {
-            IosKeychainStatus.SUCCESS -> result.value ?: throw SecureStoreUnavailableException()
-            IosKeychainStatus.NOT_FOUND -> null
-            IosKeychainStatus.FAILURE -> throw SecureStoreUnavailableException()
+    override fun namespace(name: String): SecureStoreNamespace = IosSecureStoreNamespace(keychain, validateSecureNamespace(name))
+}
+
+private class IosSecureStoreNamespace(
+    private val keychain: IosKeychainExecutor,
+    private val namespace: String,
+) : SecureStoreNamespace {
+    override suspend fun read(key: SecureKey): String? =
+        secureStorageCall {
+            withContext(Dispatchers.Default) {
+                val result = keychain.read(namespace, key.name)
+                when (result.status) {
+                    IosKeychainStatus.SUCCESS -> result.value ?: throw SecureStoreUnavailableException()
+                    IosKeychainStatus.NOT_FOUND -> null
+                    IosKeychainStatus.FAILURE -> throw SecureStoreUnavailableException()
+                }
+            }
+        }
+
+    override suspend fun write(
+        key: SecureKey,
+        value: String,
+    ) {
+        secureStorageCall {
+            withContext(Dispatchers.Default) {
+                requireSuccess(keychain.write(namespace, key.name, value))
+            }
         }
     }
 
-    override fun write(
-        key: String,
-        value: String,
-    ) {
-        requireSuccess(keychain.write(key, value))
+    override suspend fun remove(key: SecureKey) {
+        secureStorageCall {
+            withContext(Dispatchers.Default) {
+                requireSuccess(keychain.remove(namespace, key.name), allowNotFound = true)
+            }
+        }
     }
 
-    override fun remove(key: String) {
-        requireSuccess(keychain.remove(key), allowNotFound = true)
+    override suspend fun clear() {
+        secureStorageCall {
+            withContext(Dispatchers.Default) {
+                requireSuccess(keychain.clear(namespace), allowNotFound = true)
+            }
+        }
     }
 
     private fun requireSuccess(

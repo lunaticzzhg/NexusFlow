@@ -7,7 +7,9 @@ import com.nexusflow.app.core.observability.AppLogger
 import com.nexusflow.app.core.observability.LogFields
 import com.nexusflow.app.core.observability.LogLevel
 import com.nexusflow.app.core.observability.LogTag
+import com.nexusflow.app.core.security.SecureKey
 import com.nexusflow.app.core.security.SecureStore
+import com.nexusflow.app.core.security.SecureStoreNamespace
 import com.nexusflow.app.core.time.AppClock
 import com.nexusflow.app.feature.auth.data.AuthApi
 import com.nexusflow.app.feature.auth.data.AuthSessionStore
@@ -67,14 +69,20 @@ class AuthModuleTest {
 }
 
 private object InMemorySecureStore : SecureStore {
-    override fun read(key: String): String? = null
+    override fun namespace(name: String): SecureStoreNamespace = EmptySecureStoreNamespace
+}
 
-    override fun write(
-        key: String,
+private object EmptySecureStoreNamespace : SecureStoreNamespace {
+    override suspend fun read(key: SecureKey): String? = null
+
+    override suspend fun write(
+        key: SecureKey,
         value: String,
     ) = Unit
 
-    override fun remove(key: String) = Unit
+    override suspend fun remove(key: SecureKey) = Unit
+
+    override suspend fun clear() = Unit
 }
 
 private object FixedClock : AppClock {

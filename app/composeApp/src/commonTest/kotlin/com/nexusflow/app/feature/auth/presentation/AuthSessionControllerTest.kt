@@ -3,7 +3,9 @@ package com.nexusflow.app.feature.auth.presentation
 import com.nexusflow.app.core.config.BuildMode
 import com.nexusflow.app.core.config.RuntimeConfig
 import com.nexusflow.app.core.error.AppException
+import com.nexusflow.app.core.security.SecureKey
 import com.nexusflow.app.core.security.SecureStore
+import com.nexusflow.app.core.security.SecureStoreNamespace
 import com.nexusflow.app.core.time.AppClock
 import com.nexusflow.app.feature.auth.data.AuthSessionStore
 import com.nexusflow.app.feature.auth.domain.AppContextSnapshot
@@ -188,18 +190,32 @@ class AuthSessionControllerTest {
     private class MemorySecureStore : SecureStore {
         private val values = mutableMapOf<String, String>()
 
-        override fun read(key: String): String? = values[key]
+        override fun namespace(name: String): SecureStoreNamespace = MemorySecureStoreNamespace(values, name)
+    }
 
-        override fun write(
-            key: String,
+    private class MemorySecureStoreNamespace(
+        private val values: MutableMap<String, String>,
+        private val namespace: String,
+    ) : SecureStoreNamespace {
+        override suspend fun read(key: SecureKey): String? = values[physicalKey(key)]
+
+        override suspend fun write(
+            key: SecureKey,
             value: String,
         ) {
-            values[key] = value
+            values[physicalKey(key)] = value
         }
 
-        override fun remove(key: String) {
-            values.remove(key)
+        override suspend fun remove(key: SecureKey) {
+            values.remove(physicalKey(key))
         }
+
+        override suspend fun clear() {
+            val prefix = "$namespace."
+            values.keys.filter { it.startsWith(prefix) }.forEach(values::remove)
+        }
+
+        private fun physicalKey(key: SecureKey): String = "$namespace.${key.name}"
     }
 
     private companion object {
