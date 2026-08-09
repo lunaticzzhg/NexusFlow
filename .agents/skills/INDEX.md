@@ -14,3 +14,4 @@ Orbit 需求开发或审视先读取本索引，再进入对应 Skill。后端�
 | 同步 I/O、线程/dispatcher、主线程卡顿、JSON 编解码或 CPU 密集处理 | 按任务使用 `app/orbit-feature-development/SKILL.md` 或 `app/code-review-and-refactoring/SKILL.md` | `../../docs/architecture/coroutine-dispatching.md` | 调用上下文、耗时操作归属、调度选择、取消语义与验证。 |
 | 系统日历、通知、权限、系统 UI、SSE 或深链能力 | 按任务使用 `app/orbit-feature-development/SKILL.md` 或 `app/code-review-and-refactoring/SKILL.md` | `../../docs/architecture/platform-capabilities.md` | common/platform 边界、平台限制、失败处理、验证。 |
 | 审查 diff、架构异味、职责漂移或重构决策 | `app/code-review-and-refactoring/SKILL.md` | 按信号叠加本表专题 | 结论卡、发现项、最小修复或不改的依据、验证与残余风险。 |
+| 定期比对 Boltzlog、同步其优秀设计/实现，或评估其中变更是否适合 Orbit | `app/boltzlog-sync/SKILL.md` | 按候选能力进入对应 Orbit workflow | 基于增量或快照的候选表、适配边界、优先级、非目标与最小验证。 |

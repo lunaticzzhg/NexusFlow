@@ -1,12 +1,15 @@
 package com.nexusflow.app.app
 
 import com.nexusflow.app.core.config.RuntimeConfig
+import com.nexusflow.app.core.observability.observabilityModule
 import com.nexusflow.app.core.security.SecureStore
 import com.nexusflow.app.core.time.AppClock
 import com.nexusflow.app.feature.auth.data.AuthApi
 import com.nexusflow.app.feature.auth.data.AuthSessionStore
 import com.nexusflow.app.feature.auth.data.DefaultAuthRepository
 import com.nexusflow.app.feature.auth.domain.AuthRepository
+import com.nexusflow.app.feature.auth.observability.AppLoggerAuthDiagnosticReporter
+import com.nexusflow.app.feature.auth.observability.AuthDiagnosticReporter
 import com.nexusflow.app.feature.auth.presentation.AuthSessionController
 import com.nexusflow.app.feature.task.di.taskModule
 import io.ktor.client.HttpClient
@@ -35,8 +38,9 @@ fun appModule(
         )
     }
     single { AuthSessionStore(get()) }
-    single { AuthSessionController(get(), get(), get(), get()) }
-    includes(taskModule)
+    single<AuthDiagnosticReporter> { AppLoggerAuthDiagnosticReporter(get()) }
+    single { AuthSessionController(get(), get(), get(), get(), get()) }
+    includes(observabilityModule, taskModule)
 }
 
 private var koinApplication: KoinApplication? = null

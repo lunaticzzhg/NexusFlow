@@ -8,6 +8,9 @@ import com.nexusflow.app.feature.auth.data.AuthSessionStore
 import com.nexusflow.app.feature.auth.domain.AppContextSnapshot
 import com.nexusflow.app.feature.auth.domain.AuthRepository
 import com.nexusflow.app.feature.auth.domain.AuthSession
+import com.nexusflow.app.feature.auth.observability.AuthDiagnosticEvent
+import com.nexusflow.app.feature.auth.observability.AuthDiagnosticReporter
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.cancelAndJoin
@@ -16,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class AuthSessionControllerTest {
     @Test
@@ -68,12 +72,42 @@ class AuthSessionControllerTest {
             collector.cancelAndJoin()
         }
 
-    private fun controller(store: SecureStore): AuthSessionController =
+    @Test
+    fun diagnosticFailureDoesNotChangeRestoredState() =
+        runBlocking {
+            val store = MemorySecureStore()
+            AuthSessionStore(store).write(validSession)
+            val controller = controller(store, diagnosticReporter = ThrowingDiagnosticReporter)
+
+            controller.restore()
+
+            assertEquals(AuthState.Authenticated(validSession.context), controller.state.value)
+        }
+
+    @Test
+    fun cancellationInRefreshResultIsRethrown() =
+        runBlocking {
+            val store = MemorySecureStore()
+            AuthSessionStore(store).write(
+                validSession.copy(accessTokenExpiresAtMillis = 999),
+            )
+            val controller = controller(store, repository = CancellingRefreshRepository)
+
+            assertFailsWith<CancellationException> { controller.restore() }
+            Unit
+        }
+
+    private fun controller(
+        store: SecureStore,
+        repository: AuthRepository = FailingRepository,
+        diagnosticReporter: AuthDiagnosticReporter = RecordingDiagnosticReporter,
+    ): AuthSessionController =
         AuthSessionController(
-            repository = FailingRepository,
+            repository = repository,
             sessionStore = AuthSessionStore(store),
             runtimeConfig = RuntimeConfig("https://api.example", "client-id", BuildMode.DEBUG),
             clock = FixedClock,
+            diagnosticReporter = diagnosticReporter,
         )
 
     private object FixedClock : AppClock {
@@ -86,6 +120,22 @@ class AuthSessionControllerTest {
         override suspend fun refresh(refreshToken: String): Result<AuthSession> = error("Not used")
 
         override suspend fun logout(refreshToken: String): Result<Unit> = error("Not used")
+    }
+
+    private object CancellingRefreshRepository : AuthRepository {
+        override suspend fun exchangeGoogleIdToken(idToken: String): Result<AuthSession> = error("Not used")
+
+        override suspend fun refresh(refreshToken: String): Result<AuthSession> = Result.failure(CancellationException("cancelled"))
+
+        override suspend fun logout(refreshToken: String): Result<Unit> = error("Not used")
+    }
+
+    private object RecordingDiagnosticReporter : AuthDiagnosticReporter {
+        override fun report(event: AuthDiagnosticEvent) = Unit
+    }
+
+    private object ThrowingDiagnosticReporter : AuthDiagnosticReporter {
+        override fun report(event: AuthDiagnosticEvent) = error("diagnostic failed")
     }
 
     private class MemorySecureStore : SecureStore {
