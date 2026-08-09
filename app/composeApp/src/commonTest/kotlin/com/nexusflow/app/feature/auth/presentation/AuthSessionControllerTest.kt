@@ -2,10 +2,12 @@ package com.nexusflow.app.feature.auth.presentation
 
 import com.nexusflow.app.core.config.BuildMode
 import com.nexusflow.app.core.config.RuntimeConfig
+import com.nexusflow.app.core.error.AppException
 import com.nexusflow.app.core.security.SecureStore
 import com.nexusflow.app.core.time.AppClock
 import com.nexusflow.app.feature.auth.data.AuthSessionStore
 import com.nexusflow.app.feature.auth.domain.AppContextSnapshot
+import com.nexusflow.app.feature.auth.domain.AuthException
 import com.nexusflow.app.feature.auth.domain.AuthRepository
 import com.nexusflow.app.feature.auth.domain.AuthSession
 import com.nexusflow.app.feature.auth.observability.AuthDiagnosticEvent
@@ -97,6 +99,35 @@ class AuthSessionControllerTest {
             Unit
         }
 
+    @Test
+    fun unauthenticatedRefreshClearsStoredSession() =
+        runBlocking {
+            val store = expiredAccessTokenStore()
+            val controller = controller(store, repository = UnauthenticatedRefreshRepository)
+
+            controller.restore()
+
+            assertEquals(AuthState.Unauthenticated, controller.state.value)
+            assertEquals(null, AuthSessionStore(store).read())
+        }
+
+    @Test
+    fun unavailableRefreshKeepsStoredSession() =
+        runBlocking {
+            val store = expiredAccessTokenStore()
+            val controller = controller(store, repository = UnavailableRefreshRepository)
+
+            controller.restore()
+
+            assertEquals(AuthState.Unavailable, controller.state.value)
+            assertEquals(validSession.copy(accessTokenExpiresAtMillis = 999), AuthSessionStore(store).read())
+        }
+
+    private suspend fun expiredAccessTokenStore(): MemorySecureStore =
+        MemorySecureStore().also { store ->
+            AuthSessionStore(store).write(validSession.copy(accessTokenExpiresAtMillis = 999))
+        }
+
     private fun controller(
         store: SecureStore,
         repository: AuthRepository = FailingRepository,
@@ -126,6 +157,22 @@ class AuthSessionControllerTest {
         override suspend fun exchangeGoogleIdToken(idToken: String): Result<AuthSession> = error("Not used")
 
         override suspend fun refresh(refreshToken: String): Result<AuthSession> = Result.failure(CancellationException("cancelled"))
+
+        override suspend fun logout(refreshToken: String): Result<Unit> = error("Not used")
+    }
+
+    private object UnauthenticatedRefreshRepository : AuthRepository {
+        override suspend fun exchangeGoogleIdToken(idToken: String): Result<AuthSession> = error("Not used")
+
+        override suspend fun refresh(refreshToken: String): Result<AuthSession> = Result.failure(AuthException.Unauthenticated)
+
+        override suspend fun logout(refreshToken: String): Result<Unit> = error("Not used")
+    }
+
+    private object UnavailableRefreshRepository : AuthRepository {
+        override suspend fun exchangeGoogleIdToken(idToken: String): Result<AuthSession> = error("Not used")
+
+        override suspend fun refresh(refreshToken: String): Result<AuthSession> = Result.failure(AppException.Unavailable())
 
         override suspend fun logout(refreshToken: String): Result<Unit> = error("Not used")
     }

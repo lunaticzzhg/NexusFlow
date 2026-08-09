@@ -5,6 +5,7 @@ import com.nexusflow.app.core.security.SecureStoreUnavailableException
 import com.nexusflow.app.core.systemui.SystemUiRequestId
 import com.nexusflow.app.core.time.AppClock
 import com.nexusflow.app.feature.auth.data.AuthSessionStore
+import com.nexusflow.app.feature.auth.domain.AuthException
 import com.nexusflow.app.feature.auth.domain.AuthRepository
 import com.nexusflow.app.feature.auth.domain.AuthSession
 import com.nexusflow.app.feature.auth.observability.AuthDiagnosticEvent
@@ -230,9 +231,7 @@ private object NoOpAuthDiagnosticReporter : AuthDiagnosticReporter {
     override fun report(event: AuthDiagnosticEvent) = Unit
 }
 
-private fun Throwable?.isUnauthenticated(): Boolean =
-    this is com.nexusflow.app.feature.auth.data.AuthApiException &&
-        failure == com.nexusflow.app.feature.auth.domain.AuthFailure.Unauthenticated
+private fun Throwable?.isUnauthenticated(): Boolean = this == AuthException.Unauthenticated
 
 private fun Throwable.rethrowIfCancellation() {
     if (this is CancellationException) throw this

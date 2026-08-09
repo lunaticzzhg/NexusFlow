@@ -1,8 +1,6 @@
 package com.nexusflow.app.feature.auth.data
 
-import com.nexusflow.app.core.error.AppException
 import com.nexusflow.app.core.network.ApiCallExecutor
-import com.nexusflow.app.feature.auth.domain.AuthFailure
 import com.nexusflow.contracts.api.AuthSessionResponse
 import com.nexusflow.contracts.api.GoogleExchangeRequest
 import com.nexusflow.contracts.api.KResponse
@@ -40,7 +38,7 @@ internal interface AuthApi {
     ): KResponse<Unit>
 }
 
-/** Remote Auth protocol boundary: transport envelopes and failures do not escape this type. */
+/** Remote Auth protocol boundary: it only executes feature-local API calls. */
 internal class AuthRemoteDataSource(
     private val api: AuthApi,
     private val apiCalls: ApiCallExecutor,
@@ -48,35 +46,17 @@ internal class AuthRemoteDataSource(
     suspend fun exchangeGoogleIdToken(idToken: String): Result<AuthSessionResponse> =
         apiCalls.execute(AuthEndpoints.GOOGLE_EXCHANGE) {
             api.exchangeGoogleIdToken(GoogleExchangeRequest(idToken))
-        }.toAuthResult()
+        }
 
     suspend fun refresh(refreshToken: String): Result<AuthSessionResponse> =
         apiCalls.execute(AuthEndpoints.REFRESH) {
             api.refresh(RefreshSessionRequest(refreshToken))
-        }.toAuthResult()
+        }
 
     suspend fun logout(refreshToken: String): Result<Unit> =
         apiCalls.executeUnit(AuthEndpoints.LOGOUT) {
             api.logout(LogoutRequest(refreshToken))
-        }.toAuthResult()
+        }
 }
 
-class AuthApiException(
-    val failure: AuthFailure,
-) : IllegalStateException()
-
-private fun <T> Result<T>.toAuthResult(): Result<T> =
-    fold(
-        onSuccess = Result.Companion::success,
-        onFailure = { failure -> Result.failure(AuthApiException(failure.toAuthFailure())) },
-    )
-
-private fun Throwable.toAuthFailure(): AuthFailure =
-    when (this) {
-        is AppException.Unauthorized -> AuthFailure.Unauthenticated
-        is AppException.Rejected -> if (code == HTTP_UNPROCESSABLE_ENTITY) AuthFailure.InvalidCredential else AuthFailure.Unavailable
-        else -> AuthFailure.Unavailable
-    }
-
 private const val JSON_CONTENT_TYPE_HEADER = "Content-Type: application/json"
-private const val HTTP_UNPROCESSABLE_ENTITY = 422

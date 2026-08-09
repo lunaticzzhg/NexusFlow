@@ -15,14 +15,6 @@ data class AuthSession(
     val context: AppContextSnapshot,
 )
 
-sealed interface AuthFailure {
-    data object Unauthenticated : AuthFailure
-
-    data object InvalidCredential : AuthFailure
-
-    data object Unavailable : AuthFailure
-}
-
 interface AuthRepository {
     suspend fun exchangeGoogleIdToken(idToken: String): Result<AuthSession>
 
