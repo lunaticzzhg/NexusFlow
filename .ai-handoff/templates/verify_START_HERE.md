@@ -19,9 +19,13 @@ Do not mark the work successful merely because:
 4. Modified real source and related tests
 5. `SOURCE_COVERAGE.md`
 6. `project/AGENTS.md`
-7. `project/docs/architecture/orbit-frontend-architecture.md`
+7. Architecture authorities matching the Work Order scope:
+   - App/KMP: `project/docs/architecture/orbit-frontend-architecture.md`
+   - Backend: `project/docs/architecture/nexusflow-backend-architecture.md`
+   - AI/planning: `project/docs/architecture/nexusflow-ai-architecture.md`
+   - Contracts: `project/contracts/` plus affected producers/consumers
 
-`orbit-frontend-architecture.md` is the App/KMP architecture authority. For backend, AI, and shared API behavior, verify against the real source included under `project/backend/`, `project/ai/`, and `project/contracts/`.
+Cross-stack verification reads all relevant authorities. For AI, distinguish documented boundary rules from the current implementation state; an empty or source-absent `ai/` root must remain visible and must not be treated as an implemented runtime.
 
 ## Re-verify
 
@@ -38,7 +42,7 @@ Confirm the real code reaches the ownership and flow defined by the Work Order.
 Trace the implementation from a maintainer's perspective:
 
 - input to state;
-- state to UI;
+- authoritative state/result to outward output;
 - duplicate or stale result;
 - terminal;
 - recovery.

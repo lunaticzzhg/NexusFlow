@@ -113,6 +113,10 @@ Store Controller Session
 - 没有固定 Context 生命周期和 teardown 责任的对象不要命名为 `Runtime`。
 - 只是搬运代码、减少行数或隐藏依赖的对象，不应借用上述架构名词。
 
+### App 源码标识
+
+应用根入口、全应用基础设施和共享设计系统的 Kotlin 源码标识使用 `App*`；Android Application 根入口固定命名为 `App`。不得以产品品牌 `Orbit*` 命名 Kotlin 类型、函数或源码文件，也不得为 feature 内业务类型添加 `App*`。`Orbit` 仅用于用户可见品牌文案、构建/工程产物，以及为兼容既有安装或外部平台而必须保持稳定的外部标识；包名使用当前 `com.nexusflow.app`。
+
 ### Action 统一
 
 本规范统一使用 `Action` 表达进入 ViewModel / feature presentation 边界的事件。历史代码中的 `Intent` 与 `Action` 若语义一致，应逐步统一；不得在同一 feature 中人为区分两个没有实际 ownership 差异的事件体系。
@@ -1220,6 +1224,10 @@ Platform Host → native API
 - **Level 2：复杂边界修改**，命中 concurrency、retry/cancel、background、Context、Runtime、durable state、process recovery、API/auth/permission contract、cross-feature ownership、peer controller、callback mesh、shared mutable hub 或 lifecycle split。必须说明状态与 owner、operation/context identity、late result、recovery、resource cleanup、debug boundary、用户可见降级和验证证据。
 
 只有命中相应风险的切片，才要求对应架构结论。`不适用` 不需要为了填模板而大量列出。
+
+### App/KMP 收尾验证
+
+每次修改 App/KMP Kotlin 或 Gradle Kotlin DSL 后，交付前必须运行 `./gradlew :app:composeApp:ktlintCheck`；它是 App 代码格式与基础静态风格的默认收尾检查。若 Ktlint 失败，先运行 `./gradlew :app:composeApp:ktlintFormat`，审查自动修改后再次执行 `ktlintCheck`。禁止为绕过手写代码问题随意放宽规则或扩大 baseline；仅第三方生成代码可保留最小、可说明的 baseline 例外。
 
 ### Recovery / Fallback ROI
 

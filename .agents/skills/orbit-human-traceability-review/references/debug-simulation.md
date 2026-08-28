@@ -20,17 +20,23 @@ If missing, next split:
 
 目标：能区分“输入没进入核心 flow / decision 丢弃 / effect 失败 / state write 缺失”。
 
-## Scenario 2 — State changed, UI/output unchanged
+## Scenario 2 — Authoritative state/result changed, outward output unchanged
 
 ```text
-Authoritative state checkpoint:
-Projection/adapter checkpoint:
-Local presentation state checkpoint:
-Renderer/output checkpoint:
+Authoritative state/result checkpoint:
+Output projection/adapter checkpoint:
+Local presentation/read-model/planner-result checkpoint:
+Renderer/HTTP response/event/output checkpoint:
 First owner to inspect:
 ```
 
-目标：不要重新从 network 开始查。
+Variant routing:
+
+- App: state -> projection -> presentation -> renderer.
+- Backend: durable/domain state -> mapper/read model -> HTTP response/event.
+- AI: typed candidate -> deterministic validation/projection -> Planner result.
+
+只检查当前 flow 命中的 variant。目标：authoritative fact 已正确时，不要重新从 network/provider/input 开始查。
 
 ## Scenario 3 — Duplicate processing
 

@@ -1,11 +1,13 @@
-# Compose UI 参考
+# App/KMP Compose UI 参考
+
+本参考只适用于 NexusFlow App/KMP 的 Compose UI、Route/Screen、状态提升、资源和视觉实现。Backend HTTP output、event/read model 或 AI Planner result 不使用本参考。
 
 ## 状态所有权
 
 - 将业务、可恢复和可由调用方控制的状态放在 ViewModel，并提升到最低共同拥有者；不要机械提升到 app 根部。
-- Screen 负责收集 `UiState`、派发 Intent、消费 `UiEffect` 与导航；Content 只根据参数渲染；小组件只接收最少的值和回调。
+- Screen 负责收集 `UiState`、派发 Action/Intent、消费 `UiEffect` 与导航；Content 只根据参数渲染；小组件只接收最少的值和回调。
 - 组件默认无状态。仅当状态纯视觉、短暂、调用方无需控制或恢复、且无需独立测试时，才允许组件内部 `remember`。
-- 不在 composition 中发请求或写业务状态；页面首次加载通过键稳定的 `LaunchedEffect` 派发一次 `Load` Intent，其他请求通过明确的用户 Intent 发起。
+- 不在 composition 中发请求或写业务状态；页面首次加载通过键稳定的 `LaunchedEffect` 派发一次 `Load` Action/Intent，其他请求通过明确的用户 Action/Intent 发起。
 
 ## 参数与边界
 

@@ -33,7 +33,7 @@ Use Boltzlog as the default App implementation standard: its mature architecture
    - **Defer**: useful only after a concrete NexusFlow consumer exists.
    - **Reject**: conflicts with Orbit facts, duplicates existing capability, or adds complexity without current ROI.
 9. Rank Adopt/Adapt items by dependency order, correctness, and user-visible risk. Propose the smallest vertical slice. Do not create a framework, Gradle module, Koin scope, event bus, or generic manager unless the Boltzlog mechanism itself is required by a current NexusFlow behavior or its missing lifecycle invariant has been demonstrated.
-10. Stop after the report and approval gate unless implementation is explicitly authorized. Do not begin a migration from a positive classification alone; wait for the user to approve one or more named candidates, or the table as a whole. For selected work, follow the relevant Orbit feature/backend/AI workflow and run its required verification.
+10. Stop after the report and approval gate unless implementation is explicitly authorized. Do not begin a migration from a positive classification alone; wait for the user to approve one or more named candidates, or the table as a whole. For selected product behavior work, route through `nexusflow-feature-development` so App / Contracts / Backend / AI scope is explicit; do not invent separate backend or AI feature workflows. Run the verification required by the touched scope.
 
 ## Foundation port decision
 

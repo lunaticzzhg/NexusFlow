@@ -21,11 +21,15 @@ Do not modify code.
 2. Any files listed under `REQUEST.md` -> `External Attachments`
 3. `project/AGENTS.md`
 4. `project/.agents/skills/INDEX.md`
-5. `project/docs/architecture/orbit-frontend-architecture.md`
+5. Architecture authorities matching the touched scope:
+   - App/KMP: `project/docs/architecture/orbit-frontend-architecture.md`
+   - Backend: `project/docs/architecture/nexusflow-backend-architecture.md`
+   - AI/planning: `project/docs/architecture/nexusflow-ai-architecture.md`
+   - Contracts: `project/contracts/` plus affected producers/consumers
 6. `SOURCE_COVERAGE.md`
 7. The real source and tests related to the request
 
-`orbit-frontend-architecture.md` is the App/KMP architecture authority. Use `SOURCE_COVERAGE.md` and the real `project/backend/`, `project/ai/`, and `project/contracts/` source when the request crosses service, model, or shared API boundaries.
+Cross-stack tasks read all relevant authorities. `SOURCE_COVERAGE.md` makes App, Backend, AI, and Contracts coverage explicit, including an empty-but-present `ai/` root.
 
 ## Evidence Priority
 

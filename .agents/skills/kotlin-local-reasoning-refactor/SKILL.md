@@ -1,6 +1,6 @@
 ---
 name: kotlin-local-reasoning-refactor
-description: "Perform a behavior-preserving refactor on one clearly scoped Orbit Kotlin owner/class/function group to reduce human reasoning cost. Use after flow ownership is already clear, when state models, semantic hops, knowledge surface, result combinations, delegation wrappers, naming, or dead concepts make the implementation hard to understand or debug."
+description: "Perform a behavior-preserving refactor on one clearly scoped NexusFlow Kotlin owner/class/function group to reduce human reasoning cost. Use after flow ownership is already clear, when state models, semantic hops, knowledge surface, result combinations, delegation wrappers, naming, or dead concepts make the implementation hard to understand or debug."
 ---
 
 # Kotlin Local Reasoning Refactor
@@ -27,7 +27,7 @@ description: "Perform a behavior-preserving refactor on one clearly scoped Orbit
 
 - 一次只重构一个明确 owner 或紧密函数组。
 - 如果问题跨多个 Flow Owner / Controller / Runtime，先用 `orbit-human-traceability-review`；不要用单类重构掩盖中层 ownership 问题。
-- 默认行为保持。若必须改变产品语义、API contract、durable state、权限、恢复策略，转 `orbit-feature-development`。
+- 默认行为保持。若必须改变产品语义、wire contract、durable state、权限、恢复策略或用户可见结果，转 `nexusflow-feature-development`。
 - 不为了模式完整性强制 State Machine / Reducer / Pipeline / Strategy。
 - 不保留 private/internal dead API “以后可能有用”。
 - 不允许 delegation-only wrapper 被记作 ownership move。
@@ -38,7 +38,11 @@ description: "Perform a behavior-preserving refactor on one clearly scoped Orbit
 
 - `AGENTS.md`；
 - `.agents/skills/INDEX.md`；
-- `docs/architecture/orbit-frontend-architecture.md`；
+- 与目标区域匹配的 architecture authority：
+  - App/KMP：`docs/architecture/orbit-frontend-architecture.md`；
+  - Backend：`docs/architecture/nexusflow-backend-architecture.md`；
+  - AI/planning：`docs/architecture/nexusflow-ai-architecture.md`；
+  - Contracts：真实 `:contracts` source 和 producer/consumer；
 - 目标源码；
 - 直接 caller/callee；
 - 相关 tests；

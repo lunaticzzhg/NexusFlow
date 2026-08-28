@@ -1,6 +1,6 @@
 ---
 name: orbit-work-order-executor
-description: "Execute a self-contained External Architect Work Order for Orbit without redesigning target ownership or self-approving Human Traceability. Use when the user provides a Work Order or Correction Work Order for implementation."
+description: "Execute a self-contained External Architect Work Order for NexusFlow without redesigning target ownership or self-approving Human Traceability. Use when the user provides a Work Order or Correction Work Order for implementation."
 ---
 
 # Orbit Work Order Executor
@@ -15,7 +15,11 @@ Before implementation, read:
 
 - `AGENTS.md`;
 - `.agents/skills/INDEX.md`;
-- `docs/architecture/orbit-frontend-architecture.md`;
+- architecture authorities matching the Work Order scope:
+  - App/KMP: `docs/architecture/orbit-frontend-architecture.md`;
+  - Backend: `docs/architecture/nexusflow-backend-architecture.md`;
+  - AI/planning: `docs/architecture/nexusflow-ai-architecture.md`;
+  - shared contracts: `contracts/` plus relevant producer/consumer source;
 - the entire Work Order or Correction Work Order;
 - directly touched source, tests, and caller/callee files.
 
@@ -45,16 +49,18 @@ Implement slices in Work Order order:
 Slice 1 -> code -> narrow tests
 Slice 2 -> code -> narrow tests
 ...
-Final -> expanded tests -> ktlintCheck -> Verification bundle
+Final -> scope-derived verification -> Verification bundle
 ```
 
-For Kotlin or Gradle Kotlin DSL changes, finish with:
+Verification is selected from the actual touched areas and the Work Order. App ktlint is mandatory only for App/KMP Kotlin or Gradle Kotlin DSL changes where the App authority requires it. Backend-only, Contracts-only, AI-only, and docs/skills-only Work Orders must not inherit App ktlint as a universal final step.
+
+When App/KMP Kotlin or Gradle Kotlin DSL changes require the App ktlint task, run:
 
 ```bash
 ./gradlew :app:composeApp:ktlintCheck
 ```
 
-If `ktlintCheck` fails because of hand-written style issues, run:
+If that App `ktlintCheck` fails because of hand-written style issues, run:
 
 ```bash
 ./gradlew :app:composeApp:ktlintFormat

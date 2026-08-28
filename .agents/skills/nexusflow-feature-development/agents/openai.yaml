@@ -1,0 +1,4 @@
+interface:
+  display_name: "NexusFlow Feature Development"
+  short_description: "Build product features with full-flow traceability"
+  default_prompt: "Use $nexusflow-feature-development to implement this NexusFlow product requirement or behavior fix. Reconstruct the user flow, decide App/Contracts/Backend/AI scope, reuse existing implementations first, escalate structural decisions to $orbit-architect-handoff, implement dependency-driven thin slices, and finish with a Human Takeover Check based on the actual code."

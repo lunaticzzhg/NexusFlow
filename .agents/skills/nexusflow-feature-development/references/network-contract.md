@@ -1,4 +1,6 @@
-# 网络契约
+# App/KMP 网络契约
+
+本参考仅适用于 NexusFlow App/KMP 的 HTTP、DTO、Repository 与客户端网络失败映射。跨 App / Backend / AI 的共享 wire schema 决策见 `contracts.md`；Backend authoritative behavior 以 Backend architecture/source 为准。
 
 ## 归属与模型
 
@@ -61,4 +63,4 @@ Repository 暴露的 Domain 模型与 command 只包含当前产品行为、UI �
 2. 在 feature RemoteDataSource 通过 `ApiCallExecutor` 调用 API，并复用 `XxxApi` 的路由常量，返回 `Result<DTO>`；Repository 协调缓存并映射 DTO 为 domain，返回 `Result<Domain>`。
 3. 在 ViewModel 将 `AppException` 转为可见 UiState/UiEffect，不把网络协议或异常传给 Composable。
 4. 至少覆盖：HTTP 2xx 的业务成功与业务失败、同源非 2xx、断网/超时、无效响应、协程取消；涉及时另覆盖 401/SSE、跨域上传、幂等写入和需要特化的业务异常。
-5. API/DTO/Repository 改动运行 `./gradlew :app:composeApp:allTests` 和 `./gradlew :app:composeApp:ktlintCheck`；涉及共享 KMP 网络边界时，还要验证 Android 编译与受影响 iOS target。
+5. App/KMP API、DTO 或 Repository 改动按 `verification.md` 选择验证，通常运行相关 App 测试/编译，并在修改 App Kotlin/Gradle 时运行 `./gradlew :app:composeApp:ktlintCheck`；涉及共享 KMP 网络边界时，还要验证 Android 编译与受影响 iOS target。

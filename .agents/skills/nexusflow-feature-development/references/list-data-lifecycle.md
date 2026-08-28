@@ -1,6 +1,6 @@
-# 列表数据生命周期
+# App/KMP 列表数据生命周期
 
-适用于有首屏加载、刷新、游标分页和可选本地恢复的任意 feature，不绑定具体业务类型或接口字段。
+适用于 App/KMP 中有首屏加载、刷新、游标分页和可选本地恢复的任意 feature，不绑定具体业务类型或接口字段。Backend pagination/transaction authority 和 cross-boundary wire schema 不在本参考定义；需要跨边界改合同先读 `contracts.md`。
 
 ## 开发前清单
 

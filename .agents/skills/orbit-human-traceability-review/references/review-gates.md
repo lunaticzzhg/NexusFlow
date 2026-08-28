@@ -6,10 +6,10 @@
 
 | Gate | PASS 需要证明什么 | 常见 FAIL / UNPROVEN 信号 |
 | --- | --- | --- |
-| Capability ownership | 能力归属 feature/core/app 清楚 | composition root 放在 core、feature 语义漂入 shared core |
-| Authoritative source | 同一业务事实只有一个权威来源 | 多份镜像状态互相同步 |
-| Dependency direction | 依赖方向能解释业务所有权 | domain -> data、feature domain -> app implementation、跨 feature 任意 import |
-| Context identity | 数据/权限/任务归属有稳定 identity | request/result 无法判断属于哪个 account/family/session |
+| Capability ownership | 能力归属 feature/core/app/backend service/contracts/planning boundary 清楚 | composition root 放在 core、feature 语义漂入 shared core、Backend domain 模型漂入 contracts、AI provider model 变成业务模型 |
+| Authoritative source | 同一业务事实只有一个权威来源 | 多份镜像状态互相同步；AI proposal 被当作 Backend durable truth |
+| Dependency direction | 依赖方向能解释业务所有权 | domain -> data、feature domain -> app implementation、跨 feature 任意 import、Route/adapter 承接 application policy |
+| Context identity | 数据/权限/任务/规划归属有稳定 identity | request/result 无法判断属于哪个 account/family/session/actor/task/planning context |
 | Lifecycle placement | create/start/stop/close 与资源 owner 对齐 | 页面销毁但后台 operation 仍无 owner；多个对象分别 cleanup |
 | Package honesty | 目录/命名帮助找到 owner | `core` 实际聚合所有 feature；`Runtime`/`Manager` 成为 dumping ground |
 
@@ -24,7 +24,7 @@ Architecture PASS 只证明“放在哪里”基本合理，不代表 flow 或�
 | State Owner | mutable business fact 有唯一 writable owner |
 | Lifecycle Owner | start/cancel/recover/close/late-result rejection 可定位 |
 | Decision Owner | ignore/retry/recover/replace/complete 等关键决策有唯一定位点 |
-| Effect Executor | network/db/coroutine/emit/platform effect 的执行边界清楚 |
+| Effect Executor | network/db/coroutine/emit/platform/provider effect 的执行边界清楚 |
 | Terminal | success/failure/cancel/recovery 的 terminal 明确 |
 | Duplicate | duplicate rule 与 identity 明确 |
 | Late result | stale operation 如何识别并拒绝明确 |
@@ -41,7 +41,9 @@ Architecture PASS 只证明“放在哪里”基本合理，不代表 flow 或�
 - operation identity 只存在调用栈，不随异步结果传播；
 - retry/restart/reselect/dismiss 没有使旧结果失效；
 - terminal 只停止 poll/job，却不更新用户可观察状态；
-- data object 同时拥有 transport 和 presentation policy；
+- data object 同时拥有 transport 和 presentation/application policy；
+- Backend Route 同时拥有 protocol mapping、business decision 和 transaction policy；
+- AI provider adapter 的 raw output 直接成为 authoritative Planner result；
 - no-op callback 仍保留在核心调用图。
 
 ## Local Reasoning Gate — How does this owner work?

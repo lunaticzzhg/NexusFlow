@@ -106,12 +106,20 @@ data class Result(
 
 能通过一个可观察事实把责任区域一分为二的位置。
 
-例如：
+例如 App presentation：
 
 ```text
 Authoritative conversation state correct?
   NO -> upstream reply pipeline
-  YES -> typewriter/rendering
+  YES -> projection/rendering
 ```
 
 好的局部重构应增加或强化这种 boundary。
+
+例如 Backend auth：
+
+```text
+Refresh token family mutation committed?
+  NO -> AuthService decision or repository transaction
+  YES -> response mapping / client consumption
+```

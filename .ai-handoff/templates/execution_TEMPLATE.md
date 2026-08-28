@@ -32,13 +32,9 @@
 
 {{CHANGED_FILES}}
 
-## Tests Run
+## Verification Commands
 
 {{TESTS_RUN}}
-
-## Ktlint
-
-{{KTLINT}}
 
 ## Unresolved
 

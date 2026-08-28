@@ -1,6 +1,6 @@
-# Compose UI Review
+# App/KMP Compose UI Review
 
-用于审查 Orbit 的 Compose 页面、组件、底部面板、导航表面和 UI 改造。它定义评审方法，不定义新的视觉风格、组件库或全局抽象。
+用于审查 NexusFlow App/KMP 的 Compose 页面、组件、底部面板、导航表面和 UI 改造。它定义评审方法，不定义新的视觉风格、组件库或全局抽象。
 
 ## 目标
 
@@ -119,7 +119,7 @@
 
 - 关键点击、状态分支和无障碍语义：Compose UI 测试；
 - Figma 或固定布局风险：验证关系而非单一像素，例如紧凑宽度下两侧边距仍成立、均分项可容纳、文本不裁切；
-- 修改后至少运行对应模块测试和 `./gradlew :app:composeApp:ktlintCheck`；
+- 修改后按 `verification.md` 运行对应 App/KMP 测试或编译；修改 App Kotlin/Gradle 时运行 `./gradlew :app:composeApp:ktlintCheck`；
 - 关键页面尽可能在 preview、模拟器或设备中检查首屏、加载、空、错、提交中、长文案、小屏和键盘状态。
 
 ## 输出模板
@@ -142,13 +142,13 @@
 - 渲染层：
 
 ### 未验证与风险
-- 
+-
 ```
 
 优先报告会阻塞任务、造成误操作、状态误导、布局溢出或跨屏失效的问题；不要把纯个人偏好包装成缺陷。
 
 ## 边界
 
-- 本参考不引入 Oren 的色板、Flutter 组件、底部面板 API 或视觉风格；Orbit 继续以自身 MaterialTheme 和 Compose Resources 为准。
+- 本参考不引入 Oren 的色板、Flutter 组件、底部面板 API 或视觉风格；NexusFlow App 继续以自身 MaterialTheme 和 Compose Resources 为准。
 - 不因一次 Review 新增全局 token、共享 Sheet 框架或组件库；出现真实重复消费者后再评估提取。
-- API、权限、持久业务状态、导航合法性和上下文身份边界仍遵循既有 Orbit 架构与 feature-development 专题参考。
+- API、权限、持久业务状态、导航合法性和上下文身份边界仍遵循 NexusFlow architecture authorities 与 feature-development 专题参考。

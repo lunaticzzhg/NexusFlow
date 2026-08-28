@@ -1,6 +1,6 @@
 ---
 name: orbit-human-traceability-review
-description: "Reconstruct and evaluate Orbit business flows for human takeover and debugging. Use for feature/module/flow reviews, complex diffs, coordination analysis, maintainability reviews, or when AI-written code is correct but difficult for a human to trace. Review is flow-first and proof-driven; it does not modify production code by default."
+description: "Reconstruct and evaluate NexusFlow business flows for human takeover and debugging across App, Backend, Contracts, and future AI boundaries. Use for feature/module/flow reviews, complex diffs, coordination analysis, maintainability reviews, or when AI-written code is correct but difficult for a human to trace. Review is flow-first and proof-driven; it does not modify production code by default."
 ---
 
 # Orbit Human Traceability Review
@@ -40,7 +40,11 @@ Review 必须 **Flow-first、Proof-driven**。
 
 - 项目 `AGENTS.md`；
 - `.agents/skills/INDEX.md`；
-- `docs/architecture/orbit-frontend-architecture.md`；
+- architecture authorities matching the reviewed scope:
+  - App/KMP：`docs/architecture/orbit-frontend-architecture.md`；
+  - Backend：`docs/architecture/nexusflow-backend-architecture.md`；
+  - AI/planning：`docs/architecture/nexusflow-ai-architecture.md`；
+  - Contracts：真实 `:contracts` source 和 producer/consumer；
 - 审视范围的 production source；
 - 直接 caller / callee；
 - 相关 tests；
@@ -83,12 +87,11 @@ Review 必须 **Flow-first、Proof-driven**。
 
 枚举范围内真实可达的重要 Flow，例如：
 
-- Send message；
-- Receive streaming reply；
-- Recover reply；
-- Restore history；
-- Generate / retry / dismiss vlog；
-- Import / upload / retry transfer。
+- App session restore / refresh；
+- App external credential result；
+- Backend refresh rotation / reuse；
+- Cross-boundary auth serialization and consumption；
+- future AI planning proposal flow when real source exists。
 
 不要把 helper/function 当 Flow。Flow 必须由 user intent、外部事件、生命周期事件或 retry/recovery 开始，并到可观察 terminal 结束。
 
@@ -102,7 +105,7 @@ Entry
 -> Decision
 -> Effect / collaborator
 -> State Owner
--> projection/rendering
+-> outward output / projection / rendering
 ```
 
 保留真实 class/function owner。不要压缩成 `SSE -> Controller -> UI` 这种失去排障价值的图。
@@ -111,7 +114,7 @@ Entry
 
 至少区分：
 
-- **Capability Owner**：能力属于哪个 feature/module；
+- **Capability Owner**：能力属于哪个 feature/module/service/planning boundary；
 - **Flow Owner**：谁负责把一次 business intent 驱动到 terminal；
 - **State Owner**：谁是某个 mutable business fact 的唯一 writable owner；
 - **Lifecycle Owner**：谁 create/start/cancel/recover/close/reject late result；
@@ -243,7 +246,7 @@ Architecture 没问题不代表整体 PASS，只表示继续下钻 Coordination�
 对关键 Flow 固定模拟：
 
 1. Input 已收到，但 authoritative state 没变化；
-2. State 已变化，但 UI/output 没变化；
+2. Authoritative state/result 已变化，但 outward output 没变化；
 3. 同一事件/operation 被重复处理；
 4. Flow 永远没有 terminal；
 5. Recovery 已执行，但最终结果仍错误。

@@ -20,7 +20,7 @@ docker compose --profile observability up -d
 
 The optional profiles expose Redis on `6379`, Redpanda's Kafka listener on `19092`, and OTLP gRPC/HTTP on `4317`/`4318`. Their internal Compose addresses are `redis:6379`, `redpanda:9092`, and `otel-collector:4317`.
 
-`.env.example` defaults are deliberately for services launched from the host via Gradle, so they use `localhost`. The matching `*_INTERNAL_*` values are for a future backend container on the Compose network. Authentication configuration is covered by the frontend governance entry point in [the Orbit architecture guide](../docs/architecture/orbit-frontend-architecture.md): database and NexusFlow JWT secrets are injected by the runtime, while Google audience and Android client IDs are non-secret configuration.
+`.env.example` defaults are deliberately for services launched from the host via Gradle, so they use `localhost`. The matching `*_INTERNAL_*` values are for a future backend container on the Compose network. Authentication and backend runtime configuration are governed by [the NexusFlow Backend architecture guide](../docs/architecture/nexusflow-backend-architecture.md): database and NexusFlow JWT secrets are injected by the runtime, while Google audience and Android client IDs are non-secret configuration.
 
 For local backend development, run the checked-in launcher from the repository root:
 

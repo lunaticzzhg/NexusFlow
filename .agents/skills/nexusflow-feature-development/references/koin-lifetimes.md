@@ -1,4 +1,6 @@
-# Koin 与生命周期
+# App/KMP Koin 与生命周期
+
+本参考只约束 App/KMP 的 Koin、ViewModel、Compose host 与客户端 lifecycle。Backend dependency composition 和 AI runtime ownership 由各自 architecture authority 或真实 source 决定。
 
 ## 解析边界
 
