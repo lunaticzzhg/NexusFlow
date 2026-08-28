@@ -1,6 +1,6 @@
 # Orbit External Architect Bundle
 
-This is a complete Orbit frontend project snapshot for an External Architect.
+This is a complete NexusFlow project snapshot for an External Architect. It includes App, Backend, AI, shared contracts, project docs, skills, and tooling that pass the bundle safety filters.
 
 ## Your Role
 
@@ -24,6 +24,8 @@ Do not modify code.
 5. `project/docs/architecture/orbit-frontend-architecture.md`
 6. `SOURCE_COVERAGE.md`
 7. The real source and tests related to the request
+
+`orbit-frontend-architecture.md` is the App/KMP architecture authority. Use `SOURCE_COVERAGE.md` and the real `project/backend/`, `project/ai/`, and `project/contracts/` source when the request crosses service, model, or shared API boundaries.
 
 ## Evidence Priority
 

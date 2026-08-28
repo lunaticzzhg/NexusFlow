@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create an Orbit External Architect PLAN bundle."""
+"""Create a NexusFlow External Architect PLAN bundle."""
 
 from __future__ import annotations
 

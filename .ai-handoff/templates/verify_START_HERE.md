@@ -1,5 +1,7 @@
 # Orbit External Architect Verification Bundle
 
+This is a complete NexusFlow verification snapshot. Recheck App, Backend, AI, shared contracts, project docs, skills, and tooling whenever the Work Order touches those boundaries.
+
 You are the independent verifier.
 
 Do not mark the work successful merely because:
@@ -18,6 +20,8 @@ Do not mark the work successful merely because:
 5. `SOURCE_COVERAGE.md`
 6. `project/AGENTS.md`
 7. `project/docs/architecture/orbit-frontend-architecture.md`
+
+`orbit-frontend-architecture.md` is the App/KMP architecture authority. For backend, AI, and shared API behavior, verify against the real source included under `project/backend/`, `project/ai/`, and `project/contracts/`.
 
 ## Re-verify
 

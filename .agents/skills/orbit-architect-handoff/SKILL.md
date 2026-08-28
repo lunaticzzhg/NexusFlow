@@ -7,7 +7,7 @@ description: "Prepare a complete Orbit External Architect PLAN bundle without de
 
 ## Mission
 
-Create a portable PLAN bundle for an External Architect. Codex collects the real Orbit project context and the user's goal; it does not decide the architecture, recommend a target owner, or produce a refactor plan.
+Create a portable PLAN bundle for an External Architect. Codex collects the real NexusFlow project context and the user's goal; it does not decide the architecture, recommend a target owner, or produce a refactor plan.
 
 Use this skill when an Orbit request is non-lightweight and involves any of:
 
@@ -94,7 +94,7 @@ TREE.txt
 project/
 ```
 
-`project/` keeps the Orbit relative project structure and includes effective source, tests, configuration, rules, docs, skills, templates, and scripts needed by a fresh Architect session. `SOURCE_COVERAGE.md` must explicitly report the App, Backend, and AI implementation roots so a missing or empty side of the system is visible to the Architect.
+`project/` keeps the NexusFlow relative project structure and includes effective source, tests, configuration, rules, docs, skills, templates, and scripts needed by a fresh Architect session. `SOURCE_COVERAGE.md` must explicitly report the App, Backend, and AI implementation roots so a missing or empty side of the system is visible to the Architect.
 
 Whole Repo by Default:
 

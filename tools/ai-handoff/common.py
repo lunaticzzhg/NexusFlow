@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared helpers for Orbit External Architect handoff bundles."""
+"""Shared helpers for NexusFlow External Architect handoff bundles."""
 
 from __future__ import annotations
 

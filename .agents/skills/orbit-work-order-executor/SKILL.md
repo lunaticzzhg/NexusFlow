@@ -7,7 +7,7 @@ description: "Execute a self-contained External Architect Work Order for Orbit w
 
 ## Mission
 
-Implement the External Architect's Work Order exactly within the real Orbit repository. Codex is the implementation executor: it edits code, adds tests, runs verification, records deviations, and produces a Verification bundle. Codex does not replace the Work Order's architecture decisions with its own.
+Implement the External Architect's Work Order exactly within the real NexusFlow repository. Codex is the implementation executor: it edits code, adds tests, runs verification, records deviations, and produces a Verification bundle. Codex does not replace the Work Order's architecture decisions with its own.
 
 ## Required Sources
 
@@ -143,6 +143,6 @@ python3 tools/ai-handoff/create_verification_bundle.py \
 
 If the only safety findings are excluded sensitive file names such as `local.properties`, use `--allow-sensitive-path-exclusion` only after the user has explicitly approved continuing without those files. Content-level secret matches still abort.
 
-The Verification bundle must include the Work Order, execution report, diff, git state, source coverage for App/Backend/AI roots, test results if provided, and the complete latest effective Orbit project snapshot.
+The Verification bundle must include the Work Order, execution report, diff, git state, source coverage for App/Backend/AI roots, test results if provided, and the complete latest effective NexusFlow project snapshot.
 
 Final handoff should report what was implemented, which commands ran, any gaps, and the generated bundle path. Do not claim External Architect PASS.
