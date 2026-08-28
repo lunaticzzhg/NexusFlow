@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orbit Feature Development"
+  short_description: "Build KMP features with human traceability"
+  default_prompt: "Use $orbit-feature-development to implement this Orbit feature/fix. Reuse existing patterns first, define a Traceability Design Card for non-trivial work, implement thin vertical slices, and finish with a Human Takeover Check based on the actual code."

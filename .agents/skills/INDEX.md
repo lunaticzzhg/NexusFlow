@@ -1,17 +1,73 @@
 # Orbit Skills Index
 
-Orbit 需求开发或审视先读取本索引，再进入对应 Skill。后端协议与产品事实优先于客户端推断。一个任务可以命中多行；先进入“工作流”列指定的 Skill，再叠加“专题”列的 reference，并在交付中提供“最低输出”。
+本索引只负责工作流路由。Orbit 的长期架构事实统一以 `docs/architecture/orbit-frontend-architecture.md` 为准；Skill 只定义“怎么做”，不复制架构正文。
 
-| 信号 | 工作流 | 专题 | 最低输出 |
-| --- | --- | --- | --- |
-| Ktor 路由、HTTP DTO、Problem JSON、JWT/OIDC、scope、租户隔离、幂等写入、任务/审批状态、PostgreSQL、Flyway、Outbox、Kafka/Redpanda、Worker、SSE 或工具网关 | `backend/orbit-backend-development/SKILL.md` | 按该 Skill 的专题路由 | 决策卡、权威状态/事务边界、失败与恢复语义、任务类型验收与验证记录。 |
-| 规划上下文、`PlanProposal`、模型 Provider、Prompt、结构化输出、注入防护、模型预算、离线评测、回放或 AI Trace | `ai/orbit-ai-development/SKILL.md` | 按该 Skill 的专题路由 | 决策卡、输入输出契约、安全/降级策略、评测或回放证据与验证记录。 |
-| 新页面、功能、认证/会话、API/DTO、ViewModel、状态流、Compose UI、Koin 装配、平台能力或相关缺陷修复 | `app/orbit-feature-development/SKILL.md` | 按该 Skill 的专题路由 | 按定级提供实施决策卡、薄切片、命中核心原则的结论卡和验证记录；仅在门禁升级条件或用户要求时进入完整 review。 |
-| App 侧 API DTO、HTTP 响应、Problem JSON、序列化、请求 Header 或 `Idempotency-Key` | `app/orbit-feature-development/SKILL.md` | `references/network-contract.md` | 权威合同、兼容性、失败映射、验证。 |
-| Job、并发、重试、缓存、用户/租户切换、SSE 连接、订阅或执行器 | 按任务使用 `app/orbit-feature-development/SKILL.md` 或 `app/code-review-and-refactoring/SKILL.md` | `../../docs/architecture/context-runtime.md`；涉及列表/缓存时叠加 `references/list-data-lifecycle.md` | owner、状态、取消/重试、并发或失效边界、验证。 |
-| 多阶段流程、审批、取消/重试、资源清理、迟到 callback、后台 worker 或上下文失效 | `app/orbit-feature-development/SKILL.md` | `../../docs/architecture/state-machines.md`；同时命中 runtime、平台或网络时叠加对应专题 | 状态集合、迁移表、唯一 owner、操作身份、提交/清理责任与转换测试。 |
-| Koin、ViewModel、Compose host、composition root 或平台入口 | `app/orbit-feature-development/SKILL.md` | `references/koin-lifetimes.md` | owner、生命周期、DI 边界与验证。 |
-| 同步 I/O、线程/dispatcher、主线程卡顿、JSON 编解码或 CPU 密集处理 | 按任务使用 `app/orbit-feature-development/SKILL.md` 或 `app/code-review-and-refactoring/SKILL.md` | `../../docs/architecture/coroutine-dispatching.md` | 调用上下文、耗时操作归属、调度选择、取消语义与验证。 |
-| 系统日历、通知、权限、系统 UI、SSE 或深链能力 | 按任务使用 `app/orbit-feature-development/SKILL.md` 或 `app/code-review-and-refactoring/SKILL.md` | `../../docs/architecture/platform-capabilities.md` | common/platform 边界、平台限制、失败处理、验证。 |
-| 审查 diff、架构异味、职责漂移或重构决策 | `app/code-review-and-refactoring/SKILL.md` | 按信号叠加本表专题 | 结论卡、发现项、最小修复或不改的依据、验证与残余风险。 |
-| 定期比对 Boltzlog、同步其优秀设计/实现，或评估其中变更是否适合 Orbit | `app/boltzlog-sync/SKILL.md` | 按候选能力进入对应 Orbit workflow | 基于增量或快照的候选表、适配边界、优先级、非目标与最小验证。 |
+## 最高目标
+
+对 AI 主导生成和修改的代码，工程质量的最终验收目标是 **Human Traceability**：一个没有参与生成过程的人，能够快速回答：
+
+1. 输入从哪里进入；
+2. 谁拥有这条业务 Flow；
+3. 关键 Decision 在哪里发生；
+4. authoritative state 写在哪里；
+5. success / failure / cancel / recovery 在哪里 terminal；
+6. 出现故障时，如何用少量 Debug Boundary 快速缩小责任范围。
+
+所有非轻量开发、复杂 review 和存量重构都按同一顺序判断：
+
+```text
+Architecture
+    -> Coordination
+    -> Local Reasoning
+    -> Human Debug Simulation
+```
+
+## 主工作流
+
+| 任务信号 | 使用 Skill | 核心产物 |
+| --- | --- | --- |
+| 新功能、功能修改、缺陷修复、API/DTO、ViewModel、Compose、Koin、平台能力 | `orbit-feature-development/SKILL.md` | Traceability Design Card、薄切片、验证、Human Takeover Check |
+| 非轻量 feature、复杂 bug、结构性重构、Human Traceability 目标、owner/lifecycle 不清 | `orbit-architect-handoff/SKILL.md` | External Architect PLAN Bundle |
+| 执行外部 Architect 返回的 Work Order 或 Correction Work Order | `orbit-work-order-executor/SKILL.md` | Slice 实现、Deviation Report、Execution Report、Verification Bundle |
+| 审视一个 feature/module/业务流程/复杂 diff；想知道代码链路是否容易理解、如何排障、哪里复杂 | `orbit-human-traceability-review/SKILL.md` | Flow Reconstruction、三层 Gate、Debug Simulation、PASS/FAIL/UNPROVEN、Findings/ROI |
+| 已经收敛到一个明确 owner/class/function group，需要行为保持的存量重构 | `kotlin-local-reasoning-refactor/SKILL.md` | Before/After reasoning baseline、源码/测试修改、Debug Simulation、验证 |
+| 只想扫描 Kotlin/Compose 静态复杂度热点 | `kotlin-complexity-audit/SKILL.md` | `complexity-audit.md/json`；只提供 static signals，不自动生成重构候选 |
+| 定期比对 Boltzlog、同步其 App 规范或实现，或评估其中变更是否适合 Orbit | `app/boltzlog-sync/SKILL.md` | 基于快照或增量的候选表、适配边界、优先级、非目标与最小验证 |
+
+## 路由原则
+
+- **先 Flow，后 Class。** 跨多个 Controller/Runtime/StateHolder 的问题先走 Human Traceability Review，不要直接做单类重构。
+- **复杂结构先 Handoff。** 非轻量 feature、复杂 bug、结构性重构或明确 Human Traceability 改善目标，先生成 External Architect PLAN Bundle，不由 Codex 自行设计再自行批准。
+- **Work Order 是执行合同。** Codex 执行 Work Order 时只做实现、测试和偏差报告；设计层冲突必须停止受影响 Slice 并生成 Deviation，不得改写目标 ownership。
+- **静态复杂度不是语义结论。** LargeClass、TooManyFunctions、CognitiveComplexity 只说明“值得看”，不说明“应该拆”。
+- **无 Finding 不等于 PASS。** 关键 Flow 默认是 `UNPROVEN`，只有完成 Gate 和 Debug Simulation 后才能判 `PASS`。
+- **有 tests 不等于易理解。** 测试是 correctness 证据，不是 Human Traceability 证明。
+- **能最终推导出来不等于人容易理解。** AI 能同时读取大量文件和状态；review 必须以有限工作记忆的人类维护者为尺度。
+- **wrapper / 拆文件 / 缩短方法本身不算改进。** 只有读者为了预测行为所需的事实、semantic hops 或责任区域减少，才算复杂度下降。
+
+## 专题 References
+
+Feature Development 按实际命中加载：
+
+- API / DTO / Header / 失败映射：`orbit-feature-development/references/network-contract.md`
+- 列表刷新 / 分页 / 缓存 / 数据归属：`orbit-feature-development/references/list-data-lifecycle.md`
+- Koin / ViewModel / Compose host 生命周期：`orbit-feature-development/references/koin-lifetimes.md`
+- Compose 结构与状态提升：`orbit-feature-development/references/compose-ui.md`
+- UI/Figma/视觉 review：`orbit-feature-development/references/ui-review.md`
+- 测试与 KMP 验证：`orbit-feature-development/references/verification.md`
+
+Human Traceability Review 按需加载：
+
+- 三层 Gate：`orbit-human-traceability-review/references/review-gates.md`
+- Human Debug Simulation：`orbit-human-traceability-review/references/debug-simulation.md`
+- Review Skill 回归基准：`orbit-human-traceability-review/references/orbit-benchmarks.md`
+
+Local Reasoning Refactor 按需加载：
+
+- Semantic Hop / Knowledge Surface / Canonical State 等：`kotlin-local-reasoning-refactor/references/reasoning-metrics.md`
+- Kotlin / Compose 局部代码形态：`kotlin-local-reasoning-refactor/references/code-shape.md`
+
+External Architect Handoff:
+
+- PLAN Bundle：`orbit-architect-handoff/SKILL.md`
+- Work Order 执行与 Verification Bundle：`orbit-work-order-executor/SKILL.md`

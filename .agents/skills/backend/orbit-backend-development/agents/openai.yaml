@@ -1,4 +1,0 @@
-interface:
-  display_name: "Orbit 后端开发"
-  short_description: "构建可靠的 Kotlin Ktor 后端工作流"
-  default_prompt: "使用 $orbit-backend-development 实现这项 Orbit 后端改动。"

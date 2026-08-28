@@ -13,3 +13,8 @@ __pycache__/
 logs/
 /auth-private.pem
 /auth-public.pem
+.ai-handoff/attachments/
+.ai-handoff/requests/
+.ai-handoff/work-orders/
+.ai-handoff/executions/
+.ai-handoff/reviews/

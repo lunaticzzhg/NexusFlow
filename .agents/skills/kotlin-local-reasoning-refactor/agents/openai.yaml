@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kotlin Local Reasoning Refactor"
+  short_description: "Reduce human reasoning cost inside one owner"
+  default_prompt: "Use $kotlin-local-reasoning-refactor to freeze behavior, establish a Before reasoning baseline, refactor one scoped owner to reduce knowledge surface/semantic hops/state ambiguity, then prove the After baseline and human debugging path improved. Wrapper-only and file-splitting changes do not count by themselves."

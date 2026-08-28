@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kotlin Complexity Audit"
+  short_description: "Scan static complexity signals only"
+  default_prompt: "Use $kotlin-complexity-audit to scan the requested Kotlin scope and produce complexity-audit.md/json as static smoke signals. Do not infer semantic priority or treat a high score as proof that the code should be refactored."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orbit Human Traceability Review"
+  short_description: "Reconstruct flows and prove human debuggability"
+  default_prompt: "Use $orbit-human-traceability-review to reconstruct the real business flows first, then evaluate Architecture, Coordination, Local Reasoning, and Human Debug Simulation with PASS/FAIL/UNPROVEN. Do not treat tests, encapsulation, or eventual reconstructability as proof of human traceability."

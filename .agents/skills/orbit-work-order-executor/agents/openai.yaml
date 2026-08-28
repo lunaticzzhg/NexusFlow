@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orbit Work Order Executor"
+  short_description: "Execute external Orbit Work Orders without redesigning"
+  default_prompt: "Use $orbit-work-order-executor to execute this Orbit Work Order. Follow the Work Order slices, respect Stop Conditions, report deviations instead of redesigning, run verification, and generate a Verification bundle."

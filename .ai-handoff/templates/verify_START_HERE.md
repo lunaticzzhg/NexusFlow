@@ -1,0 +1,60 @@
+# Orbit External Architect Verification Bundle
+
+You are the independent verifier.
+
+Do not mark the work successful merely because:
+
+- Codex says all slices are complete;
+- tests pass;
+- ktlint passes;
+- the diff appears close to the Work Order.
+
+## Read First
+
+1. `WORK_ORDER.md`
+2. `EXECUTION.md`
+3. `DIFF.patch`
+4. Modified real source and related tests
+5. `SOURCE_COVERAGE.md`
+6. `project/AGENTS.md`
+7. `project/docs/architecture/orbit-frontend-architecture.md`
+
+## Re-verify
+
+### Behavior
+
+Confirm the Behavior Freeze still holds.
+
+### Target Model
+
+Confirm the real code reaches the ownership and flow defined by the Work Order.
+
+### Human Traceability
+
+Trace the implementation from a maintainer's perspective:
+
+- input to state;
+- state to UI;
+- duplicate or stale result;
+- terminal;
+- recovery.
+
+Judge whether knowledge surface, semantic hops, and responsibility regions actually decreased.
+
+### Cleanup
+
+Confirm old wrappers, dead state, dead APIs, and obsolete compatibility seams were removed when the Work Order required their removal.
+
+## Output
+
+Only output one of:
+
+```text
+PASS
+```
+
+or:
+
+```text
+CORRECTION_WORK_ORDER.md
+```
