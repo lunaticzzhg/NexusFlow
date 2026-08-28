@@ -7,7 +7,7 @@ An approval-first, personalized leisure-planning Agent. It discovers opportuniti
 - `app/` — Kotlin Multiplatform client.
 - `backend/` — Ktor backend foundation: core HTTP/persistence capabilities and authentication.
 - `ai/` — Reserved for a future planning module; no AI runtime is implemented yet.
-- `contracts/` — versioned schemas shared across all boundaries.
+- `contracts/` — versioned App <-> Backend wire schemas; not Backend domain or AI-internal models.
 
 ## Local development (foundation)
 
@@ -27,7 +27,7 @@ Start local infrastructure when Docker is available:
 docker compose up -d
 ```
 
-See [infra/README.md](infra/README.md) for PostgreSQL, Redpanda and OpenTelemetry local endpoints, and the [v0.1 App technical plan](docs/v0.1/app-module-technical-plan.md) for the implementation sequence.
+See [infra/README.md](infra/README.md) for PostgreSQL, Redpanda and OpenTelemetry local endpoints. Use the [v0.1 RoadMap](docs/v0.1/roadmap.md) for future development sequencing; the [v0.1 App module reference](docs/v0.1/app-module-technical-plan.md) is App-specific supporting context.
 
 The KMP module structure is Android-first and can be opened from the repository root in Android Studio.
 

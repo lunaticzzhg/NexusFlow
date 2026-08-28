@@ -1,10 +1,10 @@
 # Orbit 文档索引
 
-产品需求、技术方案与交付计划按版本归档；跨版本架构规范保留在独立目录。
+产品需求、RoadMap、技术参考与交付状态按版本归档；跨版本架构规范保留在独立目录。
 
 | 版本 | 状态 | 内容 |
 | --- | --- | --- |
-| [v0.1](v0.1/) | 当前 MVP 基线 | 需求基线、App 技术方案与交付任务/进度。 |
+| [v0.1](v0.1/) | 当前 MVP 基线 | 1. [requirements.md](v0.1/requirements.md) = 产品需求 authority；2. [roadmap.md](v0.1/roadmap.md) = RoadMap / milestone 顺序与跨栈 ownership；3. [app-module-technical-plan.md](v0.1/app-module-technical-plan.md) = App module reference；4. [delivery-plan.md](v0.1/delivery-plan.md) = delivery status / evidence ledger。 |
 
 跨版本工程约束见 [architecture/](architecture/)。当前长期 architecture authority 按执行环境拆分：
 
