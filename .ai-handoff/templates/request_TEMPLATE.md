@@ -1,4 +1,4 @@
-# Architect Request
+# AI Handoff Request
 
 ## Task ID
 
@@ -8,13 +8,21 @@
 
 {{GOAL}}
 
-## User Concern
+## Receiver Role
+
+{{RECEIVER_ROLE}}
+
+## Requested Action
+
+{{REQUESTED_ACTION}}
+
+## Expected Deliverable
+
+{{EXPECTED_DELIVERABLE}}
+
+## User Context / Concern
 
 {{USER_CONCERN}}
-
-## Requested Mode
-
-{{REQUESTED_MODE}}
 
 ## External Attachments
 
@@ -24,9 +32,9 @@
 
 {{KNOWN_CONSTRAINTS}}
 
-## Questions For Architect
+## Questions / Decisions Needed
 
-{{QUESTIONS_FOR_ARCHITECT}}
+{{QUESTIONS}}
 
 ## Notes
 

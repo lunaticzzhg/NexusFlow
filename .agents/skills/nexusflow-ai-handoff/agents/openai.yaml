@@ -1,0 +1,4 @@
+interface:
+  display_name: "NexusFlow AI Handoff"
+  short_description: "Bundle NexusFlow context for another AI"
+  default_prompt: "Use $nexusflow-ai-handoff to package this NexusFlow task for another AI. Preserve the user's requested action and expected deliverable without assuming architecture planning, implementation, review, or Work Order output."

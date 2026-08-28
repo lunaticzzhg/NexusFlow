@@ -18,7 +18,8 @@ Skill 负责工作流与专题步骤，不复制、绕开或弱化 authority 文
 
 - 开始需求开发、复杂 review、结构性重构或执行 Work Order 前，先读 `.agents/skills/INDEX.md`。
 - 新页面、功能、API 接入、bug fix、状态流、序列化、依赖注入、Compose UI、Backend 行为、Contracts 变更、AI/planning 边界或其它用户可见产品行为修改，使用 `nexusflow-feature-development`，并按 touched scope 读取对应 architecture authority。
-- 非轻量 feature、复杂 bug、结构性重构、Human Traceability 目标或 owner/lifecycle 不清的问题，先使用 `orbit-architect-handoff` 生成 External Architect PLAN Bundle；拿到自包含 Work Order 后，再使用 `orbit-work-order-executor` 执行。
+- 用户明确要求将 NexusFlow 任务交给另一个 AI，或某个 workflow 需要独立 AI judgment 时，使用 `nexusflow-ai-handoff` 生成通用项目上下文与 Task Contract bundle。Handoff 只传输 context 和 intent，不预设 plan/review/code/docs/Work Order。
+- cross-owner architecture、owner/lifecycle 不清、durable workflow/state machine、复杂 recovery/duplicate/late-result 或 Human Traceability 结构决策，仍需独立 architecture decision。使用 `nexusflow-ai-handoff` 时将 Task Contract 明确为 `Receiver Role: External Architect`、`Requested Action: reconstruct the real flow and make architecture / ownership / lifecycle decisions`、`Expected Deliverable: self-contained WORK_ORDER.md`；拿到自包含 Work Order 后，再使用 `orbit-work-order-executor` 执行。
 - 执行既有 Work Order 或 Correction Work Order，使用 `orbit-work-order-executor`，严格按 Work Order slices 执行。
 - 审视 module、feature、复杂业务 flow，或判断 AI 代码是否方便人类理解、追踪与排障，使用 `orbit-human-traceability-review`。
 - 已明确问题集中在单个 Kotlin owner 内，需要行为保持的局部重构时，使用 `kotlin-local-reasoning-refactor`，并读取目标范围对应 authority。
@@ -80,7 +81,7 @@ Architecture -> Coordination -> Local Reasoning -> Human Debug Simulation
 
 每个 mutable business fact 只能有一个 writable owner；维护状态 invariant 的行为默认与该状态属于同一 owner。复杂 flow 必须存在明确 debug boundaries，使维护者能从用户现象逐步二分到责任 owner。
 
-不得因为代码有测试、类名清楚、字段已封装、没有依赖环、LOC 下降、拆文件、helper extraction、private wrapper 或设计模式本身，就判定 Human Traceability PASS。Codex 执行 Work Order 时也不得声明 External Architect PASS。
+不得因为代码有测试、类名清楚、字段已封装、没有依赖环、LOC 下降、拆文件、helper extraction、private wrapper 或设计模式本身，就判定 Human Traceability PASS。Codex 执行 Work Order 时也不得声明 independent architecture 或 verification PASS。
 
 ## 6. Simplicity / ROI
 

@@ -34,8 +34,9 @@ Architecture
 | 任务信号 | 使用 Skill | 核心产物 |
 | --- | --- | --- |
 | 产品需求、用户可见行为变化、API-connected feature、owner 尚未证明的行为 bug、可能跨 App/Contracts/Backend/AI 的 feature | `nexusflow-feature-development/SKILL.md` | User Flow Discovery、Scope Matrix、Full-stack Traceability Design Card、薄切片、Human Takeover Check |
-| 非轻量结构决策、复杂 bug、结构性重构、Human Traceability 目标、owner/lifecycle 不清 | 先经 `nexusflow-feature-development/SKILL.md` 做 feature reconnaissance；若请求本身是 architecture/review 工作，可直接用 `orbit-architect-handoff/SKILL.md` | External Architect PLAN Bundle |
-| 执行外部 Architect 返回的 Work Order 或 Correction Work Order | `orbit-work-order-executor/SKILL.md` | Slice 实现、Deviation Report、Execution Report、Verification Bundle |
+| 用户希望把当前 NexusFlow 任务交给另一个 AI，或 workflow 需要独立 AI judgment | `nexusflow-ai-handoff/SKILL.md` | Generic AI Handoff Bundle |
+| 非轻量结构决策、复杂 bug、结构性重构、Human Traceability 目标、owner/lifecycle 不清 | 先经 `nexusflow-feature-development/SKILL.md` 做 feature reconnaissance；若需要独立 architecture decision，使用 `nexusflow-ai-handoff/SKILL.md`，并在 Task Contract 中指定 External Architect + architecture/ownership/lifecycle decisions + self-contained WORK_ORDER.md | Generic AI Handoff Bundle containing an architecture Work Order request |
+| 执行已有 Work Order 或 Correction Work Order | `orbit-work-order-executor/SKILL.md` | Slice 实现、Deviation Report、Execution Report、Verification Bundle |
 | 审视一个 feature/module/业务流程/复杂 diff；想知道代码链路是否容易理解、如何排障、哪里复杂 | `orbit-human-traceability-review/SKILL.md` | Flow Reconstruction、三层 Gate、Debug Simulation、PASS/FAIL/UNPROVEN、Findings/ROI |
 | 已经收敛到一个明确 Kotlin owner/class/function group，需要行为保持的存量重构 | `kotlin-local-reasoning-refactor/SKILL.md` | Before/After reasoning baseline、源码/测试修改、Debug Simulation、验证 |
 | 只想扫描 Kotlin/Compose 静态复杂度热点 | `kotlin-complexity-audit/SKILL.md` | `complexity-audit.md/json`；只提供 static signals，不自动生成重构候选 |
@@ -45,7 +46,8 @@ Architecture
 
 - **先 Flow，后 Class。** 跨多个 Controller/Runtime/StateHolder 的问题先走 Human Traceability Review，不要直接做单类重构。
 - **产品需求先 Scope Matrix。** 通过 `nexusflow-feature-development` 判断 App / Contracts / Backend / AI 哪些区域真实需要变化；`NO CHANGE` 是有效结论。
-- **复杂结构先 Handoff。** 非轻量结构决策、复杂 bug、结构性重构或明确 Human Traceability 改善目标，先生成 External Architect PLAN Bundle，不由 Codex 自行设计再自行批准。
+- **Handoff 只传输任务合同和上下文。** `nexusflow-ai-handoff` 不预设接收方是 Architect、Reviewer、Planner 或 Implementation Agent，也不预设产物是 Work Order。
+- **复杂结构先独立判断。** 非轻量结构决策、复杂 bug、结构性重构或明确 Human Traceability 改善目标，使用 `nexusflow-ai-handoff` 将 Receiver Role / Requested Action / Expected Deliverable 明确配置为 External Architect + architecture decision + self-contained WORK_ORDER.md，不由 Codex 自行设计再自行批准。
 - **Work Order 是执行合同。** Codex 执行 Work Order 时只做实现、测试和偏差报告；设计层冲突必须停止受影响 Slice 并生成 Deviation，不得改写目标 ownership。
 - **静态复杂度不是语义结论。** LargeClass、TooManyFunctions、CognitiveComplexity 只说明“值得看”，不说明“应该拆”。
 - **无 Finding 不等于 PASS。** 关键 Flow 默认是 `UNPROVEN`，只有完成 Gate 和 Debug Simulation 后才能判 `PASS`。
@@ -76,7 +78,7 @@ Local Reasoning Refactor 按需加载：
 - Semantic Hop / Knowledge Surface / Canonical State 等：`kotlin-local-reasoning-refactor/references/reasoning-metrics.md`
 - Kotlin / Compose 局部代码形态：`kotlin-local-reasoning-refactor/references/code-shape.md`
 
-External Architect Handoff:
+AI Handoff / Work Order Execution:
 
-- PLAN Bundle：`orbit-architect-handoff/SKILL.md`
+- Generic AI Handoff Bundle：`nexusflow-ai-handoff/SKILL.md`
 - Work Order 执行与 Verification Bundle：`orbit-work-order-executor/SKILL.md`

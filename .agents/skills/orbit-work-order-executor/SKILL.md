@@ -1,13 +1,13 @@
 ---
 name: orbit-work-order-executor
-description: "Execute a self-contained External Architect Work Order for NexusFlow without redesigning target ownership or self-approving Human Traceability. Use when the user provides a Work Order or Correction Work Order for implementation."
+description: "Execute a self-contained NexusFlow Work Order without redesigning target ownership or self-approving Human Traceability. Use when the user provides a Work Order or Correction Work Order for implementation."
 ---
 
 # Orbit Work Order Executor
 
 ## Mission
 
-Implement the External Architect's Work Order exactly within the real NexusFlow repository. Codex is the implementation executor: it edits code, adds tests, runs verification, records deviations, and produces a Verification bundle. Codex does not replace the Work Order's architecture decisions with its own.
+Implement the self-contained NexusFlow Work Order exactly within the real NexusFlow repository. Codex is the implementation executor: it edits code, adds tests, runs verification, records deviations, and produces a Verification bundle. Codex does not replace the Work Order's architecture decisions with its own.
 
 ## Required Sources
 
@@ -82,7 +82,7 @@ Do not:
 - change Behavior Freeze to what seems more reasonable;
 - declare Human Traceability PASS.
 
-Tests passing, ktlint passing, or a tidy diff are execution facts, not External Architect approval.
+Tests passing, ktlint passing, or a tidy diff are execution facts, not independent verification approval.
 
 ## Deviation Protocol
 
@@ -151,4 +151,4 @@ If the only safety findings are excluded sensitive file names such as `local.pro
 
 The Verification bundle must include the Work Order, execution report, diff, git state, source coverage for App/Backend/AI roots, test results if provided, and the complete latest effective NexusFlow project snapshot.
 
-Final handoff should report what was implemented, which commands ran, any gaps, and the generated bundle path. Do not claim External Architect PASS.
+Final handoff should report what was implemented, which commands ran, any gaps, and the generated bundle path. Do not claim independent verification PASS.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a NexusFlow External Architect PLAN bundle."""
+"""Create a portable NexusFlow AI handoff bundle."""
 
 from __future__ import annotations
 
@@ -34,7 +34,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task", required=True, type=task_id)
     parser.add_argument("--goal", required=True)
     parser.add_argument("--user-concern", default="Not provided.")
-    parser.add_argument("--requested-mode", default="External Architect planning before Codex implementation.")
+    parser.add_argument(
+        "--receiver-role",
+        default="No fixed role. Perform the requested task using the bundled context.",
+    )
+    parser.add_argument(
+        "--requested-action",
+        default="Complete the task described by Goal using the bundled NexusFlow repository context.",
+    )
+    parser.add_argument(
+        "--expected-deliverable",
+        default=(
+            "Return the result required by the Goal and Requested Action.\n"
+            "Do not assume a Work Order, code change, or review verdict unless explicitly requested."
+        ),
+    )
     parser.add_argument("--constraint", action="append", default=[])
     parser.add_argument("--question", action="append", default=[])
     parser.add_argument("--note", action="append", default=[])
@@ -66,7 +80,7 @@ def main() -> None:
 
     files = copy_project_snapshot(project_dir)
     attachments = copy_attachments(attachments_to_bundle, bundle_dir / "attachments")
-    write_text(bundle_dir / "START_HERE.md", read_template("plan_START_HERE.md"))
+    write_text(bundle_dir / "START_HERE.md", read_template("handoff_START_HERE.md"))
     write_text(
         bundle_dir / "REQUEST.md",
         render_template(
@@ -74,22 +88,19 @@ def main() -> None:
             {
                 "TASK_ID": args.task,
                 "GOAL": args.goal.strip(),
+                "RECEIVER_ROLE": args.receiver_role.strip(),
+                "REQUESTED_ACTION": args.requested_action.strip(),
+                "EXPECTED_DELIVERABLE": args.expected_deliverable.strip(),
                 "USER_CONCERN": args.user_concern.strip(),
-                "REQUESTED_MODE": args.requested_mode.strip(),
                 "EXTERNAL_ATTACHMENTS": attachment_block(attachments),
                 "KNOWN_CONSTRAINTS": list_block(
                     args.constraint,
-                    "- Preserve current backend API/DTO contracts unless the Architect explicitly requires a compatible migration plan.\n"
-                    "- Preserve current user-visible behavior unless the user goal explicitly requests a product behavior change.\n"
+                    "- Follow repository rules and architecture authorities for the scope being analyzed or modified.\n"
+                    "- Preserve unrelated user changes.\n"
+                    "- Preserve existing behavior and contracts unless the Goal explicitly requests a change.\n"
                     "- Do not expand into unrelated features.",
                 ),
-                "QUESTIONS_FOR_ARCHITECT": list_block(
-                    args.question,
-                    "- What is the current real Flow Owner?\n"
-                    "- Which owner should absorb the relevant knowledge?\n"
-                    "- What target mental model should Codex implement?\n"
-                    "- Which independent slices should Codex execute?",
-                ),
+                "QUESTIONS": list_block(args.question, "None."),
                 "NOTES": list_block(args.note, "None."),
             },
         ),
@@ -101,7 +112,7 @@ def main() -> None:
     write_text(bundle_dir / "SOURCE_COVERAGE.md", source_coverage_text(files))
     write_text(bundle_dir / "TREE.txt", tree_text(files))
 
-    zip_path = request_dir / f"orbit-plan-{args.task}.zip"
+    zip_path = request_dir / f"nexusflow-handoff-{args.task}.zip"
     zip_dir(bundle_dir, zip_path)
     print_manifest(files)
     print(f"Generated: {zip_path.relative_to(PROJECT_ROOT)}")

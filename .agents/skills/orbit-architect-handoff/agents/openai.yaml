@@ -1,4 +1,0 @@
-interface:
-  display_name: "Orbit Architect Handoff"
-  short_description: "Bundle Orbit context for external architecture planning"
-  default_prompt: "Use $orbit-architect-handoff to generate an External Architect PLAN bundle for this Orbit request. Do not design, review, or modify product code; collect the real project context and preserve the user goal."

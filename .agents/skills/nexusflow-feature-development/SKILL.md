@@ -15,7 +15,7 @@ description: "Implement NexusFlow product requirements and user-observable behav
 
 每个产品需求都先跨 App、shared Contracts、Backend、AI 思考完整用户语义链路，但这不表示四个区域都要改。`NO CHANGE` 是有效设计结论，不是实现不完整。
 
-当 reconnaissance 后发现需求需要新的或改变的 cross-owner architecture、durable workflow/state machine、permission/trust model、compatibility-sensitive wire architecture、runtime/process boundary、owner/lifecycle 归属，或复杂 recovery/duplicate/late-result 语义时，切换到 `orbit-architect-handoff` 生成 External Architect PLAN Bundle。拿到自包含 Work Order 后，再用 `orbit-work-order-executor` 执行；不要由 Codex 自行设计再自行批准。
+当 reconnaissance 后发现需求需要新的或改变的 cross-owner architecture、durable workflow/state machine、permission/trust model、compatibility-sensitive wire architecture、runtime/process boundary、owner/lifecycle 归属，或复杂 recovery/duplicate/late-result 语义时，通过 `nexusflow-ai-handoff` 将完整项目上下文交给独立 Architect。Task Contract 必须明确要求结构判断，并将 Expected Deliverable 明确为自包含 Work Order。拿到自包含 Work Order 后，再用 `orbit-work-order-executor` 执行；不要由同一个实现 Agent 自行设计再自行批准。
 
 ## Required Sources
 
@@ -188,7 +188,7 @@ dependency boundary
 
 不可达的 lifecycle path 不强行填设计；标记 `N/A` 并写明证据。若 owner 无法说清楚，不要开始堆实现；先使用 `orbit-human-traceability-review` 重建现有 Flow 或调整设计。
 
-如果 owner 不清属于结构性设计问题，或者目标本身是降低 Human Traceability 成本，使用 `orbit-architect-handoff` 把完整项目上下文交给 External Architect，而不是继续由 Codex 决定 target ownership。
+如果 owner 不清属于结构性设计问题，或者目标本身是降低 Human Traceability 成本，使用 `nexusflow-ai-handoff` 把完整项目上下文交给独立 Architect。Requested Action 明确要求进行结构判断，Expected Deliverable 明确为自包含 Work Order，而不是继续由 Codex 决定 target ownership。
 
 ### 6. Dependency-driven Thin Vertical Slices
 
@@ -291,7 +291,8 @@ Entry -> ... -> terminal
 ### 10. Review / Refactor Handoff
 
 - 想审视整个 feature/flow：`orbit-human-traceability-review`；
-- 想把复杂 feature、复杂 bug 或结构性重构交给外部架构判断：`orbit-architect-handoff`；
+- 想把当前 NexusFlow 任务交给另一个 AI：`nexusflow-ai-handoff`；
+- 想把复杂 feature、复杂 bug 或结构性重构交给外部架构判断：通过 `nexusflow-ai-handoff` 指定 External Architect、architecture/ownership/lifecycle decisions 和自包含 Work Order；
 - 已有外部 Work Order 需要执行：`orbit-work-order-executor`；
 - 已明确一个 owner 的 reasoning cost 高：`kotlin-local-reasoning-refactor`；
 - 只想找静态热点：`kotlin-complexity-audit`。

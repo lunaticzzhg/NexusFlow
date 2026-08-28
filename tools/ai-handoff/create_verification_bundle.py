@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a NexusFlow External Architect Verification bundle."""
+"""Create a NexusFlow Work Order Execution Verification bundle."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
-# Orbit External Architect Verification Bundle
+# NexusFlow Work Order Execution Verification Bundle
 
-This is a complete NexusFlow verification snapshot. Recheck App, Backend, AI, shared contracts, project docs, skills, and tooling whenever the Work Order touches those boundaries.
+This is a complete NexusFlow Work Order execution verification snapshot. Recheck App, Backend, AI, shared contracts, project docs, skills, and tooling whenever the Work Order touches those boundaries.
 
 You are the independent verifier.
 
