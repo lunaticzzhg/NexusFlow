@@ -8,6 +8,7 @@ import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.plugin
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpHeaders
 import io.ktor.http.Url
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
@@ -36,16 +37,61 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.configureAppHttpClient() {
 
 /** Converts non-2xx responses from the configured first-party API into a stable transport error. */
 internal fun HttpClient.installFirstPartyHttpStatusFailureInterceptor(apiBaseUrl: String) {
+    installFirstPartyHttpInterceptors(apiBaseUrl) { null }
+}
+
+internal fun HttpClient.installFirstPartyHttpInterceptors(
+    apiBaseUrl: String,
+    sessionProvider: () -> FirstPartyApiSession?,
+) {
     val apiOrigin = Url(apiBaseUrl)
     plugin(HttpSend).intercept { request ->
-        val call = execute(request)
-        if (request.url.build().hasSameOrigin(apiOrigin) && call.response.status.value !in 200..299) {
+        val requestUrl = request.url.build()
+        if (!requestUrl.hasSameOrigin(apiOrigin)) {
+            return@intercept execute(request)
+        }
+
+        val isProtectedRequest = !requestUrl.isPublicAuthEndpoint()
+        val provider = if (isProtectedRequest) sessionProvider() else null
+        val firstToken = provider?.currentAccessToken()
+        if (firstToken != null) {
+            request.headers.remove(HttpHeaders.Authorization)
+            request.headers.append(HttpHeaders.Authorization, "Bearer $firstToken")
+        }
+
+        val firstCall = execute(request)
+        val finalCall =
+            if (provider != null && firstToken != null && firstCall.response.status.value == HTTP_UNAUTHORIZED) {
+                val replayToken =
+                    when (val refresh = provider.refreshAccessTokenIfCurrent(firstToken)) {
+                        is FirstPartySessionRefresh.TokenAvailable -> refresh.accessToken
+                        FirstPartySessionRefresh.Unauthenticated,
+                        FirstPartySessionRefresh.Unavailable,
+                        -> null
+                    }
+
+                if (replayToken == null) {
+                    firstCall
+                } else {
+                    request.headers.remove(HttpHeaders.Authorization)
+                    request.headers.append(HttpHeaders.Authorization, "Bearer $replayToken")
+                    execute(request).also { replayCall ->
+                        if (replayCall.response.status.value == HTTP_UNAUTHORIZED) {
+                            provider.clearSessionIfCurrent(replayToken)
+                        }
+                    }
+                }
+            } else {
+                firstCall
+            }
+
+        if (finalCall.response.status.value !in 200..299) {
             throw HttpFailureException(
-                failure = call.response.status.value.toHttpFailure(),
-                diagnostics = call.response.bodyAsText().toHttpFailureDiagnostics(call.response.status.value),
+                failure = finalCall.response.status.value.toHttpFailure(),
+                diagnostics = finalCall.response.bodyAsText().toHttpFailureDiagnostics(finalCall.response.status.value),
             )
         }
-        call
+        finalCall
     }
 }
 
@@ -61,3 +107,7 @@ private fun Url.hasSameOrigin(other: Url): Boolean =
     protocol.name.equals(other.protocol.name, ignoreCase = true) &&
         host.equals(other.host, ignoreCase = true) &&
         port == other.port
+
+private fun Url.isPublicAuthEndpoint(): Boolean = encodedPath.removePrefix("/").startsWith("v1/auth/")
+
+private const val HTTP_UNAUTHORIZED = 401

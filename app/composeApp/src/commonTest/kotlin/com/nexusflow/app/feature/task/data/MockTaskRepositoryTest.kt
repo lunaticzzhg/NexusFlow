@@ -16,12 +16,18 @@ class MockTaskRepositoryTest {
         }
 
     @Test
-    fun createReturnsAStableReferenceForTheSubmittedRequest() =
+    fun createReturnsFinalTaskDetailForTheSubmittedRequest() =
         runTest {
             val created =
-                MockTaskRepository().createTask(CreateTaskCommand("  Plan a quiet evening  ")).getOrThrow()
+                MockTaskRepository().createTask(
+                    CreateTaskCommand(
+                        creationRequestId = "create-1",
+                        initialMessageId = "message-1",
+                        requestText = "  Plan a quiet evening  ",
+                        timeZoneId = "Asia/Shanghai",
+                    ),
+                ).getOrThrow()
 
             assertEquals("task-created-demo", created.id.value)
-            assertEquals("Plan a quiet evening", created.title)
         }
 }

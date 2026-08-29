@@ -10,11 +10,16 @@ application { mainClass.set("com.nexusflow.backend.ApplicationKt") }
 
 dependencies {
     implementation(project(":contracts"))
+    implementation(project(":ai"))
     implementation("io.ktor:ktor-server-core-jvm:${libs.versions.ktor.get()}")
     implementation(libs.ktor.server.di)
     implementation("io.ktor:ktor-server-netty-jvm:${libs.versions.ktor.get()}")
     implementation(libs.ktor.server.content.negotiation)
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.cio)
+    implementation(libs.ktor.client.content.negotiation)
     implementation(libs.ktor.serialization.json)
+    implementation(libs.serialization.json)
     implementation(libs.ktor.server.call.id)
     implementation(libs.ktor.server.call.logging)
     implementation(libs.ktor.server.status.pages)
@@ -28,4 +33,5 @@ dependencies {
     implementation(libs.jwks.rsa)
     testImplementation(kotlin("test"))
     testImplementation("io.ktor:ktor-server-test-host-jvm:${libs.versions.ktor.get()}")
+    testImplementation(libs.testcontainers.postgresql)
 }

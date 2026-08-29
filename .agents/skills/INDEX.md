@@ -49,6 +49,7 @@ Architecture
 - **Handoff 只传输任务合同和上下文。** `nexusflow-ai-handoff` 不预设接收方是 Architect、Reviewer、Planner 或 Implementation Agent，也不预设产物是 Work Order。
 - **复杂结构先独立判断。** 非轻量结构决策、复杂 bug、结构性重构或明确 Human Traceability 改善目标，使用 `nexusflow-ai-handoff` 将 Receiver Role / Requested Action / Expected Deliverable 明确配置为 External Architect + architecture decision + self-contained WORK_ORDER.md，不由 Codex 自行设计再自行批准。
 - **Work Order 是执行合同。** Codex 执行 Work Order 时只做实现、测试和偏差报告；设计层冲突必须停止受影响 Slice 并生成 Deviation，不得改写目标 ownership。
+- **Backend DB work loads the persistence checklist.** Backend JDBC、migration、transaction、FK / UNIQUE / CHECK、idempotency、optimistic concurrency 或 durable multi-write 必须加载 `nexusflow-feature-development/references/backend-persistence.md`，并用真实 PostgreSQL 证明 DB-specific semantics。
 - **静态复杂度不是语义结论。** LargeClass、TooManyFunctions、CognitiveComplexity 只说明“值得看”，不说明“应该拆”。
 - **无 Finding 不等于 PASS。** 关键 Flow 默认是 `UNPROVEN`，只有完成 Gate 和 Debug Simulation 后才能判 `PASS`。
 - **有 tests 不等于易理解。** 测试是 correctness 证据，不是 Human Traceability 证明。
@@ -65,6 +66,7 @@ Feature Development 按实际命中加载：
 - App/KMP Koin / ViewModel / Compose host 生命周期：`nexusflow-feature-development/references/koin-lifetimes.md`
 - App/KMP Compose 结构与状态提升：`nexusflow-feature-development/references/compose-ui.md`
 - App/KMP UI/Figma/视觉 review：`nexusflow-feature-development/references/ui-review.md`
+- Backend JDBC / migration / transaction / FK / UNIQUE / CHECK / idempotency / optimistic concurrency / durable multi-write：`nexusflow-feature-development/references/backend-persistence.md`
 - Scope-aware 验证：`nexusflow-feature-development/references/verification.md`
 
 Human Traceability Review 按需加载：

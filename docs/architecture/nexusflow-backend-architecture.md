@@ -125,6 +125,70 @@ read session by refresh token hash
 
 后续 durable flow 如果出现 `state + event + outbox`、审批版本推进、幂等记录和外部 effect command，必须在同一 transaction 中提交所有维持 invariant 所需的 durable facts。不要提前创建 Outbox/Worker 抽象；当产品切片真正需要可恢复副作用时，再按 invariant 选择 owner 和事务边界。
 
+### 4.1 关系型持久化正确性规则
+
+数据库约束是可执行的业务不变量。修改 durable write 前必须识别参与 invariant 的 `FOREIGN KEY`、`UNIQUE`、`CHECK`、`NOT NULL`、`ON DELETE` 和 `ON UPDATE` 语义；不要为了让代码顺序通过而削弱或删除有效约束。若代码和约束冲突，先检查 mutation order、transaction boundary、data model 和 concurrency model。
+
+多行或多表 mutation 必须从依赖方向写出明确顺序：
+
+```text
+Precondition
+→ Write #1
+→ Write #2
+→ ...
+→ Postcondition
+```
+
+例如 refresh-session rotation 中，`auth_sessions.replaced_by_session_id` 指向 replacement session，因此 replacement row 必须先存在：
+
+```text
+INSERT replacement
+→ UPDATE current to revoked + replaced_by_session_id
+→ require the expected row was updated
+→ COMMIT
+```
+
+若 conditional update 被拒绝或 affected rows 为 0，replacement insert 必须随同一 transaction rollback。这不是 Auth 特例，而是通用的关系依赖写入顺序。
+
+每个非轻量 transaction 都应能回答：
+
+```text
+What must be true before?
+What facts must become true together?
+Which intermediate step may fail?
+What survives if step N fails?
+What does affectedRows == 0 mean?
+What does duplicate/unique conflict mean?
+```
+
+Repository / infrastructure 负责 transaction mechanics；Application Service 仍负责产品和业务 decision。
+
+幂等和 optimistic concurrency 必须用数据库作为最终 authority。不要把 `SELECT not found → INSERT` 当作并发下唯一保护；需要时用 `UNIQUE`、transaction、conditional `UPDATE`、expected version、affected-row count 和 conflict handling 组合证明：
+
+```text
+two identical requests concurrently
+→ ?
+
+two different requests competing for the same row
+→ ?
+
+late result
+→ ?
+```
+
+已发布或已使用的 Flyway migration 不可修改，只能通过新 migration 演进 schema。新增或变更 `NOT NULL`、`FOREIGN KEY`、`UNIQUE`、`CHECK`、column type、default 或 index 前，必须同时考虑 fresh empty database 和含旧数据的 existing database；必要时采用 staged / expand-contract：
+
+```text
+add compatible shape
+→ deploy compatible code
+→ backfill/verify
+→ tighten constraint
+```
+
+每个新 FK 的 delete/update lifecycle policy 必须明确选择 `RESTRICT / NO ACTION`、`CASCADE` 或 `SET NULL`，不能无意识继承破坏性行为。
+
+涉及 FK、UNIQUE、CHECK、transaction rollback、locking、JSONB / PostgreSQL-specific SQL、Flyway migration、DB constraint 下的 idempotent insert 或 optimistic concurrency 时，必须有真实 PostgreSQL integration evidence；mock、fake 或 H2 不能作为唯一证明。
+
 ## 5. Durable Workflow 与 Ephemeral Coroutine
 
 Coroutine、process worker、timer 或 in-memory queue 不是 authoritative durable task state。它们可以推进工作，但不能成为业务事实的唯一载体。

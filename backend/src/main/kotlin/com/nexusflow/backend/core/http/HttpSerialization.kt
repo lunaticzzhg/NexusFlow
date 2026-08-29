@@ -56,6 +56,7 @@ fun Application.configureHttpPlatform() {
         exception<Throwable> { call, cause ->
             call.application.environment.log.error(
                 "Unhandled request failure [requestId=${call.callId}, type=${cause::class.simpleName}]",
+                cause,
             )
             call.respondError(HttpStatusCode.InternalServerError, "An unexpected error occurred")
         }

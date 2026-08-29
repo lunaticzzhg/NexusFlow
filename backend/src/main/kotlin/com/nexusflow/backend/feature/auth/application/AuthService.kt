@@ -7,6 +7,7 @@ import com.nexusflow.backend.feature.auth.domain.GoogleIdentityVerifier
 import com.nexusflow.backend.feature.auth.domain.IdentitySessionRepository
 import com.nexusflow.backend.feature.auth.domain.IssuedSession
 import com.nexusflow.backend.feature.auth.domain.StoredSession
+import com.nexusflow.backend.feature.auth.domain.VerifiedExternalIdentity
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.time.Clock
@@ -21,12 +22,33 @@ class AuthService(
     private val accessTokenIssuer: AccessTokenIssuer,
     private val accessLifetime: Duration,
     private val refreshLifetime: Duration,
+    private val devLoginEnabled: Boolean = false,
+    private val devLoginEmail: String? = null,
+    private val devLoginPassword: String? = null,
     private val clock: Clock = Clock.systemUTC(),
     private val random: SecureRandom = SecureRandom(),
 ) {
     fun exchangeGoogle(idToken: String): IssuedSession {
         val identity = googleIdentityVerifier.verify(idToken)
         check(identity.provider == ExternalIdentityProvider.GOOGLE)
+        val principal = repository.findOrCreatePrincipal(identity, clock.instant())
+        return issueSession(principal, UUID.randomUUID())
+    }
+
+    fun devLogin(email: String, password: String): IssuedSession {
+        val configuredEmail = devLoginEmail?.takeIf(String::isNotBlank)
+        val configuredPassword = devLoginPassword?.takeIf(String::isNotBlank)
+        if (!devLoginEnabled || configuredEmail == null || configuredPassword == null) {
+            throw DevLoginUnavailableException()
+        }
+        val normalizedEmail = email.trim()
+        if (!normalizedEmail.equals(configuredEmail.trim(), ignoreCase = true) || !password.matchesSecret(configuredPassword)) {
+            throw InvalidDevLoginCredentialException()
+        }
+        val identity = VerifiedExternalIdentity(
+            provider = ExternalIdentityProvider.DEV_LOCAL,
+            subject = configuredEmail.trim().lowercase(),
+        )
         val principal = repository.findOrCreatePrincipal(identity, clock.instant())
         return issueSession(principal, UUID.randomUUID())
     }
@@ -88,3 +110,13 @@ class AuthService(
 }
 
 class InvalidSessionException : RuntimeException()
+
+class DevLoginUnavailableException : RuntimeException()
+
+class InvalidDevLoginCredentialException : RuntimeException()
+
+private fun String.matchesSecret(expected: String): Boolean =
+    MessageDigest.isEqual(
+        toByteArray(Charsets.UTF_8),
+        expected.toByteArray(Charsets.UTF_8),
+    )

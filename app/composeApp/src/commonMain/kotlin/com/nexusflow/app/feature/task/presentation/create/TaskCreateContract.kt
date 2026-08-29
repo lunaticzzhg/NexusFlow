@@ -18,19 +18,18 @@ sealed interface TaskSubmission {
     data object Failed : TaskSubmission
 }
 
-sealed interface TaskCreateIntent {
+sealed interface TaskCreateAction {
     data class RequestChanged(
         val text: String,
-    ) : TaskCreateIntent
+    ) : TaskCreateAction
 
-    data object Submit : TaskCreateIntent
+    data object Submit : TaskCreateAction
 
-    data object RetrySubmit : TaskCreateIntent
+    data object RetrySubmit : TaskCreateAction
 }
 
 sealed interface TaskCreateEffect {
     data class OpenTask(
         val taskId: TaskId,
-        val title: String,
     ) : TaskCreateEffect
 }

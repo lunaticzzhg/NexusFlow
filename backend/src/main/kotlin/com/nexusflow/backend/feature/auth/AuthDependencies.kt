@@ -45,6 +45,9 @@ fun Application.configureAuthDependencies() {
                 accessTokenIssuer = resolve(),
                 accessLifetime = config.accessLifetime,
                 refreshLifetime = config.refreshLifetime,
+                devLoginEnabled = config.devLoginEnabled,
+                devLoginEmail = config.devLoginEmail,
+                devLoginPassword = config.devLoginPassword,
             )
         }
         provide<ActorResolver> {

@@ -6,6 +6,15 @@ import com.nexusflow.app.core.observability.LogFields
 import com.nexusflow.app.core.observability.LogLevel
 import com.nexusflow.app.core.observability.LogTag
 import com.nexusflow.contracts.api.KResponse
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.MockRequestHandleScope
+import io.ktor.client.engine.mock.respond
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.io.IOException
@@ -68,11 +77,213 @@ class NetworkCallTest {
             assertIs<AppException.InvalidResponse>(executor().execute<Unit>(ENDPOINT) { KResponse(code = 200) }.exceptionOrNull())
             Unit
         }
+
+    @Test
+    fun `protected first party requests inject bearer token`() =
+        runBlocking {
+            val session = RecordingFirstPartyApiSession(currentToken = "access-token")
+            val seenAuthorization = mutableListOf<String?>()
+            val client =
+                testClient(
+                    session = session,
+                    engine =
+                        MockEngine { request ->
+                            seenAuthorization += request.headers[HttpHeaders.Authorization]
+                            jsonResponse("""{"code":200}""")
+                        },
+                )
+
+            assertEquals("""{"code":200}""", client.get("$API_BASE_URL/v1/tasks").bodyAsText())
+            assertEquals(listOf<String?>("Bearer access-token"), seenAuthorization)
+            client.close()
+        }
+
+    @Test
+    fun `first protected 401 refreshes once and replays once`() =
+        runBlocking {
+            val session =
+                RecordingFirstPartyApiSession(
+                    currentToken = "old-token",
+                    refreshResult = FirstPartySessionRefresh.TokenAvailable("new-token"),
+                )
+            val seenAuthorization = mutableListOf<String?>()
+            val client =
+                testClient(
+                    session = session,
+                    engine =
+                        MockEngine { request ->
+                            seenAuthorization += request.headers[HttpHeaders.Authorization]
+                            if (seenAuthorization.size == 1) {
+                                jsonResponse("""{"code":401,"message":"Unauthorized"}""", HttpStatusCode.Unauthorized)
+                            } else {
+                                jsonResponse("""{"code":200}""")
+                            }
+                        },
+                )
+
+            assertEquals("""{"code":200}""", client.get("$API_BASE_URL/v1/tasks").bodyAsText())
+            assertEquals(listOf<String?>("Bearer old-token", "Bearer new-token"), seenAuthorization)
+            assertEquals(listOf("old-token"), session.refreshRequests)
+            assertEquals(emptyList(), session.clearRequests)
+            client.close()
+        }
+
+    @Test
+    fun `auth endpoints bypass bearer injection and refresh recursion`() =
+        runBlocking {
+            val session =
+                RecordingFirstPartyApiSession(
+                    currentToken = "access-token",
+                    refreshResult = FirstPartySessionRefresh.TokenAvailable("new-token"),
+                )
+            val seenAuthorization = mutableListOf<String?>()
+            val client =
+                testClient(
+                    session = session,
+                    engine =
+                        MockEngine { request ->
+                            seenAuthorization += request.headers[HttpHeaders.Authorization]
+                            jsonResponse("""{"code":401,"message":"Unauthorized"}""", HttpStatusCode.Unauthorized)
+                        },
+                )
+
+            assertFailsWith<HttpFailureException> {
+                client.get("$API_BASE_URL/v1/auth/refresh").bodyAsText()
+            }
+            assertEquals(listOf<String?>(null), seenAuthorization)
+            assertEquals(emptyList<String>(), session.refreshRequests)
+            client.close()
+        }
+
+    @Test
+    fun `refresh unavailable returns original 401 without clearing session`() =
+        runBlocking {
+            val session =
+                RecordingFirstPartyApiSession(
+                    currentToken = "old-token",
+                    refreshResult = FirstPartySessionRefresh.Unavailable,
+                )
+            val client =
+                testClient(
+                    session = session,
+                    engine = MockEngine { jsonResponse("""{"code":503}""", HttpStatusCode.Unauthorized) },
+                )
+
+            assertFailsWith<HttpFailureException> {
+                client.get("$API_BASE_URL/v1/tasks").bodyAsText()
+            }
+            assertEquals(listOf("old-token"), session.refreshRequests)
+            assertEquals(emptyList<String>(), session.clearRequests)
+            client.close()
+        }
+
+    @Test
+    fun `replayed 401 clears only the replayed matching token`() =
+        runBlocking {
+            val session =
+                RecordingFirstPartyApiSession(
+                    currentToken = "old-token",
+                    refreshResult = FirstPartySessionRefresh.TokenAvailable("new-token"),
+                )
+            val client =
+                testClient(
+                    session = session,
+                    engine = MockEngine { jsonResponse("""{"code":401}""", HttpStatusCode.Unauthorized) },
+                )
+
+            assertFailsWith<HttpFailureException> {
+                client.get("$API_BASE_URL/v1/tasks").bodyAsText()
+            }
+            assertEquals(listOf("old-token"), session.refreshRequests)
+            assertEquals(listOf("new-token"), session.clearRequests)
+            client.close()
+        }
+
+    @Test
+    fun `stale token 401 reuses newer active token without destructive clear`() =
+        runBlocking {
+            val session =
+                RecordingFirstPartyApiSession(
+                    currentToken = "old-token",
+                    refreshResult = FirstPartySessionRefresh.TokenAvailable("newer-token"),
+                )
+            val seenAuthorization = mutableListOf<String?>()
+            val client =
+                testClient(
+                    session = session,
+                    engine =
+                        MockEngine { request ->
+                            seenAuthorization += request.headers[HttpHeaders.Authorization]
+                            if (seenAuthorization.size == 1) {
+                                jsonResponse("""{"code":401}""", HttpStatusCode.Unauthorized)
+                            } else {
+                                jsonResponse("""{"code":200}""")
+                            }
+                        },
+                )
+
+            assertEquals("""{"code":200}""", client.get("$API_BASE_URL/v1/tasks").bodyAsText())
+            assertEquals(listOf<String?>("Bearer old-token", "Bearer newer-token"), seenAuthorization)
+            assertEquals(listOf("old-token"), session.refreshRequests)
+            assertEquals(emptyList<String>(), session.clearRequests)
+            client.close()
+        }
+
+    @Test
+    fun `transport cancellation propagates through first party interceptors`() =
+        runBlocking {
+            val client =
+                testClient(
+                    session = RecordingFirstPartyApiSession(currentToken = "access-token"),
+                    engine = MockEngine { throw CancellationException("cancelled") },
+                )
+
+            assertFailsWith<CancellationException> {
+                client.get("$API_BASE_URL/v1/tasks").bodyAsText()
+            }
+            client.close()
+        }
 }
 
 private const val ENDPOINT = "v1/auth/google/exchange"
+private const val API_BASE_URL = "https://api.example"
 
 private fun executor(): ApiCallExecutor = ApiCallExecutor(RecordingApiLogger())
+
+private fun testClient(
+    session: FirstPartyApiSession?,
+    engine: MockEngine,
+): HttpClient =
+    HttpClient(engine) {
+        configureAppHttpClient()
+    }.also { client ->
+        client.installFirstPartyHttpInterceptors(API_BASE_URL) { session }
+    }
+
+private fun MockRequestHandleScope.jsonResponse(
+    content: String,
+    status: HttpStatusCode = HttpStatusCode.OK,
+) = respond(content, status, headersOf(HttpHeaders.ContentType, "application/json"))
+
+private class RecordingFirstPartyApiSession(
+    private val currentToken: String?,
+    private val refreshResult: FirstPartySessionRefresh = FirstPartySessionRefresh.Unavailable,
+) : FirstPartyApiSession {
+    val refreshRequests = mutableListOf<String>()
+    val clearRequests = mutableListOf<String>()
+
+    override suspend fun currentAccessToken(): String? = currentToken
+
+    override suspend fun refreshAccessTokenIfCurrent(accessToken: String): FirstPartySessionRefresh {
+        refreshRequests += accessToken
+        return refreshResult
+    }
+
+    override suspend fun clearSessionIfCurrent(accessToken: String): Boolean {
+        clearRequests += accessToken
+        return true
+    }
+}
 
 private class RecordingApiLogger : AppLogger {
     val entries = mutableListOf<Entry>()

@@ -1,5 +1,6 @@
 package com.nexusflow.app.feature.task.presentation.home
 
+import com.nexusflow.app.feature.task.domain.TaskId
 import com.nexusflow.app.feature.task.domain.TaskSummary
 
 data class TaskHomeUiState(
@@ -20,8 +21,18 @@ sealed interface TaskHomeContent {
     data object Failure : TaskHomeContent
 }
 
-sealed interface TaskHomeIntent {
-    data object Load : TaskHomeIntent
+sealed interface TaskHomeAction {
+    data object Load : TaskHomeAction
 
-    data object Retry : TaskHomeIntent
+    data object Retry : TaskHomeAction
+
+    data class OpenTask(
+        val taskId: TaskId,
+    ) : TaskHomeAction
+}
+
+sealed interface TaskHomeEffect {
+    data class OpenTask(
+        val taskId: TaskId,
+    ) : TaskHomeEffect
 }

@@ -14,6 +14,12 @@ data class BackendRuntimeConfig(
     val googleAllowedAudiences: Set<String>,
     val accessLifetime: Duration,
     val refreshLifetime: Duration,
+    val openAiApiKey: String?,
+    val openAiModel: String?,
+    val fixturePlanningEnabled: Boolean,
+    val devLoginEnabled: Boolean,
+    val devLoginEmail: String?,
+    val devLoginPassword: String?,
 ) {
     companion object {
         fun fromEnvironment(environment: Map<String, String> = System.getenv()): BackendRuntimeConfig = BackendRuntimeConfig(
@@ -32,6 +38,12 @@ data class BackendRuntimeConfig(
                 .toSet(),
             accessLifetime = Duration.ofSeconds(required(environment, "AUTH_ACCESS_TTL_SECONDS").toLong()),
             refreshLifetime = Duration.ofDays(required(environment, "AUTH_REFRESH_TTL_DAYS").toLong()),
+            openAiApiKey = environment["OPENAI_API_KEY"]?.takeIf(String::isNotBlank),
+            openAiModel = environment["OPENAI_MODEL"]?.takeIf(String::isNotBlank),
+            fixturePlanningEnabled = environment["ORBIT_FIXTURE_PLANNING_ENABLED"]?.toBooleanStrictOrNull() ?: false,
+            devLoginEnabled = environment["ORBIT_DEV_LOGIN_ENABLED"]?.toBooleanStrictOrNull() ?: false,
+            devLoginEmail = environment["ORBIT_DEV_LOGIN_EMAIL"]?.takeIf(String::isNotBlank),
+            devLoginPassword = environment["ORBIT_DEV_LOGIN_PASSWORD"]?.takeIf(String::isNotBlank),
         )
 
         private fun required(environment: Map<String, String>, name: String): String = environment[name]

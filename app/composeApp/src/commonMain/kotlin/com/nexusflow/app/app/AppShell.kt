@@ -22,7 +22,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.nexusflow.app.core.design.AppSpacing
 import com.nexusflow.app.feature.task.presentation.create.TaskCreateRoute
-import com.nexusflow.app.feature.task.presentation.detail.TaskDetailPlaceholderRoute
+import com.nexusflow.app.feature.task.presentation.detail.TaskDetailRoute
 import com.nexusflow.app.feature.task.presentation.home.TaskHomeRoute
 import nexusflow.app.composeapp.generated.resources.Res
 import nexusflow.app.composeapp.generated.resources.app_preferences_placeholder_body
@@ -35,7 +35,10 @@ import org.jetbrains.compose.resources.stringResource
 
 @Composable
 @Suppress("FunctionName", "FunctionNaming", "ktlint:standard:function-naming")
-fun AppShell(onLogout: () -> Unit) {
+fun AppShell(
+    showFixturePlanning: Boolean,
+    onLogout: () -> Unit,
+) {
     val navController = rememberNavController()
     val currentDestination = navController.currentBackStackEntryAsState().value?.destination
     val showsBottomBar =
@@ -76,6 +79,7 @@ fun AppShell(onLogout: () -> Unit) {
             composable<AppHomeDestination> {
                 TaskHomeRoute(
                     onOpenCreate = { navController.navigate(TaskCreateDestination) },
+                    onOpenTask = { taskId -> navController.navigate(TaskDetailDestination(taskId)) },
                 )
             }
             composable<AppTasksDestination> {
@@ -98,8 +102,8 @@ fun AppShell(onLogout: () -> Unit) {
             composable<TaskCreateDestination> {
                 TaskCreateRoute(
                     onBackHome = { navController.navigateToTab(AppHomeDestination) },
-                    onOpenTask = { taskId, title ->
-                        navController.navigate(TaskDetailDestination(taskId, title)) {
+                    onOpenTask = { taskId ->
+                        navController.navigate(TaskDetailDestination(taskId)) {
                             popUpTo(TaskCreateDestination) {
                                 inclusive = true
                             }
@@ -108,9 +112,9 @@ fun AppShell(onLogout: () -> Unit) {
                 )
             }
             composable<TaskDetailDestination> { entry ->
-                TaskDetailPlaceholderRoute(
+                TaskDetailRoute(
                     taskId = entry.arguments?.getString("taskId").orEmpty(),
-                    title = entry.arguments?.getString("title").orEmpty(),
+                    showFixturePlanning = showFixturePlanning,
                     onBackHome = {
                         navController.navigateToTab(AppHomeDestination)
                     },

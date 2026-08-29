@@ -47,7 +47,6 @@ data object TaskCreateDestination
 @Serializable
 data class TaskDetailDestination(
     val taskId: String,
-    val title: String,
 )
 
 val appDestinations: List<AppDestination> =

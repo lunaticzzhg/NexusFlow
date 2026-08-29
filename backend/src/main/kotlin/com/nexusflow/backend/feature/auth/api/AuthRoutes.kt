@@ -3,10 +3,13 @@ package com.nexusflow.backend.feature.auth.api
 import com.nexusflow.backend.core.http.respondError
 import com.nexusflow.backend.core.http.respondSuccess
 import com.nexusflow.backend.feature.auth.application.AuthService
+import com.nexusflow.backend.feature.auth.application.DevLoginUnavailableException
+import com.nexusflow.backend.feature.auth.application.InvalidDevLoginCredentialException
 import com.nexusflow.backend.feature.auth.application.InvalidSessionException
 import com.nexusflow.backend.feature.auth.domain.IssuedSession
 import com.nexusflow.backend.feature.auth.infrastructure.InvalidGoogleIdentityException
 import com.nexusflow.contracts.api.AuthSessionResponse
+import com.nexusflow.contracts.api.DevLoginRequest
 import com.nexusflow.contracts.api.GoogleExchangeRequest
 import com.nexusflow.contracts.api.LogoutRequest
 import com.nexusflow.contracts.api.RefreshSessionRequest
@@ -22,6 +25,19 @@ fun Routing.authRoutes(authService: AuthService) {
             call.respondSuccess(authService.exchangeGoogle(call.receive<GoogleExchangeRequest>().idToken).toResponse())
         } catch (error: InvalidGoogleIdentityException) {
             call.respondError(HttpStatusCode.Unauthorized, "Google identity could not be verified")
+        } catch (error: IllegalArgumentException) {
+            call.respondError(HttpStatusCode.UnprocessableEntity, "Invalid request")
+        }
+    }
+
+    post("/v1/auth/dev-login") {
+        try {
+            val request = call.receive<DevLoginRequest>()
+            call.respondSuccess(authService.devLogin(request.email, request.password).toResponse())
+        } catch (error: DevLoginUnavailableException) {
+            call.respondError(HttpStatusCode.NotFound, "Dev login is not available")
+        } catch (error: InvalidDevLoginCredentialException) {
+            call.respondError(HttpStatusCode.Unauthorized, "Invalid dev login credentials")
         } catch (error: IllegalArgumentException) {
             call.respondError(HttpStatusCode.UnprocessableEntity, "Invalid request")
         }

@@ -13,7 +13,10 @@ fun networkModule(httpClient: HttpClient): Module =
     module {
         single<HttpClient> {
             httpClient.also {
-                it.installFirstPartyHttpStatusFailureInterceptor(get<RuntimeConfig>().apiBaseUrl)
+                val koin = getKoin()
+                it.installFirstPartyHttpInterceptors(get<RuntimeConfig>().apiBaseUrl) {
+                    koin.getOrNull<FirstPartyApiSession>()
+                }
             }
         }
         single { ApiCallExecutor(get<AppLogger>()) }

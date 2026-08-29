@@ -35,23 +35,23 @@ import org.koin.compose.viewmodel.koinViewModel
 @Composable
 fun TaskCreateRoute(
     onBackHome: () -> Unit,
-    onOpenTask: (String, String) -> Unit,
+    onOpenTask: (String) -> Unit,
     viewModel: TaskCreateViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
     LaunchedEffect(viewModel) {
         viewModel.effects.collect { effect ->
             when (effect) {
-                is TaskCreateEffect.OpenTask -> onOpenTask(effect.taskId.value, effect.title)
+                is TaskCreateEffect.OpenTask -> onOpenTask(effect.taskId.value)
             }
         }
     }
     TaskCreateContent(
         state = state,
         onBackHome = onBackHome,
-        onRequestChanged = { viewModel.dispatch(TaskCreateIntent.RequestChanged(it)) },
-        onSubmit = { viewModel.dispatch(TaskCreateIntent.Submit) },
-        onRetry = { viewModel.dispatch(TaskCreateIntent.RetrySubmit) },
+        onRequestChanged = { viewModel.onAction(TaskCreateAction.RequestChanged(it)) },
+        onSubmit = { viewModel.onAction(TaskCreateAction.Submit) },
+        onRetry = { viewModel.onAction(TaskCreateAction.RetrySubmit) },
     )
 }
 

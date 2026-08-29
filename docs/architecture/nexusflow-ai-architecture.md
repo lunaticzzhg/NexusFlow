@@ -1,6 +1,6 @@
 # NexusFlow AI 架构主规范
 
-当前实现状态：本快照中没有已实现的 AI runtime source，且 `settings.gradle.kts` 没有 `:ai` Gradle module。`ai/` 只是为未来 planning module 预留的目录；任何文档或计划都不能被解读为当前存在 working Planner。
+当前实现状态：M0 已加入 `:ai` Gradle module 和 `UserMessageUnderstanding` / OpenAI structured-output adapter，用于用户消息理解。它不是完整 Planner、agent runtime、tool router、RAG、memory 或 side-effect executor；任何文档或计划都不能被解读为当前存在 working Planner。
 
 本规范是 NexusFlow AI/planning 边界的长期 authority。它冻结的是 Backend/AI 信任边界、ownership 和 Kotlin-first 默认方向；内部 Planner architecture 在真实源码出现前保持 `UNPROVEN`。
 
@@ -8,7 +8,7 @@
 
 ```text
 Boundary / ownership rules: PROVEN
-Current runtime implementation: ABSENT
+Current M0 understanding implementation: PRESENT
 Internal Planner architecture: UNPROVEN until real source exists
 ```
 
@@ -20,11 +20,11 @@ Internal Planner architecture: UNPROVEN until real source exists
 
 ### 事实来源
 
-- `README.md`：`ai/` reserved；no AI runtime is implemented yet。
-- `settings.gradle.kts`：当前只 include `:app:composeApp`、`:contracts`、`:backend`。
+- `settings.gradle.kts`：当前 include `:app:composeApp`、`:contracts`、`:backend`、`:ai`。
+- `ai/src/main/kotlin/com/nexusflow/ai/understanding/`：M0 user-message understanding boundary and OpenAI adapter。
 - `docs/v0.1/requirements.md` 与 `docs/v0.1/app-module-technical-plan.md`：Backend authoritative state、read-only planning context、Kotlin Planner、structured proposal、Backend validation/approval/persistence/execution。
 
-这些需求和技术计划是边界证据，不是实现许可。不得据此补出 Planner、RAG、memory、agent loop、tool router、vector store、model registry、retry framework 或 AI service。
+这些需求和技术计划是边界证据，不是实现许可。不得据此补出 Planner、RAG、memory、agent loop、tool router、vector store、model registry、retry framework 或独立 AI service。
 
 ## 1. Kotlin/JVM-first Default
 
@@ -138,7 +138,7 @@ Kotlin deterministic code 拥有：
 
 ## 8. Coroutine、Lifecycle 与 Retry
 
-未来 AI runtime 必须遵循结构化并发和 cancellation propagation。Timeout、retry、provider unavailable、invalid structured output 和 policy rejection 是不同 outcome category，不能都揉成“模型失败”。
+AI runtime 必须遵循结构化并发和 cancellation propagation。Timeout、retry、provider unavailable、invalid structured output 和 policy rejection 是不同 outcome category，不能都揉成“模型失败”。
 
 一旦 runtime 存在，必须明确：
 
@@ -183,7 +183,7 @@ AI quality verification 与 deterministic correctness 分开：
 
 当多个 plan 都合法时，避免 exact-string tests。更重要的是 invariant 稳定：不得越过预算、冲突时间、禁用时段、审批策略、权限和副作用边界。
 
-当前没有 `:ai` module，因此不得 invent AI verification command。AI 检查只能是 docs/source-boundary inspection，直到真实 Gradle module 出现。
+当当前分支存在真实 `:ai` module 时，AI deterministic/provider-adapter verification 使用该 module 的实际 Gradle task，例如 `./gradlew :ai:test`。如果某个分支只有预留 `ai/` root，不得 invent AI verification command。
 
 ## 12. Explicit Non-goals
 
@@ -222,7 +222,7 @@ Architecture -> Coordination -> Local Reasoning -> Human Debug Simulation
 - side effect 在哪里经过 approval/idempotency/persistence；
 - model/provider raw data 在哪里被隔离。
 
-任何关于内部 Planner class shape、RAG、memory、provider registry、fallback router 的结论，在当前 snapshot 都必须标为 `UNPROVEN`。不要用想象中的类名填补 runtime absent 的事实。
+任何关于内部 Planner class shape、RAG、memory、provider registry、fallback router 的结论，在当前 snapshot 都必须标为 `UNPROVEN`。不要用想象中的类名把 M0 understanding adapter 扩展成完整 Planner runtime。
 
 ## 14. Re-evaluation Triggers
 

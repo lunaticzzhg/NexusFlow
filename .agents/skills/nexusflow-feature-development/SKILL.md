@@ -32,6 +32,8 @@ description: "Implement NexusFlow product requirements and user-observable behav
 
 Backend 协议、权限和持久业务事实优先于客户端推断。AI 可以提出计划和理由，但 Backend 仍拥有权限、审批、持久化、幂等、side effect 与可信状态。
 
+当需求触及 Backend JDBC、migration、transaction、FK / UNIQUE / CHECK、idempotency、optimistic concurrency 或 durable multi-write 时，读取 `references/backend-persistence.md`，并按其中 checklist 给出持久化验证证据。
+
 ## Workflow
 
 ### 1. User Flow Discovery
@@ -305,4 +307,5 @@ Entry -> ... -> terminal
 - App/KMP Koin / ViewModel / Compose host lifetime：`references/koin-lifetimes.md`
 - App/KMP Compose state hoisting / reusable UI：`references/compose-ui.md`
 - App/KMP UI/Figma/visual review：`references/ui-review.md`
+- Backend JDBC / migration / transaction / FK / UNIQUE / idempotency / optimistic concurrency / durable multi-write：`references/backend-persistence.md`
 - Scope-aware verification：`references/verification.md`

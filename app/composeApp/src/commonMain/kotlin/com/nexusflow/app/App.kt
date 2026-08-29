@@ -8,6 +8,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.nexusflow.app.core.config.RuntimeConfig
 import com.nexusflow.app.core.design.AppSpacing
 import com.nexusflow.app.core.design.AppTheme
 import com.nexusflow.app.core.design.feedback.AppToastHost
@@ -21,6 +22,7 @@ import com.nexusflow.app.feature.auth.presentation.AuthSessionController
 @Suppress("FunctionNaming", "ktlint:standard:function-naming")
 fun AppRoot(
     authSessionController: AuthSessionController,
+    runtimeConfig: RuntimeConfig,
     systemUiGateway: SystemUiGateway,
 ) {
     AppTheme {
@@ -29,6 +31,7 @@ fun AppRoot(
             Box(modifier = Modifier.fillMaxSize()) {
                 AuthGate(
                     controller = authSessionController,
+                    runtimeConfig = runtimeConfig,
                     systemUiGateway = systemUiGateway,
                 )
                 AppToastHost(

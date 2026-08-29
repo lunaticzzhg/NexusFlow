@@ -12,4 +12,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "NexusFlow"
-include(":app:composeApp", ":contracts", ":backend")
+include(":app:composeApp", ":contracts", ":backend", ":ai")

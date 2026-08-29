@@ -1,5 +1,6 @@
 package com.nexusflow.app.feature.auth.di
 
+import com.nexusflow.app.core.network.FirstPartyApiSession
 import com.nexusflow.app.feature.auth.data.AuthRemoteDataSource
 import com.nexusflow.app.feature.auth.data.AuthSessionStore
 import com.nexusflow.app.feature.auth.data.DefaultAuthRepository
@@ -27,4 +28,5 @@ val authModule =
         }
         single<AuthDiagnosticReporter> { AppLoggerAuthDiagnosticReporter(get()) }
         single { AuthSessionController(get(), get(), get(), get(), get()) }
+        single<FirstPartyApiSession> { get<AuthSessionController>() }
     }

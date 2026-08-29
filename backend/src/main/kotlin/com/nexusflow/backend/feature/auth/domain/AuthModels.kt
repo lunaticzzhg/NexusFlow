@@ -5,6 +5,7 @@ import java.util.UUID
 
 enum class ExternalIdentityProvider {
     GOOGLE,
+    DEV_LOCAL,
 }
 
 data class VerifiedExternalIdentity(

@@ -23,6 +23,8 @@ Before implementation, read:
 - the entire Work Order or Correction Work Order;
 - directly touched source, tests, and caller/callee files.
 
+If the Work Order touches Backend persistence, JDBC, Flyway migrations, transactions, FK / UNIQUE / CHECK constraints, idempotency, optimistic concurrency, PostgreSQL-specific SQL, or durable multi-write behavior, also read `.agents/skills/nexusflow-feature-development/references/backend-persistence.md` before editing.
+
 Also inspect current git state and identify unrelated user changes before editing.
 
 ## Preflight Checklist
@@ -53,6 +55,8 @@ Final -> scope-derived verification -> Verification bundle
 ```
 
 Verification is selected from the actual touched areas and the Work Order. App ktlint is mandatory only for App/KMP Kotlin or Gradle Kotlin DSL changes where the App authority requires it. Backend-only, Contracts-only, AI-only, and docs/skills-only Work Orders must not inherit App ktlint as a universal final step.
+
+For Work Orders that require final Backend PostgreSQL evidence, run the relevant Backend tests with `NEXUSFLOW_REQUIRE_POSTGRES_TESTS=true`. Ordinary local runs may clearly skip PostgreSQL integration tests when Docker is unavailable, but required Work Order evidence must fail rather than silently skip when PostgreSQL cannot run.
 
 When App/KMP Kotlin or Gradle Kotlin DSL changes require the App ktlint task, run:
 

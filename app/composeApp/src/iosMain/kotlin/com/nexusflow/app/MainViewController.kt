@@ -16,9 +16,10 @@ fun mainViewController(
     systemUiGateway: IosSystemUiGateway,
     keychainExecutor: IosKeychainExecutor,
 ): UIViewController {
+    val runtimeConfig = platformRuntimeConfig()
     val koinApplication =
         initKoin(
-            runtimeConfig = platformRuntimeConfig(),
+            runtimeConfig = runtimeConfig,
             secureStore = IosSecureStore(keychainExecutor),
             appClock = platformAppClock(),
             httpClient = platformHttpClient(),
@@ -28,6 +29,7 @@ fun mainViewController(
     return ComposeUIViewController {
         AppRoot(
             authSessionController = authSessionController,
+            runtimeConfig = runtimeConfig,
             systemUiGateway = systemUiGateway,
         )
     }

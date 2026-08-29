@@ -52,6 +52,37 @@ class AuthServiceTest {
     }
 
     @Test
+    fun `dev login is disabled unless runtime credentials are enabled and configured`() {
+        val repository = InMemoryIdentitySessionRepository()
+        val service = authService(repository)
+
+        assertFailsWith<DevLoginUnavailableException> { service.devLogin("dev@nexusflow.local", "devpass") }
+        assertTrue(repository.sessions.isEmpty())
+    }
+
+    @Test
+    fun `dev login rejects wrong credentials without creating a business session`() {
+        val repository = InMemoryIdentitySessionRepository()
+        val service = authService(repository, devLoginEnabled = true)
+
+        assertFailsWith<InvalidDevLoginCredentialException> { service.devLogin("dev@nexusflow.local", "wrong-password") }
+        assertTrue(repository.sessions.isEmpty())
+    }
+
+    @Test
+    fun `dev login creates a backend issued session through local identity`() {
+        val repository = InMemoryIdentitySessionRepository()
+        val service = authService(repository, devLoginEnabled = true)
+
+        val first = service.devLogin("DEV@nexusflow.local ", "devpass")
+        val second = service.devLogin("dev@nexusflow.local", "devpass")
+
+        assertEquals("access-token", first.accessToken)
+        assertEquals(first.principal, second.principal)
+        assertEquals(2, repository.sessions.size)
+    }
+
+    @Test
     fun `access token with wrong audience is rejected`() {
         val keys = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
         val valid = JwtAccessTokenCodec(
@@ -90,6 +121,7 @@ class AuthServiceTest {
             VerifiedExternalIdentity(ExternalIdentityProvider.GOOGLE, "google-subject")
         },
         accessTokenIssuer: AccessTokenIssuer = AccessTokenIssuer { _, _ -> "access-token" },
+        devLoginEnabled: Boolean = false,
     ): AuthService {
         val accessLifetime = Duration.ofMinutes(15)
         return AuthService(
@@ -98,6 +130,9 @@ class AuthServiceTest {
             accessTokenIssuer = accessTokenIssuer,
             accessLifetime = accessLifetime,
             refreshLifetime = Duration.ofDays(30),
+            devLoginEnabled = devLoginEnabled,
+            devLoginEmail = "dev@nexusflow.local",
+            devLoginPassword = "devpass",
             clock = Clock.fixed(Instant.parse("2026-08-07T00:00:00Z"), ZoneOffset.UTC),
             random = SecureRandom(),
         )
@@ -119,6 +154,12 @@ class AuthServiceTest {
             googleAllowedAudiences = setOf("google-client"),
             accessLifetime = Duration.ofMinutes(15),
             refreshLifetime = Duration.ofDays(30),
+            openAiApiKey = "test-openai-key",
+            openAiModel = "gpt-test",
+            fixturePlanningEnabled = false,
+            devLoginEnabled = false,
+            devLoginEmail = null,
+            devLoginPassword = null,
         )
 
     private fun pemBase64(

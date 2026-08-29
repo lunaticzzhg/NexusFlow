@@ -36,6 +36,7 @@ kotlin {
             implementation(libs.navigation.compose)
             implementation(libs.serialization.core)
             implementation(libs.serialization.json)
+            implementation(libs.kotlinx.datetime)
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.serialization.json)
@@ -55,6 +56,7 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
             implementation(libs.coroutines.test)
+            implementation(libs.ktor.client.mock)
         }
     }
 }
@@ -92,6 +94,7 @@ android {
     }
     buildTypes {
         debug {
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
             buildConfigField(
                 "String",
                 "API_BASE_URL",
@@ -99,6 +102,7 @@ android {
             )
         }
         release {
+            manifestPlaceholders["usesCleartextTraffic"] = "false"
             buildConfigField(
                 "String",
                 "API_BASE_URL",

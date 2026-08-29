@@ -18,6 +18,10 @@ sealed interface AuthDiagnosticEvent {
         val outcome: GoogleSignInOutcome,
     ) : AuthDiagnosticEvent
 
+    data class DevLogin(
+        val outcome: DevLoginOutcome,
+    ) : AuthDiagnosticEvent
+
     data class Logout(
         val outcome: LogoutOutcome,
     ) : AuthDiagnosticEvent
@@ -50,6 +54,14 @@ enum class GoogleSignInOutcome {
     UNAVAILABLE,
 }
 
+enum class DevLoginOutcome {
+    REQUESTED,
+    EXCHANGE_SUCCEEDED,
+    INVALID_CREDENTIAL,
+    STORAGE_UNAVAILABLE,
+    UNAVAILABLE,
+}
+
 enum class LogoutOutcome {
     SUCCEEDED,
     REMOTE_UNAVAILABLE,
@@ -69,6 +81,7 @@ class AppLoggerAuthDiagnosticReporter(
                 is AuthDiagnosticEvent.SessionRestore -> logRestore(event.outcome)
                 is AuthDiagnosticEvent.SessionRefresh -> logRefresh(event.outcome)
                 is AuthDiagnosticEvent.GoogleSignIn -> logGoogleSignIn(event.outcome)
+                is AuthDiagnosticEvent.DevLogin -> logDevLogin(event.outcome)
                 is AuthDiagnosticEvent.Logout -> logLogout(event.outcome)
             }
         }
@@ -112,6 +125,19 @@ class AppLoggerAuthDiagnosticReporter(
             GoogleSignInOutcome.UNAUTHENTICATED,
             GoogleSignInOutcome.UNAVAILABLE,
             -> logger.error(authLogTag, "auth_google_sign_in", fields)
+        }
+    }
+
+    private fun logDevLogin(outcome: DevLoginOutcome) {
+        val fields = fields(outcome)
+        when (outcome) {
+            DevLoginOutcome.REQUESTED,
+            DevLoginOutcome.EXCHANGE_SUCCEEDED,
+            -> logger.info(authLogTag, "auth_dev_login", fields)
+            DevLoginOutcome.INVALID_CREDENTIAL,
+            DevLoginOutcome.STORAGE_UNAVAILABLE,
+            DevLoginOutcome.UNAVAILABLE,
+            -> logger.error(authLogTag, "auth_dev_login", fields)
         }
     }
 

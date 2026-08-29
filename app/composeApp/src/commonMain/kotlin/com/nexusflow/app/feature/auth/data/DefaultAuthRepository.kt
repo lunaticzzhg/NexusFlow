@@ -17,6 +17,14 @@ internal class DefaultAuthRepository(
             .map { it.toDomain(clock) }
             .mapAuthFailure()
 
+    override suspend fun devLogin(
+        email: String,
+        password: String,
+    ): Result<AuthSession> =
+        authRemoteDataSource.devLogin(email, password)
+            .map { it.toDomain(clock) }
+            .mapDevLoginFailure()
+
     override suspend fun refresh(refreshToken: String): Result<AuthSession> =
         authRemoteDataSource.refresh(refreshToken)
             .map { it.toDomain(clock) }
@@ -34,6 +42,27 @@ private fun <T> Result<T>.mapAuthFailure(): Result<T> =
                     is AppException.Unauthorized,
                     is AppException.Forbidden,
                     -> AuthException.Unauthenticated
+                    is AppException.Rejected ->
+                        if (failure.code == HTTP_UNPROCESSABLE_ENTITY) {
+                            AuthException.InvalidCredential
+                        } else {
+                            failure
+                        }
+                    else -> failure
+                },
+            )
+        },
+    )
+
+private fun <T> Result<T>.mapDevLoginFailure(): Result<T> =
+    fold(
+        onSuccess = Result.Companion::success,
+        onFailure = { failure ->
+            Result.failure(
+                when (failure) {
+                    is AppException.Unauthorized,
+                    is AppException.Forbidden,
+                    -> AuthException.InvalidCredential
                     is AppException.Rejected ->
                         if (failure.code == HTTP_UNPROCESSABLE_ENTITY) {
                             AuthException.InvalidCredential

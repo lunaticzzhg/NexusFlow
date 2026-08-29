@@ -25,6 +25,18 @@ data class GoogleExchangeRequest(
     }
 }
 
+/** Local debug-only credentials are exchanged by Backend for a NexusFlow session. */
+@Serializable
+data class DevLoginRequest(
+    val email: String,
+    val password: String,
+) {
+    init {
+        require(email.isNotBlank()) { "email must not be blank" }
+        require(password.isNotBlank()) { "password must not be blank" }
+    }
+}
+
 @Serializable
 data class RefreshSessionRequest(
     val refreshToken: String,

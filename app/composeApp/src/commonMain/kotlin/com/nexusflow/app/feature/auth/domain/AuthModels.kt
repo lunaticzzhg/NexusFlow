@@ -18,6 +18,11 @@ data class AuthSession(
 interface AuthRepository {
     suspend fun exchangeGoogleIdToken(idToken: String): Result<AuthSession>
 
+    suspend fun devLogin(
+        email: String,
+        password: String,
+    ): Result<AuthSession>
+
     suspend fun refresh(refreshToken: String): Result<AuthSession>
 
     suspend fun logout(refreshToken: String): Result<Unit>

@@ -3,6 +3,7 @@ package com.nexusflow.app.feature.auth.presentation
 import com.nexusflow.app.core.config.BuildMode
 import com.nexusflow.app.core.config.RuntimeConfig
 import com.nexusflow.app.core.error.AppException
+import com.nexusflow.app.core.network.FirstPartySessionRefresh
 import com.nexusflow.app.core.security.SecureKey
 import com.nexusflow.app.core.security.SecureStore
 import com.nexusflow.app.core.security.SecureStoreNamespace
@@ -52,7 +53,7 @@ class AuthSessionControllerTest {
 
             controller.restore()
 
-            assertEquals(AuthState.Unauthenticated, controller.state.value)
+            assertEquals(AuthState.Unauthenticated(), controller.state.value)
             assertEquals(null, AuthSessionStore(store).read())
         }
 
@@ -89,6 +90,58 @@ class AuthSessionControllerTest {
         }
 
     @Test
+    fun devLoginPublishesBackendIssuedSession() =
+        runBlocking {
+            val store = MemorySecureStore()
+            val repository = RecordingDevLoginRepository(Result.success(validSession))
+            val controller = controller(store, repository = repository)
+
+            controller.submitDevLogin("devpass")
+
+            assertEquals(listOf("dev@nexusflow.local" to "devpass"), repository.devLoginRequests)
+            assertEquals(validSession, AuthSessionStore(store).read())
+            assertEquals(AuthState.Authenticated(validSession.context), controller.state.value)
+        }
+
+    @Test
+    fun invalidDevLoginCredentialReturnsToLoginWithoutStoringSession() =
+        runBlocking {
+            val store = MemorySecureStore()
+            val repository = RecordingDevLoginRepository(Result.failure(AuthException.InvalidCredential))
+            val controller = controller(store, repository = repository)
+
+            controller.submitDevLogin("wrong-password")
+
+            assertEquals(null, AuthSessionStore(store).read())
+            assertEquals(
+                AuthState.Unauthenticated(
+                    AuthLoginUiState(showInvalidDevCredential = true),
+                ),
+                controller.state.value,
+            )
+        }
+
+    @Test
+    fun devLoginEmailChangesAreIgnoredWhileSubmitting() =
+        runBlocking {
+            val repository = SuspendedDevLoginRepository()
+            val controller = controller(MemorySecureStore(), repository = repository)
+
+            controller.updateDevLoginEmail("custom@nexusflow.local")
+            val submit = launch { controller.submitDevLogin("devpass") }
+            repository.started.await()
+            controller.updateDevLoginEmail("late@nexusflow.local")
+
+            assertEquals(
+                AuthState.Unauthenticated(
+                    AuthLoginUiState(devLoginEmail = "custom@nexusflow.local", isDevLoginSubmitting = true),
+                ),
+                controller.state.value,
+            )
+            submit.cancelAndJoin()
+        }
+
+    @Test
     fun cancellationInRefreshResultIsRethrown() =
         runBlocking {
             val store = MemorySecureStore()
@@ -109,7 +162,7 @@ class AuthSessionControllerTest {
 
             controller.restore()
 
-            assertEquals(AuthState.Unauthenticated, controller.state.value)
+            assertEquals(AuthState.Unauthenticated(), controller.state.value)
             assertEquals(null, AuthSessionStore(store).read())
         }
 
@@ -123,6 +176,53 @@ class AuthSessionControllerTest {
 
             assertEquals(AuthState.Unavailable, controller.state.value)
             assertEquals(validSession.copy(accessTokenExpiresAtMillis = 999), AuthSessionStore(store).read())
+        }
+
+    @Test
+    fun protectedApiRefreshWritesNewSessionWhenTokenStillMatches() =
+        runBlocking {
+            val store = MemorySecureStore()
+            AuthSessionStore(store).write(validSession)
+            val refreshed = validSession.copy(accessToken = "new-access-token")
+            val repository = RecordingRefreshRepository(Result.success(refreshed))
+            val controller = controller(store, repository = repository)
+
+            val result = controller.refreshAccessTokenIfCurrent("access-token")
+
+            assertEquals(FirstPartySessionRefresh.TokenAvailable("new-access-token"), result)
+            assertEquals(listOf("refresh-token"), repository.refreshRequests)
+            assertEquals(refreshed, AuthSessionStore(store).read())
+            assertEquals(AuthState.Authenticated(refreshed.context), controller.state.value)
+        }
+
+    @Test
+    fun protectedApiRefreshReusesNewerSessionWhenRequestTokenIsStale() =
+        runBlocking {
+            val store = MemorySecureStore()
+            AuthSessionStore(store).write(validSession.copy(accessToken = "newer-access-token"))
+            val repository = RecordingRefreshRepository(Result.failure(IllegalStateException("refresh should not be called")))
+            val controller = controller(store, repository = repository)
+
+            val result = controller.refreshAccessTokenIfCurrent("old-access-token")
+
+            assertEquals(FirstPartySessionRefresh.TokenAvailable("newer-access-token"), result)
+            assertEquals(emptyList(), repository.refreshRequests)
+            assertEquals(validSession.copy(accessToken = "newer-access-token"), AuthSessionStore(store).read())
+        }
+
+    @Test
+    fun protectedApiReplayClearOnlyClearsMatchingCurrentSession() =
+        runBlocking {
+            val store = MemorySecureStore()
+            AuthSessionStore(store).write(validSession.copy(accessToken = "newer-access-token"))
+            val controller = controller(store)
+
+            assertEquals(false, controller.clearSessionIfCurrent("old-access-token"))
+            assertEquals(validSession.copy(accessToken = "newer-access-token"), AuthSessionStore(store).read())
+
+            assertEquals(true, controller.clearSessionIfCurrent("newer-access-token"))
+            assertEquals(null, AuthSessionStore(store).read())
+            assertEquals(AuthState.Unauthenticated(), controller.state.value)
         }
 
     private suspend fun expiredAccessTokenStore(): MemorySecureStore =
@@ -150,6 +250,11 @@ class AuthSessionControllerTest {
     private object FailingRepository : AuthRepository {
         override suspend fun exchangeGoogleIdToken(idToken: String): Result<AuthSession> = error("Not used")
 
+        override suspend fun devLogin(
+            email: String,
+            password: String,
+        ): Result<AuthSession> = error("Not used")
+
         override suspend fun refresh(refreshToken: String): Result<AuthSession> = error("Not used")
 
         override suspend fun logout(refreshToken: String): Result<Unit> = error("Not used")
@@ -157,6 +262,11 @@ class AuthSessionControllerTest {
 
     private object CancellingRefreshRepository : AuthRepository {
         override suspend fun exchangeGoogleIdToken(idToken: String): Result<AuthSession> = error("Not used")
+
+        override suspend fun devLogin(
+            email: String,
+            password: String,
+        ): Result<AuthSession> = error("Not used")
 
         override suspend fun refresh(refreshToken: String): Result<AuthSession> = Result.failure(CancellationException("cancelled"))
 
@@ -166,6 +276,11 @@ class AuthSessionControllerTest {
     private object UnauthenticatedRefreshRepository : AuthRepository {
         override suspend fun exchangeGoogleIdToken(idToken: String): Result<AuthSession> = error("Not used")
 
+        override suspend fun devLogin(
+            email: String,
+            password: String,
+        ): Result<AuthSession> = error("Not used")
+
         override suspend fun refresh(refreshToken: String): Result<AuthSession> = Result.failure(AuthException.Unauthenticated)
 
         override suspend fun logout(refreshToken: String): Result<Unit> = error("Not used")
@@ -174,7 +289,71 @@ class AuthSessionControllerTest {
     private object UnavailableRefreshRepository : AuthRepository {
         override suspend fun exchangeGoogleIdToken(idToken: String): Result<AuthSession> = error("Not used")
 
+        override suspend fun devLogin(
+            email: String,
+            password: String,
+        ): Result<AuthSession> = error("Not used")
+
         override suspend fun refresh(refreshToken: String): Result<AuthSession> = Result.failure(AppException.Unavailable())
+
+        override suspend fun logout(refreshToken: String): Result<Unit> = error("Not used")
+    }
+
+    private class RecordingRefreshRepository(
+        private val refreshResult: Result<AuthSession>,
+    ) : AuthRepository {
+        val refreshRequests = mutableListOf<String>()
+
+        override suspend fun exchangeGoogleIdToken(idToken: String): Result<AuthSession> = error("Not used")
+
+        override suspend fun devLogin(
+            email: String,
+            password: String,
+        ): Result<AuthSession> = error("Not used")
+
+        override suspend fun refresh(refreshToken: String): Result<AuthSession> {
+            refreshRequests += refreshToken
+            return refreshResult
+        }
+
+        override suspend fun logout(refreshToken: String): Result<Unit> = error("Not used")
+    }
+
+    private class RecordingDevLoginRepository(
+        private val result: Result<AuthSession>,
+    ) : AuthRepository {
+        val devLoginRequests = mutableListOf<Pair<String, String>>()
+
+        override suspend fun exchangeGoogleIdToken(idToken: String): Result<AuthSession> = error("Not used")
+
+        override suspend fun devLogin(
+            email: String,
+            password: String,
+        ): Result<AuthSession> {
+            devLoginRequests += email to password
+            return result
+        }
+
+        override suspend fun refresh(refreshToken: String): Result<AuthSession> = error("Not used")
+
+        override suspend fun logout(refreshToken: String): Result<Unit> = error("Not used")
+    }
+
+    private class SuspendedDevLoginRepository : AuthRepository {
+        val started = CompletableDeferred<Unit>()
+        private val result = CompletableDeferred<Result<AuthSession>>()
+
+        override suspend fun exchangeGoogleIdToken(idToken: String): Result<AuthSession> = error("Not used")
+
+        override suspend fun devLogin(
+            email: String,
+            password: String,
+        ): Result<AuthSession> {
+            started.complete(Unit)
+            return result.await()
+        }
+
+        override suspend fun refresh(refreshToken: String): Result<AuthSession> = error("Not used")
 
         override suspend fun logout(refreshToken: String): Result<Unit> = error("Not used")
     }

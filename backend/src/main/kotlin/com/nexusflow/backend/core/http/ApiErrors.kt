@@ -12,7 +12,7 @@ internal suspend fun ApplicationCall.respondError(
     respond(status, KResponse<Nothing>(code = status.value, message = message))
 }
 
-internal suspend fun <T> ApplicationCall.respondSuccess(
+internal suspend inline fun <reified T> ApplicationCall.respondSuccess(
     data: T? = null,
 ) {
     respond(HttpStatusCode.OK, KResponse(code = HttpStatusCode.OK.value, data = data))

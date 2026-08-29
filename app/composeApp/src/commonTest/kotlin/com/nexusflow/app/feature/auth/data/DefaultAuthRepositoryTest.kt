@@ -9,6 +9,7 @@ import com.nexusflow.app.core.observability.LogTag
 import com.nexusflow.app.core.time.AppClock
 import com.nexusflow.app.feature.auth.domain.AuthException
 import com.nexusflow.contracts.api.AuthSessionResponse
+import com.nexusflow.contracts.api.DevLoginRequest
 import com.nexusflow.contracts.api.GoogleExchangeRequest
 import com.nexusflow.contracts.api.KResponse
 import com.nexusflow.contracts.api.LogoutRequest
@@ -36,6 +37,17 @@ class DefaultAuthRepositoryTest {
         }
 
     @Test
+    fun `maps dev login unauthorized to invalid credential`() =
+        runBlocking {
+            assertIs<AuthException.InvalidCredential>(
+                repositoryWithDevLogin(KResponse(code = 401))
+                    .devLogin("dev@nexusflow.local", "wrong")
+                    .exceptionOrNull(),
+            )
+            Unit
+        }
+
+    @Test
     fun `preserves non-auth transport failures`() =
         runBlocking {
             assertIs<AppException.Unavailable>(repository(KResponse(code = 500)).exchangeGoogleIdToken("id-token").exceptionOrNull())
@@ -59,14 +71,27 @@ class DefaultAuthRepositoryTest {
 
     private fun repository(response: KResponse<AuthSessionResponse>): DefaultAuthRepository = repository { response }
 
+    private fun repositoryWithDevLogin(devLoginResponse: KResponse<AuthSessionResponse>): DefaultAuthRepository =
+        DefaultAuthRepository(
+            authRemoteDataSource =
+                AuthRemoteDataSource(
+                    TestAuthApi(devLoginResponse = { devLoginResponse }),
+                    ApiCallExecutor(NoOpLogger),
+                ),
+            clock = FixedClock,
+        )
+
     private object FixedClock : AppClock {
         override fun currentTimeMillis(): Long = 1_000
     }
 
     private class TestAuthApi(
-        private val exchangeResponse: suspend () -> KResponse<AuthSessionResponse>,
+        private val exchangeResponse: suspend () -> KResponse<AuthSessionResponse> = { error("Not used") },
+        private val devLoginResponse: suspend () -> KResponse<AuthSessionResponse> = { error("Not used") },
     ) : AuthApi {
         override suspend fun exchangeGoogleIdToken(request: GoogleExchangeRequest): KResponse<AuthSessionResponse> = exchangeResponse()
+
+        override suspend fun devLogin(request: DevLoginRequest): KResponse<AuthSessionResponse> = devLoginResponse()
 
         override suspend fun refresh(request: RefreshSessionRequest): KResponse<AuthSessionResponse> = error("Not used")
 

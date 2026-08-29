@@ -19,6 +19,7 @@ postgresql = "42.7.5"
 javaJwt = "4.5.0"
 jwksRsa = "0.22.1"
 logback = "1.5.18"
+testcontainers = "2.0.5"
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
@@ -44,6 +45,8 @@ serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-jso
 kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "datetime" }
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
 ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
 ktor-serialization-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
@@ -59,3 +62,4 @@ postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" 
 java-jwt = { module = "com.auth0:java-jwt", version.ref = "javaJwt" }
 jwks-rsa = { module = "com.auth0:jwks-rsa", version.ref = "jwksRsa" }
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql", version.ref = "testcontainers" }

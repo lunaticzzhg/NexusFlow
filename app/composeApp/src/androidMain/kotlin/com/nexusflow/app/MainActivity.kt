@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
+import com.nexusflow.app.core.config.RuntimeConfig
 import com.nexusflow.app.core.systemui.AndroidSystemUiHost
 import com.nexusflow.app.core.systemui.AndroidSystemUiViewModel
 import com.nexusflow.app.core.systemui.GoogleSignInResult
@@ -34,10 +35,13 @@ class MainActivity : ComponentActivity() {
         systemUiHost = AndroidSystemUiHost()
         systemUiHost.attach(this)
         collectSystemUiRequests()
-        val authSessionController = (application as App).koinApplication.koin.get<AuthSessionController>()
+        val koin = (application as App).koinApplication.koin
+        val authSessionController = koin.get<AuthSessionController>()
+        val runtimeConfig = koin.get<RuntimeConfig>()
         setContent {
             AppRoot(
                 authSessionController = authSessionController,
+                runtimeConfig = runtimeConfig,
                 systemUiGateway = systemUiViewModel,
             )
         }

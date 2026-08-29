@@ -75,20 +75,25 @@ class JdbcIdentitySessionRepository(
         connection.insertSession(session, now)
     }
 
-    override fun rotateSession(current: StoredSession, replacement: StoredSession, now: Instant): Boolean = inTransaction { connection ->
-        val updated = connection.prepareStatement(
-            "UPDATE auth_sessions SET revoked_at = ?, replaced_by_session_id = ? WHERE id = ? AND revoked_at IS NULL AND expires_at > ?",
-        ).use { statement ->
-            statement.setTimestamp(1, Timestamp.from(now))
-            statement.setObject(2, replacement.id)
-            statement.setObject(3, current.id)
-            statement.setTimestamp(4, Timestamp.from(now))
-            statement.executeUpdate()
+    override fun rotateSession(current: StoredSession, replacement: StoredSession, now: Instant): Boolean =
+        try {
+            inTransaction { connection ->
+                connection.insertSession(replacement, now)
+                val updated = connection.prepareStatement(
+                    "UPDATE auth_sessions SET revoked_at = ?, replaced_by_session_id = ? WHERE id = ? AND revoked_at IS NULL AND expires_at > ?",
+                ).use { statement ->
+                    statement.setTimestamp(1, Timestamp.from(now))
+                    statement.setObject(2, replacement.id)
+                    statement.setObject(3, current.id)
+                    statement.setTimestamp(4, Timestamp.from(now))
+                    statement.executeUpdate()
+                }
+                if (updated != 1) throw SessionRotationRejected()
+                true
+            }
+        } catch (_: SessionRotationRejected) {
+            false
         }
-        if (updated != 1) return@inTransaction false
-        connection.insertSession(replacement, now)
-        true
-    }
 
     override fun revokeFamily(familyId: UUID, now: Instant) {
         inTransaction { connection ->
@@ -160,3 +165,5 @@ class JdbcIdentitySessionRepository(
         revokedAt = getTimestamp("revoked_at")?.toInstant(),
     )
 }
+
+private class SessionRotationRejected : RuntimeException()
