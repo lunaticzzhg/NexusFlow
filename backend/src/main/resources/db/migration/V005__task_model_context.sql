@@ -1,0 +1,2 @@
+-- Task-lifecycle context selections are part of the refactored Task model.
+-- The task_context_selections table is created in V002 for the incompatible baseline rebuild.

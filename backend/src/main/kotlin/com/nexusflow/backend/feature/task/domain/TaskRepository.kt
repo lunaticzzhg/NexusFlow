@@ -3,14 +3,19 @@ package com.nexusflow.backend.feature.task.domain
 import java.time.Instant
 
 interface TaskRepository {
-    suspend fun createTaskWithConversation(command: CreateTaskPersistenceCommand): CreateTaskPersistenceResult
+    suspend fun createTask(command: CreateTaskPersistenceCommand): CreateTaskPersistenceResult
 
-    suspend fun listTasks(owner: TaskOwner): List<Task>
+    suspend fun listTaskSummaries(owner: TaskOwner): List<TaskDetail>
 
     suspend fun findTaskDetail(
         owner: TaskOwner,
         taskId: TaskId,
     ): TaskDetail?
+
+    suspend fun listTaskContextKeys(
+        owner: TaskOwner,
+        taskId: TaskId,
+    ): List<String>
 
     suspend fun appendUserMessage(command: AppendUserMessageCommand): AppendUserMessageResult
 
@@ -18,22 +23,31 @@ interface TaskRepository {
 
     suspend fun applyUnderstanding(command: ApplyUnderstandingCommand): ApplyUnderstandingResult
 
-    suspend fun createFixturePlanningRun(command: CreateFixturePlanningRunCommand): CreateFixturePlanningRunResult
+    suspend fun updateRequirement(command: UpdateRequirementCommand): RequirementMutationResult
 
-    suspend fun selectPlan(command: SelectPlanCommand): SelectPlanResult
+    suspend fun deleteRequirement(command: DeleteRequirementCommand): RequirementMutationResult
+
+    suspend fun persistPlans(command: PersistPlansCommand): PersistPlansResult
+
+    suspend fun selectCurrentPlan(command: SelectPlanCommand): SelectPlanResult
 }
 
 data class CreateTaskPersistenceCommand(
     val owner: TaskOwner,
     val taskId: TaskId,
-    val conversationId: ConversationId,
+    val firstMessageId: MessageId,
     val creationRequestId: String,
-    val goal: String,
+    val message: String,
+    val aiRequestId: String,
     val now: Instant,
 )
 
 sealed interface CreateTaskPersistenceResult {
-    data class Created(val detail: TaskDetail) : CreateTaskPersistenceResult
+    data class Created(
+        val detail: TaskDetail,
+        val message: TaskMessage,
+        val taskRevision: Long,
+    ) : CreateTaskPersistenceResult
 
     data class Existing(val detail: TaskDetail) : CreateTaskPersistenceResult
 
@@ -53,15 +67,11 @@ data class AppendUserMessageCommand(
 sealed interface AppendUserMessageResult {
     data class Appended(
         val detail: TaskDetail,
-        val message: ConversationMessage,
-        val taskVersion: Long,
+        val message: TaskMessage,
+        val taskRevision: Long,
     ) : AppendUserMessageResult
 
-    data class Existing(
-        val detail: TaskDetail,
-        val message: ConversationMessage,
-        val taskVersion: Long,
-    ) : AppendUserMessageResult
+    data class Existing(val detail: TaskDetail) : AppendUserMessageResult
 
     data object ConflictingMessage : AppendUserMessageResult
 
@@ -71,7 +81,7 @@ sealed interface AppendUserMessageResult {
 data class RecordAiUnderstandingAuditCommand(
     val owner: TaskOwner,
     val taskId: TaskId,
-    val taskVersion: Long,
+    val taskRevision: Long,
     val aiRequestId: String,
     val eventType: AiUnderstandingAuditEventType,
     val provider: String?,
@@ -79,10 +89,29 @@ data class RecordAiUnderstandingAuditCommand(
     val promptVersion: String?,
     val providerRequestId: String?,
     val attemptCount: Int?,
+    val usage: AiModelTokenUsage? = null,
+    val diagnostics: AiInvocationDiagnostics = AiInvocationDiagnostics(),
     val outcome: String,
     val latencyMs: Long?,
     val failureCategory: String?,
     val now: Instant,
+)
+
+data class AiModelTokenUsage(
+    val inputTokens: Int?,
+    val outputTokens: Int?,
+    val totalTokens: Int?,
+)
+
+data class AiInvocationDiagnostics(
+    val availableContextDefinitionCount: Int = 0,
+    val selectedContextKeyCount: Int = 0,
+    val resolvedContextBlockCount: Int = 0,
+    val includedContextBlockCount: Int = 0,
+    val omittedContextBlockCount: Int = 0,
+    val optionalContextSerializedChars: Int = 0,
+    val contextDefinitionsSerializedChars: Int = 0,
+    val fullUserPayloadSerializedChars: Int = 0,
 )
 
 enum class AiUnderstandingAuditEventType {
@@ -100,20 +129,22 @@ sealed interface RecordAiUnderstandingAuditResult {
 data class ApplyUnderstandingCommand(
     val owner: TaskOwner,
     val taskId: TaskId,
-    val expectedTaskVersion: Long,
+    val expectedTaskRevision: Long,
     val messageId: MessageId,
     val aiRequestId: String,
-    val constraints: List<ConfirmedConstraintWrite>,
+    val intentPatch: String?,
+    val requirements: List<RequirementWrite>,
+    val selectedTaskContextKeys: List<String> = emptyList(),
     val assistantMessage: AssistantMessageWrite?,
-    val targetState: TaskState,
     val now: Instant,
 )
 
-data class ConfirmedConstraintWrite(
-    val id: ConstraintId,
-    val kind: ConstraintKind,
-    val value: ConstraintValue,
-    val strength: ConstraintStrength,
+data class RequirementWrite(
+    val id: RequirementId,
+    val kind: RequirementKind,
+    val value: RequirementValue,
+    val strength: RequirementStrength,
+    val source: RequirementSource = RequirementSource.UserExplicit,
 )
 
 data class AssistantMessageWrite(
@@ -122,32 +153,58 @@ data class AssistantMessageWrite(
 )
 
 sealed interface ApplyUnderstandingResult {
-    data class Applied(val detail: TaskDetail) : ApplyUnderstandingResult
+    data class Applied(
+        val detail: TaskDetail,
+        val changedPlanningInputs: Boolean,
+    ) : ApplyUnderstandingResult
 
     data object TaskNotFound : ApplyUnderstandingResult
 
     data object MessageNotFound : ApplyUnderstandingResult
 
-    data object StaleTaskVersion : ApplyUnderstandingResult
+    data object StaleTaskRevision : ApplyUnderstandingResult
 }
 
-data class CreateFixturePlanningRunCommand(
+data class UpdateRequirementCommand(
     val owner: TaskOwner,
     val taskId: TaskId,
-    val planningRunId: PlanningRunId,
-    val clientRequestId: String,
+    val requirementId: RequirementId,
+    val kind: RequirementKind,
+    val value: RequirementValue,
+    val strength: RequirementStrength,
+    val now: Instant,
+)
+
+data class DeleteRequirementCommand(
+    val owner: TaskOwner,
+    val taskId: TaskId,
+    val requirementId: RequirementId,
+    val now: Instant,
+)
+
+sealed interface RequirementMutationResult {
+    data class Mutated(val detail: TaskDetail) : RequirementMutationResult
+
+    data object TaskNotFound : RequirementMutationResult
+
+    data object RequirementNotFound : RequirementMutationResult
+}
+
+data class PersistPlansCommand(
+    val owner: TaskOwner,
+    val taskId: TaskId,
+    val expectedTaskRevision: Long,
+    val opportunities: List<Opportunity>,
     val plans: List<Plan>,
     val now: Instant,
 )
 
-sealed interface CreateFixturePlanningRunResult {
-    data class Created(val detail: TaskDetail, val planningRun: PlanningRun) : CreateFixturePlanningRunResult
+sealed interface PersistPlansResult {
+    data class Persisted(val detail: TaskDetail) : PersistPlansResult
 
-    data class Existing(val detail: TaskDetail, val planningRun: PlanningRun) : CreateFixturePlanningRunResult
+    data object TaskNotFound : PersistPlansResult
 
-    data object TaskNotFound : CreateFixturePlanningRunResult
-
-    data object InvalidState : CreateFixturePlanningRunResult
+    data object StaleTaskRevision : PersistPlansResult
 }
 
 data class SelectPlanCommand(
@@ -164,5 +221,7 @@ sealed interface SelectPlanResult {
 
     data object PlanNotFound : SelectPlanResult
 
-    data object InvalidState : SelectPlanResult
+    data object RevisionConflict : SelectPlanResult
+
+    data object Expired : SelectPlanResult
 }

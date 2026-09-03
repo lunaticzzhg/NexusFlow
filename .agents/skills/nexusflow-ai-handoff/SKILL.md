@@ -9,7 +9,7 @@ description: "Prepare a portable NexusFlow project-context bundle for another AI
 
 Prepare a portable NexusFlow project-context bundle for another AI.
 
-The handoff producer packages the real repository state, user goal, task contract, constraints, and attachments.
+The handoff producer packages the real repository state, user objective, task contract, requirements, and attachments.
 
 The handoff infrastructure does not decide whether the receiver should plan, review, modify code, write documents, or produce a Work Order. That responsibility belongs to `REQUEST.md`.
 

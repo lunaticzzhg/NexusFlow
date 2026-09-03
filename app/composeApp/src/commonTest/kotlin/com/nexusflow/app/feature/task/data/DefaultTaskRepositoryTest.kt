@@ -1,67 +1,55 @@
 package com.nexusflow.app.feature.task.data
 
-import com.nexusflow.app.core.error.AppException
 import com.nexusflow.app.core.network.ApiCallExecutor
 import com.nexusflow.app.core.observability.AppLogger
 import com.nexusflow.app.core.observability.LogFields
 import com.nexusflow.app.core.observability.LogLevel
 import com.nexusflow.app.core.observability.LogTag
-import com.nexusflow.app.feature.task.domain.ConstraintValue
 import com.nexusflow.app.feature.task.domain.CreateTaskCommand
-import com.nexusflow.app.feature.task.domain.GeneratePlansCommand
 import com.nexusflow.app.feature.task.domain.PlanId
+import com.nexusflow.app.feature.task.domain.RequirementKind
+import com.nexusflow.app.feature.task.domain.RequirementStrength
+import com.nexusflow.app.feature.task.domain.RequirementValue
 import com.nexusflow.app.feature.task.domain.SelectPlanCommand
 import com.nexusflow.app.feature.task.domain.TaskId
-import com.nexusflow.app.feature.task.domain.TaskState
-import com.nexusflow.contracts.api.ConstraintKind
-import com.nexusflow.contracts.api.ConstraintResponse
-import com.nexusflow.contracts.api.ConstraintSource
-import com.nexusflow.contracts.api.ConstraintStrength
-import com.nexusflow.contracts.api.ConstraintValueResponse
-import com.nexusflow.contracts.api.ConversationMessageResponse
+import com.nexusflow.app.feature.task.domain.UpdateRequirementCommand
 import com.nexusflow.contracts.api.CreateTaskRequest
-import com.nexusflow.contracts.api.GeneratePlansRequest
-import com.nexusflow.contracts.api.GeneratePlansResponse
 import com.nexusflow.contracts.api.KResponse
 import com.nexusflow.contracts.api.MessageRole
+import com.nexusflow.contracts.api.PlanDirection
 import com.nexusflow.contracts.api.PlanEstimatedCostResponse
 import com.nexusflow.contracts.api.PlanResponse
 import com.nexusflow.contracts.api.PlanSourceRefResponse
 import com.nexusflow.contracts.api.PlanTimelineItemResponse
-import com.nexusflow.contracts.api.SelectPlanRequest
+import com.nexusflow.contracts.api.PlanningStatus
+import com.nexusflow.contracts.api.PlanningStatusResponse
+import com.nexusflow.contracts.api.RequirementEvaluationResponse
+import com.nexusflow.contracts.api.RequirementEvaluationResult
+import com.nexusflow.contracts.api.RequirementResponse
+import com.nexusflow.contracts.api.RequirementSource
+import com.nexusflow.contracts.api.RequirementSummaryResponse
+import com.nexusflow.contracts.api.RequirementValueResponse
 import com.nexusflow.contracts.api.SendTaskMessageRequest
 import com.nexusflow.contracts.api.TaskDetailResponse
+import com.nexusflow.contracts.api.TaskMessageResponse
+import com.nexusflow.contracts.api.TaskResponse
 import com.nexusflow.contracts.api.TaskSummaryResponse
+import com.nexusflow.contracts.api.UpdateRequirementRequest
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
-import kotlin.test.assertTrue
-import com.nexusflow.contracts.api.TaskState as WireTaskState
+import com.nexusflow.contracts.api.RequirementKind as WireRequirementKind
+import com.nexusflow.contracts.api.RequirementStrength as WireRequirementStrength
 
 class DefaultTaskRepositoryTest {
     @Test
-    fun `loads summaries and detail through contract to domain mapping`() =
+    fun `loads summaries and detail through requirement contracts`() =
         runTest {
             val api =
                 RecordingTaskApi(
-                    listResponses =
-                        listOf(
-                            KResponse(
-                                code = 200,
-                                data =
-                                    listOf(
-                                        TaskSummaryResponse(
-                                            id = "task-1",
-                                            title = "Liverpool night",
-                                            currentGoal = "Plan a match night",
-                                            state = WireTaskState.Planning,
-                                            updatedAt = Now,
-                                        ),
-                                    ),
-                            ),
-                        ),
+                    listResponses = listOf(KResponse(code = 200, data = listOf(summaryResponse()))),
                     detailResponses = listOf(KResponse(code = 200, data = detailResponse())),
                 )
             val repository = repository(api)
@@ -69,129 +57,87 @@ class DefaultTaskRepositoryTest {
             val summaries = repository.loadTaskSummaries().getOrThrow()
             val detail = repository.loadTaskDetail(TaskId("task-1")).getOrThrow()
 
-            assertEquals(TaskState.Planning, summaries.single().state)
-            assertEquals("Plan a match night", detail.currentGoal)
-            assertEquals(1, detail.version)
-            assertEquals(TaskState.Planning, detail.state)
-            assertEquals("Saturday evening", (detail.constraints.single().value as ConstraintValue.TimeWindow).originalText)
-            assertEquals("Please keep it under 300", detail.messages.single().content)
-            assertEquals("Anfield walk", detail.plans.single().timeline.single().title)
-            assertEquals(120, detail.plans.single().estimatedCost?.wholeUnits)
+            assertEquals("Plan a match night", summaries.single().intent)
+            assertEquals(RequirementStrength.Must, summaries.single().requirements.single().strength)
+            assertEquals(2, detail.revision)
+            assertEquals("Liverpool", (detail.requirements.single().value as RequirementValue.Text).value)
+            assertEquals(PlanId("plan-1"), detail.plans.single().id)
         }
 
     @Test
-    fun `create task sends first user message with separate stable identities and returns final detail`() =
+    fun `create task sends message based request`() =
         runTest {
-            val api =
-                RecordingTaskApi(
-                    createResponses =
-                        listOf(
-                            KResponse(
-                                code = 200,
-                                data = detailResponse(version = 1, currentGoal = "Pre-message goal"),
-                            ),
-                            KResponse(
-                                code = 200,
-                                data = detailResponse(version = 1, currentGoal = "Pre-message goal"),
-                            ),
-                        ),
-                    sendResponses =
-                        listOf(
-                            KResponse(code = 503, message = "Task understanding is temporarily unavailable"),
-                            KResponse(
-                                code = 200,
-                                data =
-                                    detailResponse(
-                                        version = 2,
-                                        currentGoal = "Final message goal",
-                                        messageClientId = "message-1",
-                                    ),
-                            ),
-                        ),
-                )
+            val api = RecordingTaskApi(createResponses = listOf(KResponse(code = 200, data = detailResponse())))
             val repository = repository(api)
-            val command =
+
+            repository.createTask(
                 CreateTaskCommand(
                     creationRequestId = "create-1",
-                    initialMessageId = "message-1",
-                    requestText = "Plan a match night",
+                    requestText = "Plan Saturday",
                     timeZoneId = "Asia/Shanghai",
-                )
+                ),
+            ).getOrThrow()
 
-            val first = repository.createTask(command)
-            val second = repository.createTask(command).getOrThrow()
-
-            assertIs<AppException.Unavailable>(first.exceptionOrNull())
-            assertEquals("task-1", second.id.value)
-            assertEquals(2, second.version)
-            assertEquals("Final message goal", second.currentGoal)
-            assertEquals(
-                listOf("create:create-1", "send:message-1", "create:create-1", "send:message-1"),
-                api.calls,
-            )
-            assertTrue(command.creationRequestId != command.initialMessageId)
-            assertEquals(listOf("Plan a match night", "Plan a match night"), api.createRequests.map { it.goal })
-            assertEquals(listOf("Plan a match night", "Plan a match night"), api.sendRequests.map { it.text })
-            assertEquals(listOf("Asia/Shanghai", "Asia/Shanghai"), api.sendRequests.map { it.timeZoneId })
+            assertEquals(listOf("create:create-1"), api.calls)
+            assertEquals(CreateTaskRequest("create-1", "Plan Saturday", "Asia/Shanghai"), api.createRequests.single())
         }
 
     @Test
-    fun `generates and selects plans without leaking task IDs into logged endpoint paths`() =
+    fun `updates requirement with typed wire value`() =
         runTest {
-            val api =
-                RecordingTaskApi(
-                    generateResponses =
-                        listOf(
-                            KResponse(
-                                code = 200,
-                                data = GeneratePlansResponse(planningRunId = "run-1", plans = listOf(planResponse())),
-                            ),
-                        ),
-                    selectResponses =
-                        listOf(
-                            KResponse(
-                                code = 200,
-                                data = detailResponse(selectedPlanId = "plan-1", state = WireTaskState.WaitingForApproval),
-                            ),
-                        ),
-                )
-            val logger = RecordingLogger()
-            val repository = repository(api, logger)
+            val api = RecordingTaskApi(updateResponses = listOf(KResponse(code = 200, data = detailResponse())))
+            val repository = repository(api)
 
-            val plans = repository.generatePlans(GeneratePlansCommand(TaskId("task-1"), "run-1")).getOrThrow()
-            val selected = repository.selectPlan(SelectPlanCommand(TaskId("task-1"), PlanId("plan-1"))).getOrThrow()
+            repository.updateRequirement(
+                UpdateRequirementCommand(
+                    taskId = TaskId("task-1"),
+                    requirementId = com.nexusflow.app.feature.task.domain.RequirementId("requirement-1"),
+                    kind = RequirementKind.Topic,
+                    value = RequirementValue.Text("Liverpool"),
+                    strength = RequirementStrength.Prefer,
+                ),
+            ).getOrThrow()
 
-            assertEquals(listOf("generate:run-1", "select:plan-1"), api.calls)
-            assertEquals("Fixture route", plans.single().title)
-            assertEquals(PlanId("plan-1"), selected.selectedPlanId)
-            assertTrue(logger.entries.none { entry -> entry.fields.values.any { it.contains("task-1") } })
+            val request = api.updateRequests.single()
+            assertEquals(WireRequirementKind.Topic, request.kind)
+            assertEquals(WireRequirementStrength.Prefer, request.strength)
+            assertIs<RequirementValueResponse.Topic>(request.value)
+        }
+
+    @Test
+    fun `select plan uses task and plan path parameters`() =
+        runTest {
+            val api = RecordingTaskApi(selectResponses = listOf(KResponse(code = 200, data = detailResponse(selectedPlanId = "plan-1"))))
+            val repository = repository(api)
+
+            val detail = repository.selectPlan(SelectPlanCommand(TaskId("task-1"), PlanId("plan-1"))).getOrThrow()
+
+            assertEquals(listOf("select:task-1:plan-1"), api.calls)
+            assertEquals(PlanId("plan-1"), detail.selectedPlanId)
         }
 }
 
-private fun repository(
-    api: RecordingTaskApi,
-    logger: AppLogger = RecordingLogger(),
-): DefaultTaskRepository =
-    DefaultTaskRepository(
-        remoteDataSource = TaskRemoteDataSource(api, ApiCallExecutor(logger)),
-    )
+private fun repository(api: RecordingTaskApi): DefaultTaskRepository =
+    DefaultTaskRepository(TaskRemoteDataSource(api, ApiCallExecutor(RecordingLogger())))
 
 private class RecordingTaskApi(
     listResponses: List<KResponse<List<TaskSummaryResponse>>> = emptyList(),
     detailResponses: List<KResponse<TaskDetailResponse>> = emptyList(),
     createResponses: List<KResponse<TaskDetailResponse>> = emptyList(),
     sendResponses: List<KResponse<TaskDetailResponse>> = emptyList(),
-    generateResponses: List<KResponse<GeneratePlansResponse>> = emptyList(),
+    updateResponses: List<KResponse<TaskDetailResponse>> = emptyList(),
+    removeResponses: List<KResponse<TaskDetailResponse>> = emptyList(),
     selectResponses: List<KResponse<TaskDetailResponse>> = emptyList(),
 ) : TaskApi {
     val calls = mutableListOf<String>()
     val createRequests = mutableListOf<CreateTaskRequest>()
-    val sendRequests = mutableListOf<SendTaskMessageRequest>()
+    val updateRequests = mutableListOf<UpdateRequirementRequest>()
     private val listResponses = ArrayDeque(listResponses)
     private val detailResponses = ArrayDeque(detailResponses)
     private val createResponses = ArrayDeque(createResponses)
     private val sendResponses = ArrayDeque(sendResponses)
-    private val generateResponses = ArrayDeque(generateResponses)
+    private val updateResponses = ArrayDeque(updateResponses)
+    private val removeResponses = ArrayDeque(removeResponses)
     private val selectResponses = ArrayDeque(selectResponses)
 
     override suspend fun createTask(request: CreateTaskRequest): KResponse<TaskDetailResponse> {
@@ -214,122 +160,121 @@ private class RecordingTaskApi(
         taskId: String,
         request: SendTaskMessageRequest,
     ): KResponse<TaskDetailResponse> {
-        calls += "send:${request.clientMessageId}"
-        sendRequests += request
+        calls += "send:$taskId:${request.clientMessageId}"
         return sendResponses.removeFirst()
     }
 
-    override suspend fun generatePlans(
+    override suspend fun updateRequirement(
         taskId: String,
-        request: GeneratePlansRequest,
-    ): KResponse<GeneratePlansResponse> {
-        calls += "generate:${request.clientRequestId}"
-        return generateResponses.removeFirst()
+        requirementId: String,
+        request: UpdateRequirementRequest,
+    ): KResponse<TaskDetailResponse> {
+        calls += "update:$taskId:$requirementId"
+        updateRequests += request
+        return updateResponses.removeFirst()
+    }
+
+    override suspend fun removeRequirement(
+        taskId: String,
+        requirementId: String,
+    ): KResponse<TaskDetailResponse> {
+        calls += "remove:$taskId:$requirementId"
+        return removeResponses.removeFirst()
     }
 
     override suspend fun selectPlan(
         taskId: String,
-        request: SelectPlanRequest,
+        planId: String,
     ): KResponse<TaskDetailResponse> {
-        calls += "select:${request.planId}"
+        calls += "select:$taskId:$planId"
         return selectResponses.removeFirst()
     }
 }
 
 private class RecordingLogger : AppLogger {
-    val entries = mutableListOf<Entry>()
-
     override fun log(
         level: LogLevel,
         tag: LogTag,
         event: String,
         fields: LogFields,
         cause: Throwable?,
-    ) {
-        entries += Entry(fields.values)
-    }
-
-    data class Entry(
-        val fields: Map<String, String>,
-    )
+    ) = Unit
 }
 
-private fun detailResponse(
-    selectedPlanId: String? = null,
-    state: WireTaskState = WireTaskState.Planning,
-    version: Long = 1,
-    currentGoal: String = "Plan a match night",
-    messageClientId: String = "create-1",
-): TaskDetailResponse =
-    TaskDetailResponse(
+private fun summaryResponse(): TaskSummaryResponse =
+    TaskSummaryResponse(
         id = "task-1",
-        title = "Liverpool night",
-        currentGoal = currentGoal,
-        state = state,
-        version = version,
-        constraints =
+        intent = "Plan a match night",
+        requirements = listOf(RequirementSummaryResponse("requirement-1", "Liverpool", WireRequirementStrength.Must)),
+        selectedPlanId = null,
+        updatedAt = Now,
+    )
+
+private fun detailResponse(selectedPlanId: String? = null): TaskDetailResponse =
+    TaskDetailResponse(
+        task =
+            TaskResponse(
+                id = "task-1",
+                intent = "Plan a match night",
+                revision = 2,
+                selectedPlanId = selectedPlanId,
+                createdAt = Now,
+                updatedAt = Now,
+            ),
+        requirements =
             listOf(
-                ConstraintResponse(
-                    id = "constraint-1",
-                    kind = ConstraintKind.TimeWindow,
-                    value =
-                        ConstraintValueResponse.TimeWindow(
-                            startAt = null,
-                            endAt = null,
-                            timeZoneId = "Asia/Shanghai",
-                            originalText = "Saturday evening",
-                        ),
-                    strength = ConstraintStrength.Hard,
-                    source = ConstraintSource.UserExplicit,
+                RequirementResponse(
+                    id = "requirement-1",
+                    kind = WireRequirementKind.Topic,
+                    value = RequirementValueResponse.Topic("Liverpool"),
+                    strength = WireRequirementStrength.Must,
+                    source = RequirementSource.UserExplicit,
                     evidenceMessageId = "message-1",
-                    confirmedAt = Now,
                     createdAt = Now,
                     updatedAt = Now,
                 ),
             ),
         messages =
             listOf(
-                ConversationMessageResponse(
+                TaskMessageResponse(
                     id = "message-1",
                     role = MessageRole.User,
-                    content = "Please keep it under 300",
-                    clientMessageId = messageClientId,
-                    aiRequestId = "ai-1",
-                    understoodAt = Now,
+                    content = "Watch Liverpool",
+                    clientMessageId = "client-message-1",
                     createdAt = Now,
                 ),
             ),
         plans = listOf(planResponse()),
-        selectedPlanId = selectedPlanId,
-        createdAt = Now,
-        updatedAt = Now,
+        planning = PlanningStatusResponse(PlanningStatus.Idle),
     )
 
 private fun planResponse(): PlanResponse =
     PlanResponse(
         id = "plan-1",
         taskId = "task-1",
-        planningRunId = "run-1",
-        direction = "fixture",
-        title = "Fixture route",
-        summary = "Walk, dinner, then match.",
+        revision = 2,
+        direction = PlanDirection.BestMatch,
+        title = "Match night",
+        summary = "Watch Liverpool nearby.",
         timeline =
             listOf(
                 PlanTimelineItemResponse(
-                    title = "Anfield walk",
-                    startAt = null,
-                    endAt = null,
-                    location = "Anfield",
+                    title = "Screening",
+                    startAt = Now,
+                    endAt = Now,
+                    location = "Futian",
                 ),
             ),
-        estimatedCost = PlanEstimatedCostResponse(wholeUnits = 120, currencyCode = "GBP"),
-        commuteMinutes = 20,
-        satisfiedConstraintIds = listOf("constraint-1"),
-        tradeoffs = listOf("Weather dependent"),
-        reasons = listOf("Fits the requested time window"),
-        sourceRefs = listOf(PlanSourceRefResponse(label = "Fixture", uri = null)),
-        validUntil = null,
+        estimatedCost = PlanEstimatedCostResponse(180, "CNY"),
+        commuteMinutes = 18,
+        requirementEvaluations =
+            listOf(RequirementEvaluationResponse("requirement-1", RequirementEvaluationResult.Satisfied)),
+        tradeoffs = emptyList(),
+        reasons = listOf("Matches the topic"),
+        sourceRefs = listOf(PlanSourceRefResponse("Controlled Sports Feed", "controlled://sports", Now)),
+        opportunityRefs = listOf("opportunity-1"),
+        validUntil = Now,
         createdAt = Now,
     )
 
-private val Now = Instant.parse("2026-08-28T10:15:00Z")
+private val Now = Instant.parse("2026-08-29T10:00:00Z")

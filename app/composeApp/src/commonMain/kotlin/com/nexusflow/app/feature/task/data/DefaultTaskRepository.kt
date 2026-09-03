@@ -1,18 +1,17 @@
 package com.nexusflow.app.feature.task.data
 
 import com.nexusflow.app.feature.task.domain.CreateTaskCommand
-import com.nexusflow.app.feature.task.domain.GeneratePlansCommand
+import com.nexusflow.app.feature.task.domain.RemoveRequirementCommand
 import com.nexusflow.app.feature.task.domain.SelectPlanCommand
 import com.nexusflow.app.feature.task.domain.SendTaskMessageCommand
 import com.nexusflow.app.feature.task.domain.TaskDetail
 import com.nexusflow.app.feature.task.domain.TaskId
-import com.nexusflow.app.feature.task.domain.TaskPlan
 import com.nexusflow.app.feature.task.domain.TaskRepository
 import com.nexusflow.app.feature.task.domain.TaskSummary
+import com.nexusflow.app.feature.task.domain.UpdateRequirementCommand
 import com.nexusflow.contracts.api.CreateTaskRequest
-import com.nexusflow.contracts.api.GeneratePlansRequest
-import com.nexusflow.contracts.api.SelectPlanRequest
 import com.nexusflow.contracts.api.SendTaskMessageRequest
+import com.nexusflow.contracts.api.UpdateRequirementRequest
 
 internal class DefaultTaskRepository(
     private val remoteDataSource: TaskRemoteDataSource,
@@ -24,23 +23,10 @@ internal class DefaultTaskRepository(
         remoteDataSource.createTask(
             CreateTaskRequest(
                 clientRequestId = command.creationRequestId,
-                goal = command.requestText,
+                message = command.requestText,
+                timeZoneId = command.timeZoneId,
             ),
-        ).fold(
-            onSuccess = { created ->
-                val taskId = TaskId(created.id)
-                remoteDataSource.sendMessage(
-                    taskId = taskId.value,
-                    request =
-                        SendTaskMessageRequest(
-                            clientMessageId = command.initialMessageId,
-                            text = command.requestText,
-                            timeZoneId = command.timeZoneId,
-                        ),
-                ).map { it.toDomain() }
-            },
-            onFailure = { error -> Result.failure(error) },
-        )
+        ).map { it.toDomain() }
 
     override suspend fun loadTaskDetail(taskId: TaskId): Result<TaskDetail> = remoteDataSource.getTask(taskId.value).map { it.toDomain() }
 
@@ -55,16 +41,28 @@ internal class DefaultTaskRepository(
                 ),
         ).map { it.toDomain() }
 
-    override suspend fun generatePlans(command: GeneratePlansCommand): Result<List<TaskPlan>> =
-        remoteDataSource.generatePlans(
+    override suspend fun updateRequirement(command: UpdateRequirementCommand): Result<TaskDetail> =
+        remoteDataSource.updateRequirement(
             taskId = command.taskId.value,
-            request = GeneratePlansRequest(command.clientRequestId),
-        ).map { response -> response.plans.map { it.toDomain() } }
+            requirementId = command.requirementId.value,
+            request =
+                UpdateRequirementRequest(
+                    kind = command.kind.toContract(),
+                    value = command.value.toContract(command.kind),
+                    strength = command.strength.toContract(),
+                ),
+        ).map { it.toDomain() }
+
+    override suspend fun removeRequirement(command: RemoveRequirementCommand): Result<TaskDetail> =
+        remoteDataSource.removeRequirement(
+            taskId = command.taskId.value,
+            requirementId = command.requirementId.value,
+        ).map { it.toDomain() }
 
     override suspend fun selectPlan(command: SelectPlanCommand): Result<TaskDetail> =
         remoteDataSource.selectPlan(
             taskId = command.taskId.value,
-            request = SelectPlanRequest(command.planId.value),
+            planId = command.planId.value,
         ).map { it.toDomain() }
 }
 

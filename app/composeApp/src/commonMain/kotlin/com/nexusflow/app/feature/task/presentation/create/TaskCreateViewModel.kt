@@ -50,7 +50,6 @@ class TaskCreateViewModel(
             repository.createTask(
                 CreateTaskCommand(
                     creationRequestId = identity.creationRequestId,
-                    initialMessageId = identity.initialMessageId,
                     requestText = current.requestText,
                     timeZoneId = timeZoneIdProvider(),
                 ),
@@ -64,11 +63,9 @@ class TaskCreateViewModel(
     private fun newCreateIdentity(): TaskCreateOperationIdentity =
         TaskCreateOperationIdentity(
             creationRequestId = clientIdFactory(),
-            initialMessageId = clientIdFactory(),
         )
 }
 
 private data class TaskCreateOperationIdentity(
     val creationRequestId: String,
-    val initialMessageId: String,
 )

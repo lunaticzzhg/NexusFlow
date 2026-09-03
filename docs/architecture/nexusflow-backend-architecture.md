@@ -276,6 +276,33 @@ Backend 日志和 trace 要能定位 flow，但不能泄漏敏感内容。
 
 Secret 来自 runtime/environment 或 secret manager；不得写入 repository、Docker image、frontend config 或日志。`BackendRuntimeConfig` 当前体现了 database、JWT、Google audience 等配置边界：数据库和 JWT secret 是 runtime 注入；Google audience / client id 属于非秘密配置，但仍应避免散落在 feature 代码中。
 
+### 11.1 AI Model Context 边界
+
+Backend owns model Context construction. AI/provider code may receive only a bounded snapshot prepared for the current capability; it must not query Backend repositories, conversation storage, external services, MCP tools, credentials or user profile storage.
+
+Memory/storage ownership and model Context are separate concepts. Profile preferences, task-selected context keys, task revision and external observations keep their own authoritative owners. Model Context is a per-inference projection assembled by Backend from verified scope, selected keys, source-owned data and deterministic filtering.
+
+Task-lifecycle model Context persists only selected keys, not resolved values or ContextBlock JSON. The current table is:
+
+```text
+task_context_selections(task_id, context_key, selected_at)
+```
+
+`task_id + context_key` is the durable fact; current values are re-resolved from the owning source when Understanding or Planning builds a new model request. New task Context selection participates in Task revision semantics because it changes future Planning input.
+
+The Backend context package owns:
+
+```text
+ModelContextCatalog      = code-registered definitions, capability/lifecycle allowance, duplicate/unknown/disallowed rejection
+ModelContextResolver     = source-specific resolution under verified actor/task scope
+ModelContextAssembler    = empty omission, deterministic dedupe, priority/order sorting, per-block and global budget, safe diagnostics
+ExternalModelContextProjector = protocol-independent seam for typed external-source projection
+```
+
+Raw MCP/external API output is never model context. Source-specific typed decoding, allowlist projection, normalization, relevance filtering, bounds, and trust/provenance handling are mandatory before model exposure. Failures in parsing, scope validation or projection fail closed; Backend must not fall back to raw `String`, `JsonObject`, `Map` or HTML injection.
+
+Context observability may record counts, serialized sizes, omitted keys, capability, prompt version and provider-reported token usage. It must not log full prompts, raw model payloads, resolved preference values, raw external payloads, provider response text, credentials, tokens or secret config.
+
 ## 12. Module 与 Package 边界
 
 - `backend/core` 放真正跨 feature 的基础能力，例如 identity、HTTP serialization/error、config、persistence lifecycle、health。

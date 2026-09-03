@@ -13,74 +13,47 @@ value class UserId(val value: UUID)
 value class TaskId(val value: UUID)
 
 @JvmInline
-value class ConversationId(val value: UUID)
-
-@JvmInline
 value class MessageId(val value: UUID)
 
 @JvmInline
-value class ConstraintId(val value: UUID)
+value class RequirementId(val value: UUID)
 
 @JvmInline
-value class PlanningRunId(val value: UUID)
+value class ProfilePreferenceId(val value: UUID)
 
 @JvmInline
 value class PlanId(val value: UUID)
+
+@JvmInline
+value class OpportunityId(val value: UUID)
 
 data class TaskOwner(
     val tenantId: TenantId,
     val userId: UserId,
 )
 
-enum class TaskState {
-    Draft,
-    CollectingConstraints,
-    Planning,
-    WaitingForApproval,
-    Executing,
-    NeedsAttention,
-    Completed,
-    Cancelled,
-}
-
-fun TaskState.canTransitionTo(next: TaskState): Boolean =
-    when (this) {
-        TaskState.Draft -> next == TaskState.CollectingConstraints || next == TaskState.Planning
-        TaskState.CollectingConstraints -> next == TaskState.CollectingConstraints || next == TaskState.Planning
-        TaskState.Planning -> next == TaskState.CollectingConstraints || next == TaskState.WaitingForApproval
-        TaskState.WaitingForApproval,
-        TaskState.Executing,
-        TaskState.NeedsAttention,
-        TaskState.Completed,
-        TaskState.Cancelled,
-        -> false
-    }
-
 data class Task(
     val id: TaskId,
     val owner: TaskOwner,
     val creationRequestId: String,
-    val initialGoal: String,
-    val currentGoal: String,
-    val title: String,
-    val state: TaskState,
-    val version: Long,
+    val intent: String,
+    val revision: Long,
     val selectedPlanId: PlanId?,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val archivedAt: Instant? = null,
 )
 
 data class TaskDetail(
     val task: Task,
-    val conversation: Conversation,
-    val messages: List<ConversationMessage>,
-    val constraints: List<TaskConstraint>,
-    val planningRuns: List<PlanningRun>,
+    val messages: List<TaskMessage>,
+    val requirements: List<Requirement>,
     val plans: List<Plan>,
+    val selectedContextKeys: List<String> = emptyList(),
 )
 
-fun createTaskTitle(goal: String): String {
-    val trimmed = goal.trim()
+fun createTaskTitle(intent: String): String {
+    val trimmed = intent.trim()
     return if (trimmed.length <= TASK_TITLE_MAX_LENGTH) {
         trimmed
     } else {

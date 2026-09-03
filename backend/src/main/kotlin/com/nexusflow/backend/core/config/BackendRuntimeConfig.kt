@@ -14,9 +14,7 @@ data class BackendRuntimeConfig(
     val googleAllowedAudiences: Set<String>,
     val accessLifetime: Duration,
     val refreshLifetime: Duration,
-    val openAiApiKey: String?,
-    val openAiModel: String?,
-    val fixturePlanningEnabled: Boolean,
+    val ai: AiRuntimeConfig?,
     val devLoginEnabled: Boolean,
     val devLoginEmail: String?,
     val devLoginPassword: String?,
@@ -38,9 +36,7 @@ data class BackendRuntimeConfig(
                 .toSet(),
             accessLifetime = Duration.ofSeconds(required(environment, "AUTH_ACCESS_TTL_SECONDS").toLong()),
             refreshLifetime = Duration.ofDays(required(environment, "AUTH_REFRESH_TTL_DAYS").toLong()),
-            openAiApiKey = environment["OPENAI_API_KEY"]?.takeIf(String::isNotBlank),
-            openAiModel = environment["OPENAI_MODEL"]?.takeIf(String::isNotBlank),
-            fixturePlanningEnabled = environment["ORBIT_FIXTURE_PLANNING_ENABLED"]?.toBooleanStrictOrNull() ?: false,
+            ai = aiRuntimeConfig(environment),
             devLoginEnabled = environment["ORBIT_DEV_LOGIN_ENABLED"]?.toBooleanStrictOrNull() ?: false,
             devLoginEmail = environment["ORBIT_DEV_LOGIN_EMAIL"]?.takeIf(String::isNotBlank),
             devLoginPassword = environment["ORBIT_DEV_LOGIN_PASSWORD"]?.takeIf(String::isNotBlank),
@@ -49,5 +45,47 @@ data class BackendRuntimeConfig(
         private fun required(environment: Map<String, String>, name: String): String = environment[name]
             ?.takeIf(String::isNotBlank)
             ?: error("$name must be configured")
+
+        private fun aiRuntimeConfig(environment: Map<String, String>): AiRuntimeConfig? {
+            val providerText = environment["AI_PROVIDER"]?.trim()?.takeIf(String::isNotBlank)
+                ?: return null
+            return AiRuntimeConfig(
+                provider = providerText.toAiProvider(),
+                apiKey = required(environment, "AI_API_KEY"),
+                baseUrl = required(environment, "AI_BASE_URL"),
+                model = required(environment, "AI_MODEL"),
+                requestTimeout = environment["AI_REQUEST_TIMEOUT_MS"]
+                    ?.takeIf(String::isNotBlank)
+                    ?.toLong()
+                    ?.also { require(it > 0) { "AI_REQUEST_TIMEOUT_MS must be positive" } }
+                    ?.let(Duration::ofMillis)
+                    ?: Duration.ofSeconds(30),
+            )
+        }
+
+        private fun String.toAiProvider(): AiProvider =
+            when (lowercase()) {
+                "openai" -> AiProvider.OpenAi
+                "qwen" -> AiProvider.Qwen
+                "deepseek" -> AiProvider.DeepSeek
+                else -> error("AI_PROVIDER must be one of openai, qwen, deepseek")
+            }
     }
+}
+
+data class AiRuntimeConfig(
+    val provider: AiProvider,
+    val apiKey: String,
+    val baseUrl: String,
+    val model: String,
+    val requestTimeout: Duration,
+) {
+    override fun toString(): String =
+        "AiRuntimeConfig(provider=$provider, baseUrl=$baseUrl, model=$model, requestTimeout=$requestTimeout, apiKey=<redacted>)"
+}
+
+enum class AiProvider {
+    OpenAi,
+    Qwen,
+    DeepSeek,
 }

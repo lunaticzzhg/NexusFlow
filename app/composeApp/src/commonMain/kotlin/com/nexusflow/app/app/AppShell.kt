@@ -35,10 +35,7 @@ import org.jetbrains.compose.resources.stringResource
 
 @Composable
 @Suppress("FunctionName", "FunctionNaming", "ktlint:standard:function-naming")
-fun AppShell(
-    showFixturePlanning: Boolean,
-    onLogout: () -> Unit,
-) {
+fun AppShell(onLogout: () -> Unit) {
     val navController = rememberNavController()
     val currentDestination = navController.currentBackStackEntryAsState().value?.destination
     val showsBottomBar =
@@ -114,7 +111,6 @@ fun AppShell(
             composable<TaskDetailDestination> { entry ->
                 TaskDetailRoute(
                     taskId = entry.arguments?.getString("taskId").orEmpty(),
-                    showFixturePlanning = showFixturePlanning,
                     onBackHome = {
                         navController.navigateToTab(AppHomeDestination)
                     },

@@ -4,7 +4,7 @@ This reference is an executable checklist for Backend durable writes. The Backen
 
 ## When To Load This Reference
 
-Load this for Backend JDBC, Flyway migrations, transaction boundaries, FK / UNIQUE / CHECK / NOT NULL constraints, idempotency, optimistic concurrency, JSONB/PostgreSQL-specific SQL, and durable multi-write behavior.
+Load this for Backend JDBC, Flyway migrations, transaction boundaries, FK / UNIQUE / CHECK / NOT NULL integrity rules, idempotency, optimistic concurrency, JSONB/PostgreSQL-specific SQL, and durable multi-write behavior.
 
 ## 1. Ownership & Durable Facts
 
@@ -14,12 +14,12 @@ Load this for Backend JDBC, Flyway migrations, transaction boundaries, FK / UNIQ
 - [ ] What rows/tables are written?
 - [ ] Which mutable facts are authoritative after commit?
 
-## 2. Constraint Inventory
+## 2. Integrity Rule Inventory
 
-- [ ] Which FK/UNIQUE/CHECK/NOT NULL constraints matter?
+- [ ] Which FK/UNIQUE/CHECK/NOT NULL integrity rules matter?
 - [ ] Which `ON DELETE` / `ON UPDATE` policy applies?
 - [ ] Does any row reference another row created in the same transaction?
-- [ ] Is any valid constraint being weakened? If yes, stop and reassess mutation order first.
+- [ ] Is any valid integrity rule being weakened? If yes, stop and reassess mutation order first.
 
 ## 3. Mutation Order
 
@@ -54,7 +54,7 @@ If the update is rejected or updates zero rows, the replacement insert rolls bac
 - [ ] How do duplicate concurrent requests terminate?
 - [ ] How do competing requests for the same row terminate?
 - [ ] How is a stale/late result rejected?
-- [ ] Which DB constraint or conditional write is the final authority?
+- [ ] Which DB integrity rule or conditional write is the final authority?
 - [ ] Which application/domain result represents the conflict?
 
 ## 6. Migration Safety
@@ -62,7 +62,7 @@ If the update is rejected or updates zero rows, the replacement insert rolls bac
 - [ ] Is an existing Flyway migration being edited? If yes, stop.
 - [ ] Does the new migration work on a fresh DB?
 - [ ] Does it work with representative old data?
-- [ ] Are changed constraints/indexes intentional and named?
+- [ ] Are changed integrity rules/indexes intentional and named?
 - [ ] Is staged / expand-contract evolution needed?
 
 ## 7. Real PostgreSQL Test Matrix

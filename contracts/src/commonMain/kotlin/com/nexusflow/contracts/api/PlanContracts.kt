@@ -5,35 +5,15 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class GeneratePlansRequest(
-    @SerialName("clientRequestId")
-    val clientRequestId: String,
-)
-
-@Serializable
-data class GeneratePlansResponse(
-    @SerialName("planningRunId")
-    val planningRunId: String,
-    @SerialName("plans")
-    val plans: List<PlanResponse>,
-)
-
-@Serializable
-data class SelectPlanRequest(
-    @SerialName("planId")
-    val planId: String,
-)
-
-@Serializable
 data class PlanResponse(
     @SerialName("id")
     val id: String,
     @SerialName("taskId")
     val taskId: String,
-    @SerialName("planningRunId")
-    val planningRunId: String,
+    @SerialName("revision")
+    val revision: Long,
     @SerialName("direction")
-    val direction: String,
+    val direction: PlanDirection,
     @SerialName("title")
     val title: String,
     @SerialName("summary")
@@ -44,19 +24,52 @@ data class PlanResponse(
     val estimatedCost: PlanEstimatedCostResponse? = null,
     @SerialName("commuteMinutes")
     val commuteMinutes: Int? = null,
-    @SerialName("satisfiedConstraintIds")
-    val satisfiedConstraintIds: List<String>,
+    @SerialName("requirementEvaluations")
+    val requirementEvaluations: List<RequirementEvaluationResponse>,
     @SerialName("tradeoffs")
     val tradeoffs: List<String>,
     @SerialName("reasons")
     val reasons: List<String>,
     @SerialName("sourceRefs")
     val sourceRefs: List<PlanSourceRefResponse>,
+    @SerialName("opportunityRefs")
+    val opportunityRefs: List<String>,
     @SerialName("validUntil")
     val validUntil: Instant? = null,
     @SerialName("createdAt")
     val createdAt: Instant,
 )
+
+@Serializable
+data class RequirementEvaluationResponse(
+    @SerialName("requirementId")
+    val requirementId: String,
+    @SerialName("result")
+    val result: RequirementEvaluationResult,
+    @SerialName("explanation")
+    val explanation: String? = null,
+)
+
+@Serializable
+enum class RequirementEvaluationResult {
+    @SerialName("satisfied")
+    Satisfied,
+
+    @SerialName("not_applicable")
+    NotApplicable,
+}
+
+@Serializable
+enum class PlanDirection {
+    @SerialName("best_match")
+    BestMatch,
+
+    @SerialName("more_relaxed")
+    MoreRelaxed,
+
+    @SerialName("new_experience")
+    NewExperience,
+}
 
 @Serializable
 data class PlanTimelineItemResponse(
@@ -84,4 +97,6 @@ data class PlanSourceRefResponse(
     val label: String,
     @SerialName("uri")
     val uri: String? = null,
+    @SerialName("sourceUpdatedAt")
+    val sourceUpdatedAt: Instant? = null,
 )

@@ -23,7 +23,7 @@ Before implementation, read:
 - the entire Work Order or Correction Work Order;
 - directly touched source, tests, and caller/callee files.
 
-If the Work Order touches Backend persistence, JDBC, Flyway migrations, transactions, FK / UNIQUE / CHECK constraints, idempotency, optimistic concurrency, PostgreSQL-specific SQL, or durable multi-write behavior, also read `.agents/skills/nexusflow-feature-development/references/backend-persistence.md` before editing.
+If the Work Order touches Backend persistence, JDBC, Flyway migrations, transactions, FK / UNIQUE / CHECK integrity rules, idempotency, optimistic concurrency, PostgreSQL-specific SQL, or durable multi-write behavior, also read `.agents/skills/nexusflow-feature-development/references/backend-persistence.md` before editing.
 
 Also inspect current git state and identify unrelated user changes before editing.
 

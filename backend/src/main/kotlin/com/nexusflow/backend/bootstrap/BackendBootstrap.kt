@@ -10,6 +10,7 @@ import com.nexusflow.backend.feature.auth.api.authRoutes
 import com.nexusflow.backend.feature.auth.application.AuthService
 import com.nexusflow.backend.feature.auth.configureAuthDependencies
 import com.nexusflow.backend.feature.task.api.taskRoutes
+import com.nexusflow.backend.feature.task.application.PlanningService
 import com.nexusflow.backend.feature.task.application.TaskService
 import com.nexusflow.backend.feature.task.configureTaskDependencies
 import io.ktor.server.application.Application
@@ -34,9 +35,10 @@ internal fun Application.configureFeatureRoutes(runtime: BackendRuntime) {
     routing {
         runtime.authService?.let(::authRoutes)
         val taskService = runtime.taskService
+        val planningService = runtime.planningService
         val actorResolver = runtime.actorResolver
-        if (taskService != null && actorResolver != null) {
-            taskRoutes(taskService, actorResolver)
+        if (taskService != null && planningService != null && actorResolver != null) {
+            taskRoutes(taskService, planningService, actorResolver)
         }
     }
 }
@@ -51,12 +53,14 @@ private fun Application.bootstrapProduction(): BackendRuntime {
     val authService: AuthService by dependencies
     val actorResolver: ActorResolver by dependencies
     val taskService: TaskService by dependencies
+    val planningService: PlanningService by dependencies
     val readinessProbe: ReadinessProbe by dependencies
     return BackendRuntime(
         readinessProbe = readinessProbe,
         authService = authService,
         actorResolver = actorResolver,
         taskService = taskService,
+        planningService = planningService,
     )
 }
 
@@ -68,5 +72,6 @@ private fun Application.bootstrapTest(): BackendRuntime {
         authService = null,
         actorResolver = null,
         taskService = null,
+        planningService = null,
     )
 }

@@ -2,14 +2,13 @@ package com.nexusflow.app.feature.task.data
 
 import com.nexusflow.app.core.network.ApiCallExecutor
 import com.nexusflow.contracts.api.CreateTaskRequest
-import com.nexusflow.contracts.api.GeneratePlansRequest
-import com.nexusflow.contracts.api.GeneratePlansResponse
 import com.nexusflow.contracts.api.KResponse
-import com.nexusflow.contracts.api.SelectPlanRequest
 import com.nexusflow.contracts.api.SendTaskMessageRequest
 import com.nexusflow.contracts.api.TaskDetailResponse
 import com.nexusflow.contracts.api.TaskSummaryResponse
+import com.nexusflow.contracts.api.UpdateRequirementRequest
 import de.jensklingenberg.ktorfit.http.Body
+import de.jensklingenberg.ktorfit.http.DELETE
 import de.jensklingenberg.ktorfit.http.GET
 import de.jensklingenberg.ktorfit.http.Headers
 import de.jensklingenberg.ktorfit.http.POST
@@ -20,8 +19,8 @@ internal object TaskEndpoints {
     const val TASKS = "v1/tasks"
     const val TASK_DETAIL = "v1/tasks/{taskId}"
     const val TASK_MESSAGES = "v1/tasks/{taskId}/messages"
-    const val TASK_PLANNING_RUNS = "v1/tasks/{taskId}/planning-runs"
-    const val TASK_SELECTED_PLAN = "v1/tasks/{taskId}/selected-plan"
+    const val TASK_REQUIREMENT = "v1/tasks/{taskId}/requirements/{requirementId}"
+    const val TASK_PLAN_SELECT = "v1/tasks/{taskId}/plans/{planId}/select"
 }
 
 internal interface TaskApi {
@@ -46,18 +45,24 @@ internal interface TaskApi {
         @Body request: SendTaskMessageRequest,
     ): KResponse<TaskDetailResponse>
 
-    @POST(TaskEndpoints.TASK_PLANNING_RUNS)
+    @PUT(TaskEndpoints.TASK_REQUIREMENT)
     @Headers(JSON_CONTENT_TYPE_HEADER)
-    suspend fun generatePlans(
+    suspend fun updateRequirement(
         @Path("taskId") taskId: String,
-        @Body request: GeneratePlansRequest,
-    ): KResponse<GeneratePlansResponse>
+        @Path("requirementId") requirementId: String,
+        @Body request: UpdateRequirementRequest,
+    ): KResponse<TaskDetailResponse>
 
-    @PUT(TaskEndpoints.TASK_SELECTED_PLAN)
-    @Headers(JSON_CONTENT_TYPE_HEADER)
+    @DELETE(TaskEndpoints.TASK_REQUIREMENT)
+    suspend fun removeRequirement(
+        @Path("taskId") taskId: String,
+        @Path("requirementId") requirementId: String,
+    ): KResponse<TaskDetailResponse>
+
+    @POST(TaskEndpoints.TASK_PLAN_SELECT)
     suspend fun selectPlan(
         @Path("taskId") taskId: String,
-        @Body request: SelectPlanRequest,
+        @Path("planId") planId: String,
     ): KResponse<TaskDetailResponse>
 }
 
@@ -88,20 +93,29 @@ internal class TaskRemoteDataSource(
             api.sendMessage(taskId, request)
         }
 
-    suspend fun generatePlans(
+    suspend fun updateRequirement(
         taskId: String,
-        request: GeneratePlansRequest,
-    ): Result<GeneratePlansResponse> =
-        apiCalls.execute(TaskEndpoints.TASK_PLANNING_RUNS) {
-            api.generatePlans(taskId, request)
+        requirementId: String,
+        request: UpdateRequirementRequest,
+    ): Result<TaskDetailResponse> =
+        apiCalls.execute(TaskEndpoints.TASK_REQUIREMENT) {
+            api.updateRequirement(taskId, requirementId, request)
+        }
+
+    suspend fun removeRequirement(
+        taskId: String,
+        requirementId: String,
+    ): Result<TaskDetailResponse> =
+        apiCalls.execute(TaskEndpoints.TASK_REQUIREMENT) {
+            api.removeRequirement(taskId, requirementId)
         }
 
     suspend fun selectPlan(
         taskId: String,
-        request: SelectPlanRequest,
+        planId: String,
     ): Result<TaskDetailResponse> =
-        apiCalls.execute(TaskEndpoints.TASK_SELECTED_PLAN) {
-            api.selectPlan(taskId, request)
+        apiCalls.execute(TaskEndpoints.TASK_PLAN_SELECT) {
+            api.selectPlan(taskId, planId)
         }
 }
 

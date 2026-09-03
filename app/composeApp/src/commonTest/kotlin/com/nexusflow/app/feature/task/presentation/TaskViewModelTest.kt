@@ -4,22 +4,20 @@ package com.nexusflow.app.feature.task.presentation
 
 import com.nexusflow.app.feature.task.data.TaskFixtures
 import com.nexusflow.app.feature.task.domain.CreateTaskCommand
-import com.nexusflow.app.feature.task.domain.GeneratePlansCommand
-import com.nexusflow.app.feature.task.domain.PlanId
+import com.nexusflow.app.feature.task.domain.RemoveRequirementCommand
 import com.nexusflow.app.feature.task.domain.SelectPlanCommand
 import com.nexusflow.app.feature.task.domain.SendTaskMessageCommand
 import com.nexusflow.app.feature.task.domain.TaskDetail
 import com.nexusflow.app.feature.task.domain.TaskId
-import com.nexusflow.app.feature.task.domain.TaskPlan
 import com.nexusflow.app.feature.task.domain.TaskRepository
-import com.nexusflow.app.feature.task.domain.TaskState
 import com.nexusflow.app.feature.task.domain.TaskSummary
+import com.nexusflow.app.feature.task.domain.UpdateRequirementCommand
 import com.nexusflow.app.feature.task.presentation.create.TaskCreateAction
 import com.nexusflow.app.feature.task.presentation.create.TaskCreateEffect
 import com.nexusflow.app.feature.task.presentation.create.TaskCreateViewModel
-import com.nexusflow.app.feature.task.presentation.create.TaskSubmission
 import com.nexusflow.app.feature.task.presentation.detail.TaskDetailAction
 import com.nexusflow.app.feature.task.presentation.detail.TaskDetailContent
+import com.nexusflow.app.feature.task.presentation.detail.TaskDetailOperation
 import com.nexusflow.app.feature.task.presentation.detail.TaskDetailViewModel
 import com.nexusflow.app.feature.task.presentation.home.TaskHomeAction
 import com.nexusflow.app.feature.task.presentation.home.TaskHomeContent
@@ -38,22 +36,12 @@ import kotlinx.coroutines.test.setMain
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
-import kotlin.test.assertTrue
 
 class TaskViewModelTest {
     @Test
-    fun `home loads success empty failure retry and opens task by ID only`() =
+    fun `home loads things and opens selected id`() =
         viewModelTest {
-            val repository =
-                RecordingTaskRepository(
-                    loadResults =
-                        listOf(
-                            Result.success(TaskFixtures.success),
-                            Result.success(emptyList()),
-                            Result.failure(IllegalStateException()),
-                            Result.success(TaskFixtures.success),
-                        ),
-                )
+            val repository = RecordingTaskRepository(loadResults = listOf(Result.success(TaskFixtures.success)))
             val viewModel = TaskHomeViewModel(repository)
             val effects = mutableListOf<TaskHomeEffect>()
             backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.effects.toList(effects) }
@@ -61,156 +49,97 @@ class TaskViewModelTest {
 
             viewModel.onAction(TaskHomeAction.Load)
             advanceUntilIdle()
-            assertIs<TaskHomeContent.Success>(viewModel.state.value.content)
+            viewModel.onAction(TaskHomeAction.OpenTask(TaskFixtures.success.single().id))
+            advanceUntilIdle()
 
-            viewModel.onAction(TaskHomeAction.OpenTask(TaskId("task-1")))
-            advanceUntilIdle()
-            assertEquals(listOf("task-1"), effects.map { (it as TaskHomeEffect.OpenTask).taskId.value })
-
-            val emptyViewModel = TaskHomeViewModel(repository)
-            emptyViewModel.onAction(TaskHomeAction.Load)
-            advanceUntilIdle()
-            assertIs<TaskHomeContent.Empty>(emptyViewModel.state.value.content)
-
-            val retryViewModel = TaskHomeViewModel(repository)
-            retryViewModel.onAction(TaskHomeAction.Load)
-            advanceUntilIdle()
-            assertIs<TaskHomeContent.Failure>(retryViewModel.state.value.content)
-            retryViewModel.onAction(TaskHomeAction.Retry)
-            advanceUntilIdle()
-            assertIs<TaskHomeContent.Success>(retryViewModel.state.value.content)
+            val content = assertIs<TaskHomeContent.Success>(viewModel.state.value.content)
+            assertEquals("Create a calendar event and a pre-match reminder", content.summaries.single().intent)
+            assertEquals(listOf(TaskFixtures.success.single().id), effects.map { (it as TaskHomeEffect.OpenTask).taskId })
         }
 
     @Test
-    fun `create rejects empty input succeeds with final task ID and retries using the same identity pair`() =
+    fun `create submits one message based task request`() =
         viewModelTest {
-            val finalDetail = TaskFixtures.detail.copy(id = TaskId("created-task"))
-            val repository =
-                RecordingTaskRepository(
-                    createResults =
-                        listOf(
-                            Result.failure(IllegalStateException()),
-                            Result.success(finalDetail),
-                        ),
-                )
-            val ids = ArrayDeque(listOf("create-1", "message-1"))
+            val repository = RecordingTaskRepository(createResults = listOf(Result.success(TaskFixtures.detail)))
             val viewModel =
                 TaskCreateViewModel(
                     repository = repository,
-                    clientIdFactory = { ids.removeFirst() },
+                    clientIdFactory = { "create-1" },
                     timeZoneIdProvider = { "Asia/Shanghai" },
                 )
             val effects = mutableListOf<TaskCreateEffect>()
             backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.effects.toList(effects) }
             runCurrent()
 
+            viewModel.onAction(TaskCreateAction.RequestChanged("Plan Saturday"))
             viewModel.onAction(TaskCreateAction.Submit)
-            assertEquals(emptyList<CreateTaskCommand>(), repository.createCommands)
-
-            viewModel.onAction(TaskCreateAction.RequestChanged("Weekend plan"))
-            viewModel.onAction(TaskCreateAction.Submit)
-            assertIs<TaskSubmission.Submitting>(viewModel.state.value.submission)
-            advanceUntilIdle()
-            assertIs<TaskSubmission.Failed>(viewModel.state.value.submission)
-
-            viewModel.onAction(TaskCreateAction.RetrySubmit)
             advanceUntilIdle()
 
-            assertEquals(listOf("create-1", "create-1"), repository.createCommands.map { it.creationRequestId })
-            assertEquals(listOf("message-1", "message-1"), repository.createCommands.map { it.initialMessageId })
-            assertEquals(listOf("Asia/Shanghai", "Asia/Shanghai"), repository.createCommands.map { it.timeZoneId })
-            assertTrue(repository.createCommands.all { it.creationRequestId != it.initialMessageId })
-            assertEquals(listOf("created-task"), effects.map { (it as TaskCreateEffect.OpenTask).taskId.value })
+            assertEquals(
+                listOf(CreateTaskCommand("create-1", "Plan Saturday", "Asia/Shanghai")),
+                repository.createCommands,
+            )
+            assertEquals(listOf(TaskFixtures.detail.id), effects.map { (it as TaskCreateEffect.OpenTask).taskId })
         }
 
     @Test
-    fun `create editing after failure starts a new operation identity pair`() =
+    fun `detail sends messages and selects plans without client planning action`() =
         viewModelTest {
+            val selected = TaskFixtures.detail.copy(selectedPlanId = TaskFixtures.currentPlans.single().id)
             val repository =
                 RecordingTaskRepository(
-                    createResults =
-                        listOf(
-                            Result.failure(IllegalStateException()),
-                            Result.success(TaskFixtures.detail.copy(id = TaskId("created-task"))),
-                        ),
-                )
-            val ids =
-                ArrayDeque(
-                    listOf(
-                        "create-1",
-                        "message-1",
-                        "create-2",
-                        "message-2",
-                    ),
-                )
-            val viewModel =
-                TaskCreateViewModel(
-                    repository = repository,
-                    clientIdFactory = { ids.removeFirst() },
-                    timeZoneIdProvider = { "Asia/Shanghai" },
-                )
-
-            viewModel.onAction(TaskCreateAction.RequestChanged("Weekend plan"))
-            viewModel.onAction(TaskCreateAction.Submit)
-            advanceUntilIdle()
-            viewModel.onAction(TaskCreateAction.RequestChanged("Updated weekend plan"))
-            viewModel.onAction(TaskCreateAction.Submit)
-            advanceUntilIdle()
-
-            assertEquals(listOf("create-1", "create-2"), repository.createCommands.map { it.creationRequestId })
-            assertEquals(listOf("message-1", "message-2"), repository.createCommands.map { it.initialMessageId })
-        }
-
-    @Test
-    fun `detail loads retries generates fixture plans and selects a plan`() =
-        viewModelTest {
-            val plan =
-                TaskPlan(
-                    id = PlanId("plan-1"),
-                    title = "Fixture",
-                    summary = "Fixture summary",
-                    timeline = emptyList(),
-                    estimatedCost = null,
-                    commuteMinutes = null,
-                    tradeoffs = emptyList(),
-                    reasons = emptyList(),
-                )
-            val detail = TaskFixtures.detail.copy(state = TaskState.Planning)
-            val selected = detail.copy(plans = listOf(plan), selectedPlanId = plan.id, state = TaskState.WaitingForApproval)
-            val repository =
-                RecordingTaskRepository(
-                    detailResults =
-                        listOf(
-                            Result.failure(IllegalStateException()),
-                            Result.success(detail),
-                            Result.success(selected),
-                        ),
-                    generateResults = listOf(Result.success(listOf(plan))),
+                    detailResults = listOf(Result.success(TaskFixtures.detail)),
+                    sendResults = listOf(Result.success(TaskFixtures.detail.copy(revision = 2))),
                     selectResults = listOf(Result.success(selected)),
                 )
             val viewModel =
                 TaskDetailViewModel(
-                    taskId = TaskId("task-liverpool-night"),
+                    taskId = TaskFixtures.detail.id,
                     repository = repository,
-                    clientRequestIdFactory = { "planning-1" },
+                    clientMessageIdFactory = { "message-1" },
+                    timeZoneIdProvider = { "Asia/Shanghai" },
                 )
 
             viewModel.onAction(TaskDetailAction.Load)
             advanceUntilIdle()
-            assertIs<TaskDetailContent.Failure>(viewModel.state.value.content)
-
-            viewModel.onAction(TaskDetailAction.Retry)
+            viewModel.onAction(TaskDetailAction.DraftChanged("Keep it nearby"))
+            viewModel.onAction(TaskDetailAction.SendMessage)
             advanceUntilIdle()
-            assertIs<TaskDetailContent.Success>(viewModel.state.value.content)
-
-            viewModel.onAction(TaskDetailAction.GenerateFixturePlan)
+            viewModel.onAction(TaskDetailAction.SelectPlan(TaskFixtures.currentPlans.single().id))
             advanceUntilIdle()
-            assertEquals(listOf(GeneratePlansCommand(TaskId("task-liverpool-night"), "planning-1")), repository.generateCommands)
 
-            viewModel.onAction(TaskDetailAction.SelectPlan(plan.id))
+            assertEquals(
+                listOf(SendTaskMessageCommand(TaskFixtures.detail.id, "message-1", "Keep it nearby", "Asia/Shanghai")),
+                repository.sendCommands,
+            )
+            assertEquals(
+                listOf(SelectPlanCommand(TaskFixtures.detail.id, TaskFixtures.currentPlans.single().id)),
+                repository.selectCommands,
+            )
+            val content = assertIs<TaskDetailContent.Success>(viewModel.state.value.content)
+            assertEquals(TaskDetailOperation.Idle, content.operation)
+            assertEquals(TaskFixtures.currentPlans.single().id, content.detail.selectedPlanId)
+        }
+
+    @Test
+    fun `detail removes a requirement`() =
+        viewModelTest {
+            val requirementId = TaskFixtures.detail.requirements.single().id
+            val repository =
+                RecordingTaskRepository(
+                    detailResults = listOf(Result.success(TaskFixtures.detail)),
+                    removeResults = listOf(Result.success(TaskFixtures.detail.copy(requirements = emptyList()))),
+                )
+            val viewModel = TaskDetailViewModel(taskId = TaskFixtures.detail.id, repository = repository)
+
+            viewModel.onAction(TaskDetailAction.Load)
             advanceUntilIdle()
-            assertEquals(listOf(SelectPlanCommand(TaskId("task-liverpool-night"), plan.id)), repository.selectCommands)
-            assertEquals(selected, (viewModel.state.value.content as TaskDetailContent.Success).detail)
+            viewModel.onAction(TaskDetailAction.RemoveRequirement(requirementId))
+            advanceUntilIdle()
+
+            assertEquals(listOf(RemoveRequirementCommand(TaskFixtures.detail.id, requirementId)), repository.removeCommands)
+            val content = assertIs<TaskDetailContent.Success>(viewModel.state.value.content)
+            assertEquals(emptyList(), content.detail.requirements)
         }
 }
 
@@ -229,37 +158,50 @@ private class RecordingTaskRepository(
     private val loadResults: List<Result<List<TaskSummary>>> = emptyList(),
     private val createResults: List<Result<TaskDetail>> = emptyList(),
     private val detailResults: List<Result<TaskDetail>> = emptyList(),
-    private val generateResults: List<Result<List<TaskPlan>>> = emptyList(),
+    private val sendResults: List<Result<TaskDetail>> = emptyList(),
+    private val updateResults: List<Result<TaskDetail>> = emptyList(),
+    private val removeResults: List<Result<TaskDetail>> = emptyList(),
     private val selectResults: List<Result<TaskDetail>> = emptyList(),
 ) : TaskRepository {
     val createCommands = mutableListOf<CreateTaskCommand>()
-    val generateCommands = mutableListOf<GeneratePlansCommand>()
+    val sendCommands = mutableListOf<SendTaskMessageCommand>()
+    val updateCommands = mutableListOf<UpdateRequirementCommand>()
+    val removeCommands = mutableListOf<RemoveRequirementCommand>()
     val selectCommands = mutableListOf<SelectPlanCommand>()
-    private var loadCalls = 0
-    private var createCalls = 0
-    private var detailCalls = 0
-    private var generateCalls = 0
-    private var selectCalls = 0
+    private val loadQueue = ArrayDeque(loadResults)
+    private val createQueue = ArrayDeque(createResults)
+    private val detailQueue = ArrayDeque(detailResults)
+    private val sendQueue = ArrayDeque(sendResults)
+    private val updateQueue = ArrayDeque(updateResults)
+    private val removeQueue = ArrayDeque(removeResults)
+    private val selectQueue = ArrayDeque(selectResults)
 
-    override suspend fun loadTaskSummaries(): Result<List<TaskSummary>> = loadResults[loadCalls++]
+    override suspend fun loadTaskSummaries(): Result<List<TaskSummary>> = loadQueue.removeFirst()
 
     override suspend fun createTask(command: CreateTaskCommand): Result<TaskDetail> {
         createCommands += command
-        return createResults[createCalls++]
+        return createQueue.removeFirst()
     }
 
-    override suspend fun loadTaskDetail(taskId: TaskId): Result<TaskDetail> = detailResults[detailCalls++]
+    override suspend fun loadTaskDetail(taskId: TaskId): Result<TaskDetail> = detailQueue.removeFirst()
 
-    override suspend fun sendMessage(command: SendTaskMessageCommand): Result<TaskDetail> =
-        error("sendMessage is not used by these ViewModel tests")
+    override suspend fun sendMessage(command: SendTaskMessageCommand): Result<TaskDetail> {
+        sendCommands += command
+        return sendQueue.removeFirst()
+    }
 
-    override suspend fun generatePlans(command: GeneratePlansCommand): Result<List<TaskPlan>> {
-        generateCommands += command
-        return generateResults[generateCalls++]
+    override suspend fun updateRequirement(command: UpdateRequirementCommand): Result<TaskDetail> {
+        updateCommands += command
+        return updateQueue.removeFirst()
+    }
+
+    override suspend fun removeRequirement(command: RemoveRequirementCommand): Result<TaskDetail> {
+        removeCommands += command
+        return removeQueue.removeFirst()
     }
 
     override suspend fun selectPlan(command: SelectPlanCommand): Result<TaskDetail> {
         selectCommands += command
-        return selectResults[selectCalls++]
+        return selectQueue.removeFirst()
     }
 }

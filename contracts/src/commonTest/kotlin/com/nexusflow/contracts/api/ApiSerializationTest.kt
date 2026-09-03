@@ -11,7 +11,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 
 class ApiSerializationTest {
     private val json = Json { encodeDefaults = false }
@@ -60,21 +59,12 @@ class ApiSerializationTest {
     }
 
     @Test
-    fun `task state wire values remain stable`() {
-        assertEquals("\"draft\"", json.encodeToString(TaskState.Draft))
-        assertEquals("\"collecting_constraints\"", json.encodeToString(TaskState.CollectingConstraints))
-        assertEquals("\"planning\"", json.encodeToString(TaskState.Planning))
-        assertEquals("\"waiting_for_approval\"", json.encodeToString(TaskState.WaitingForApproval))
-        assertEquals("\"executing\"", json.encodeToString(TaskState.Executing))
-        assertEquals("\"needs_attention\"", json.encodeToString(TaskState.NeedsAttention))
-        assertEquals("\"completed\"", json.encodeToString(TaskState.Completed))
-        assertEquals("\"cancelled\"", json.encodeToString(TaskState.Cancelled))
-        assertEquals(TaskState.Planning, json.decodeFromString<TaskState>("\"planning\""))
-    }
-
-    @Test
-    fun `task requests and summaries serialize with explicit field names`() {
-        val createRequest = CreateTaskRequest(clientRequestId = "create-1", goal = "Plan Saturday")
+    fun `task request and summary use intent and requirements`() {
+        val createRequest = CreateTaskRequest(
+            clientRequestId = "create-1",
+            message = "Plan Saturday",
+            timeZoneId = "Asia/Shanghai",
+        )
         val messageRequest = SendTaskMessageRequest(
             clientMessageId = "message-1",
             text = "周六晚上想看利物浦，预算 300",
@@ -82,14 +72,14 @@ class ApiSerializationTest {
         )
         val summary = TaskSummaryResponse(
             id = "task-1",
-            title = "Plan Saturday",
-            currentGoal = "Plan Saturday",
-            state = TaskState.Draft,
+            intent = "Plan Saturday",
+            requirements = listOf(RequirementSummaryResponse("requirement-1", "周六晚上", RequirementStrength.Must)),
+            selectedPlanId = null,
             updatedAt = Instant.parse("2026-08-28T10:15:30Z"),
         )
 
         assertEquals(
-            "{\"clientRequestId\":\"create-1\",\"goal\":\"Plan Saturday\"}",
+            "{\"clientRequestId\":\"create-1\",\"message\":\"Plan Saturday\",\"timeZoneId\":\"Asia/Shanghai\"}",
             json.encodeToString(createRequest),
         )
         assertEquals(
@@ -98,71 +88,73 @@ class ApiSerializationTest {
             json.encodeToString(messageRequest),
         )
         assertEquals(
-            "{\"id\":\"task-1\",\"title\":\"Plan Saturday\",\"currentGoal\":\"Plan Saturday\"," +
-                "\"state\":\"draft\",\"updatedAt\":\"2026-08-28T10:15:30Z\"}",
+            "{\"id\":\"task-1\",\"intent\":\"Plan Saturday\",\"requirements\":[{\"id\":\"requirement-1\"," +
+                "\"label\":\"周六晚上\",\"strength\":\"must\"}],\"updatedAt\":\"2026-08-28T10:15:30Z\"}",
             json.encodeToString(summary),
         )
         assertEquals(summary, json.decodeFromString<TaskSummaryResponse>(json.encodeToString(summary)))
     }
 
     @Test
-    fun `constraint values serialize as typed values`() {
-        val constraint = ConstraintResponse(
-            id = "constraint-1",
-            kind = ConstraintKind.BudgetLimit,
-            value = ConstraintValueResponse.BudgetLimit(wholeUnits = 300),
-            strength = ConstraintStrength.Hard,
-            source = ConstraintSource.UserExplicit,
+    fun `requirement values serialize as typed values`() {
+        val requirement = RequirementResponse(
+            id = "requirement-1",
+            kind = RequirementKind.BudgetLimit,
+            value = RequirementValueResponse.BudgetLimit(wholeUnits = 300),
+            strength = RequirementStrength.Must,
+            source = RequirementSource.UserExplicit,
             evidenceMessageId = "message-1",
-            confirmedAt = Instant.parse("2026-08-28T10:16:00Z"),
             createdAt = Instant.parse("2026-08-28T10:16:00Z"),
             updatedAt = Instant.parse("2026-08-28T10:16:00Z"),
         )
 
-        val encoded = json.encodeToString(constraint)
+        val encoded = json.encodeToString(requirement)
         val element = json.parseToJsonElement(encoded).jsonObject
         val value = element.getValue("value").jsonObject
 
         assertEquals("budget_limit", element.getValue("kind").jsonPrimitive.content)
-        assertEquals("hard", element.getValue("strength").jsonPrimitive.content)
+        assertEquals("must", element.getValue("strength").jsonPrimitive.content)
         assertEquals("user_explicit", element.getValue("source").jsonPrimitive.content)
         assertEquals("budget_limit", value.getValue("type").jsonPrimitive.content)
         assertEquals(JsonPrimitive(300), value.getValue("wholeUnits"))
         assertFalse("currencyCode" in value)
-        assertEquals(constraint, json.decodeFromString<ConstraintResponse>(encoded))
+        assertEquals(requirement, json.decodeFromString<RequirementResponse>(encoded))
     }
 
     @Test
-    fun `all supported constraint value shapes round trip`() {
+    fun `all supported requirement value shapes round trip`() {
         val values = listOf(
-            ConstraintValueResponse.TimeWindow(
+            RequirementValueResponse.TimeWindow(
                 startAt = Instant.parse("2026-08-29T11:00:00Z"),
                 endAt = Instant.parse("2026-08-29T14:00:00Z"),
                 timeZoneId = "Asia/Shanghai",
                 originalText = "周六晚上",
             ),
-            ConstraintValueResponse.CommuteLimit(maxMinutes = 45),
-            ConstraintValueResponse.Location(text = "Anfield"),
-            ConstraintValueResponse.ActivityDomain(value = "football"),
-            ConstraintValueResponse.Topic(text = "Liverpool"),
-            ConstraintValueResponse.ExperiencePreference(text = "quiet"),
+            RequirementValueResponse.CommuteLimit(maxMinutes = 45),
+            RequirementValueResponse.CommutePreference(CommutePreferenceValue.PreferShorter),
+            RequirementValueResponse.Location(text = "Anfield"),
+            RequirementValueResponse.ActivityDomain(value = "football"),
+            RequirementValueResponse.ActivityMode(ActivityModeValue.AtHome),
+            RequirementValueResponse.ActivityMode(ActivityModeValue.OutOfHome),
+            RequirementValueResponse.Topic(text = "Liverpool"),
+            RequirementValueResponse.ExperiencePreference(text = "quiet"),
         )
 
         values.forEach { value ->
-            assertEquals(value, json.decodeFromString<ConstraintValueResponse>(json.encodeToString(value)))
+            assertEquals(value, json.decodeFromString<RequirementValueResponse>(json.encodeToString(value)))
         }
     }
 
     @Test
-    fun `conversation messages preserve optional understanding fields`() {
-        val pendingUserMessage = ConversationMessageResponse(
+    fun `task messages preserve optional understanding fields`() {
+        val pendingUserMessage = TaskMessageResponse(
             id = "message-1",
             role = MessageRole.User,
             content = "周六晚上想看利物浦，预算 300",
             clientMessageId = "client-message-1",
             createdAt = Instant.parse("2026-08-28T10:15:30Z"),
         )
-        val assistantMessage = ConversationMessageResponse(
+        val assistantMessage = TaskMessageResponse(
             id = "message-2",
             role = MessageRole.Assistant,
             content = "还需要确认地点。",
@@ -175,69 +167,50 @@ class ApiSerializationTest {
         assertEquals("user", pendingJson.getValue("role").jsonPrimitive.content)
         assertFalse("aiRequestId" in pendingJson)
         assertFalse("understoodAt" in pendingJson)
-        assertEquals(pendingUserMessage, json.decodeFromString<ConversationMessageResponse>(json.encodeToString(pendingUserMessage)))
-        assertEquals(assistantMessage, json.decodeFromString<ConversationMessageResponse>(json.encodeToString(assistantMessage)))
+        assertEquals(pendingUserMessage, json.decodeFromString<TaskMessageResponse>(json.encodeToString(pendingUserMessage)))
+        assertEquals(assistantMessage, json.decodeFromString<TaskMessageResponse>(json.encodeToString(assistantMessage)))
     }
 
     @Test
-    fun `plan responses and planning requests round trip`() {
-        val plan = planResponse()
-        val response = GeneratePlansResponse(planningRunId = "planning-run-1", plans = listOf(plan))
-
-        assertEquals(
-            "{\"clientRequestId\":\"planning-request-1\"}",
-            json.encodeToString(GeneratePlansRequest(clientRequestId = "planning-request-1")),
-        )
-        assertEquals(
-            "{\"planId\":\"plan-1\"}",
-            json.encodeToString(SelectPlanRequest(planId = "plan-1")),
-        )
-
+    fun `plan response uses task revision and opportunity references`() {
+        val response = planResponse()
         val encoded = json.encodeToString(response)
         val element = json.parseToJsonElement(encoded).jsonObject
-        val plans = element.getValue("plans") as JsonArray
-        val firstPlan = plans.first().jsonObject
-        assertEquals("planning-run-1", element.getValue("planningRunId").jsonPrimitive.content)
-        assertEquals("fixture", firstPlan.getValue("direction").jsonPrimitive.content)
-        assertEquals(JsonPrimitive(300), firstPlan.getValue("estimatedCost").jsonObject.getValue("wholeUnits"))
-        assertEquals(response, json.decodeFromString<GeneratePlansResponse>(encoded))
+
+        assertEquals("task-1", element.getValue("taskId").jsonPrimitive.content)
+        assertEquals(JsonPrimitive(2), element.getValue("revision"))
+        assertEquals("best_match", element.getValue("direction").jsonPrimitive.content)
+        assertEquals(JsonPrimitive(300), element.getValue("estimatedCost").jsonObject.getValue("wholeUnits"))
+        assertEquals(JsonPrimitive("opportunity-1"), (element.getValue("opportunityRefs") as JsonArray).first())
+        assertEquals(response, json.decodeFromString<PlanResponse>(encoded))
     }
 
     @Test
-    fun `task detail omits absent selected plan and preserves present selected plan`() {
-        val detail = taskDetail(selectedPlanId = null)
-        val encodedWithoutSelection = json.encodeToString(detail)
-        assertFalse("selectedPlanId" in json.parseToJsonElement(encodedWithoutSelection).jsonObject)
-        assertEquals(detail, json.decodeFromString<TaskDetailResponse>(encodedWithoutSelection))
-
-        val selectedDetail = taskDetail(selectedPlanId = "plan-1")
-        val encodedWithSelection = json.encodeToString(selectedDetail)
-        assertTrue("selectedPlanId" in json.parseToJsonElement(encodedWithSelection).jsonObject)
-        assertEquals(selectedDetail, json.decodeFromString<TaskDetailResponse>(encodedWithSelection))
-    }
-
-    private fun taskDetail(selectedPlanId: String?): TaskDetailResponse =
-        TaskDetailResponse(
-            id = "task-1",
-            title = "周六晚上想看利物浦",
-            currentGoal = "周六晚上想看利物浦，预算 300",
-            state = TaskState.Planning,
-            version = 2,
-            constraints = listOf(
-                ConstraintResponse(
-                    id = "constraint-1",
-                    kind = ConstraintKind.Topic,
-                    value = ConstraintValueResponse.Topic(text = "利物浦"),
-                    strength = ConstraintStrength.Hard,
-                    source = ConstraintSource.UserExplicit,
+    fun `task detail omits absent selected plan and carries active plan revision`() {
+        val detail = TaskDetailResponse(
+            task =
+                TaskResponse(
+                    id = "task-1",
+                    intent = "周六晚上想看利物浦，预算 300",
+                    revision = 2,
+                    selectedPlanId = null,
+                    createdAt = Instant.parse("2026-08-28T10:15:00Z"),
+                    updatedAt = Instant.parse("2026-08-28T10:16:00Z"),
+                ),
+            requirements = listOf(
+                RequirementResponse(
+                    id = "requirement-1",
+                    kind = RequirementKind.Topic,
+                    value = RequirementValueResponse.Topic(text = "利物浦"),
+                    strength = RequirementStrength.Must,
+                    source = RequirementSource.UserExplicit,
                     evidenceMessageId = "message-1",
-                    confirmedAt = Instant.parse("2026-08-28T10:16:00Z"),
                     createdAt = Instant.parse("2026-08-28T10:16:00Z"),
                     updatedAt = Instant.parse("2026-08-28T10:16:00Z"),
                 ),
             ),
             messages = listOf(
-                ConversationMessageResponse(
+                TaskMessageResponse(
                     id = "message-1",
                     role = MessageRole.User,
                     content = "周六晚上想看利物浦，预算 300",
@@ -248,17 +221,23 @@ class ApiSerializationTest {
                 ),
             ),
             plans = listOf(planResponse()),
-            selectedPlanId = selectedPlanId,
-            createdAt = Instant.parse("2026-08-28T10:15:00Z"),
-            updatedAt = Instant.parse("2026-08-28T10:16:00Z"),
+            planning = PlanningStatusResponse(PlanningStatus.Idle),
         )
+
+        val encoded = json.encodeToString(detail)
+        val element = json.parseToJsonElement(encoded).jsonObject
+
+        assertFalse("selectedPlanId" in element.getValue("task").jsonObject)
+        assertEquals(JsonPrimitive(2), element.getValue("task").jsonObject.getValue("revision"))
+        assertEquals(detail, json.decodeFromString<TaskDetailResponse>(encoded))
+    }
 
     private fun planResponse(): PlanResponse =
         PlanResponse(
             id = "plan-1",
             taskId = "task-1",
-            planningRunId = "planning-run-1",
-            direction = "fixture",
+            revision = 2,
+            direction = PlanDirection.BestMatch,
             title = "Watch Liverpool",
             summary = "A simple fixture plan.",
             timeline = listOf(
@@ -271,10 +250,22 @@ class ApiSerializationTest {
             ),
             estimatedCost = PlanEstimatedCostResponse(wholeUnits = 300),
             commuteMinutes = 0,
-            satisfiedConstraintIds = listOf("constraint-1"),
+            requirementEvaluations =
+                listOf(
+                    RequirementEvaluationResponse(
+                        requirementId = "requirement-1",
+                        result = RequirementEvaluationResult.Satisfied,
+                    ),
+                ),
             tradeoffs = listOf("Fixture data only"),
             reasons = listOf("Demonstrates structured plan contract"),
-            sourceRefs = listOf(PlanSourceRefResponse(label = "Fixture")),
+            sourceRefs = listOf(
+                PlanSourceRefResponse(
+                    label = "Fixture",
+                    sourceUpdatedAt = Instant.parse("2026-08-28T10:10:00Z"),
+                ),
+            ),
+            opportunityRefs = listOf("opportunity-1"),
             validUntil = Instant.parse("2026-08-29T10:00:00Z"),
             createdAt = Instant.parse("2026-08-28T10:17:00Z"),
         )

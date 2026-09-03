@@ -635,7 +635,7 @@
     function renderP() {
       let p = plans[pi];
       $("#planCard").innerHTML =
-        `<div class="head"><h2>${p[0]}</h2><span class="tag">${p[1]}</span></div><p class="muted">${p[2]}</p><div class="time"><div><b>${["18:30","18:40","17:50"][pi]}</b>开始</div><div><b>${["20:00 开球","19:10 电影","19:10 电影"][pi]}</b>重点活动</div><div><b>${["23:15","21:45","22:50"][pi]}</b>结束</div></div><div class="reason"><i>✓</i>预计预算 ${p[3]} · 通勤 ${["22","12","18"][pi]} 分钟 · 时间与日程不冲突。</div><div class="reason"><i>✓</i>${p[4]}</div><p class="muted">来源：${["模拟赛程 / 餐饮数据","模拟电影场次","模拟电影 / 活动数据"][pi]} · 有效至周六 ${["18:00","17:00","16:00"][pi]}。</p><div class="why">批准后将创建明确的日历/提醒动作；执行前会再次校验数据时效与权限。</div><button id="choose" class="primary">选择并审批</button><button id="savePlan" class="secondary">收藏方案</button><button id="regenerate" class="secondary">换个方向生成</button>`;
+        `<div class="head"><h2>${p[0]}</h2><span class="tag">${p[1]}</span></div><p class="muted">${p[2]}</p><div class="time"><div><b>${["18:30","18:40","17:50"][pi]}</b>开始</div><div><b>${["20:00 开球","19:10 电影","19:10 电影"][pi]}</b>重点活动</div><div><b>${["23:15","21:45","22:50"][pi]}</b>结束</div></div><div class="reason"><i>✓</i>预计预算 ${p[3]} · 通勤 ${["22","12","18"][pi]} 分钟 · 时间与日程不冲突。</div><div class="reason"><i>✓</i>${p[4]}</div><p class="muted">来源：${["模拟赛程 / 餐饮数据","模拟电影场次","模拟电影 / 活动数据"][pi]} · 有效至周六 ${["18:00","17:00","16:00"][pi]}。</p><div class="why">批准后将创建明确的日历/提醒动作；执行前会再次校验数据时效与权限。</div><button id="choose" class="primary">选择并审批</button><button id="savePlan" class="secondary">收藏方案</button><button id="adjustPlan" class="secondary">继续说明想调整什么</button>`;
       $("#choose").onclick = () => {
         $("#overlay").classList.add("on");
         $("#sheet").classList.add("on");
@@ -644,7 +644,7 @@
         .querySelectorAll("[data-go]")
         .forEach((b) => (b.onclick = () => go(b.dataset.go)));
       $("#savePlan").onclick = () => toast("已收藏；这会成为未来排序的轻量信号。");
-      $("#regenerate").onclick = () => { go("chat"); toast("告诉我想更省钱、更轻松还是更多新鲜感。"); };
+      $("#adjustPlan").onclick = () => { go("chat"); toast("告诉我想更省钱、更轻松还是更多新鲜感。"); };
     }
     $$("[data-go]").forEach((b) => (b.onclick = () => go(b.dataset.go)));
     $$("[data-toast]").forEach(

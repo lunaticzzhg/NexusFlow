@@ -22,7 +22,6 @@ class MockTaskRepositoryTest {
                 MockTaskRepository().createTask(
                     CreateTaskCommand(
                         creationRequestId = "create-1",
-                        initialMessageId = "message-1",
                         requestText = "  Plan a quiet evening  ",
                         timeZoneId = "Asia/Shanghai",
                     ),

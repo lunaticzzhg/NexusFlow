@@ -5,8 +5,8 @@ An approval-first, personalized leisure-planning Agent. It discovers opportuniti
 ## Repository layout
 
 - `app/` — Kotlin Multiplatform client.
-- `backend/` — Ktor backend foundation: core HTTP/persistence capabilities and authentication.
-- `ai/` — Reserved for a future planning module; no AI runtime is implemented yet.
+- `backend/` — Ktor backend: core HTTP/persistence, authentication, and the persistently backed Task planning workflow.
+- `ai/` — Structured model boundary for user-message understanding, plan composition, and grounded plan explanation.
 - `contracts/` — versioned App <-> Backend wire schemas; not Backend domain or AI-internal models.
 
 ## Local development (foundation)
@@ -19,7 +19,7 @@ ORBIT_RUNTIME_PROFILE=local ./gradlew :backend:run
 
 The health endpoint is available at `http://127.0.0.1:8080/health/live`.
 
-The current backend exposes core health and authentication endpoints only. Task workflow, approval, Outbox/Worker and AI planning are not implemented; after a product module is selected, it will be developed as an independent, persistently backed feature slice rather than enabled from a placeholder API or schema.
+The current backend exposes core health, authentication, and Task planning endpoints. Approval, Outbox/Worker, and side-effect execution are still future slices.
 
 Start local infrastructure when Docker is available:
 

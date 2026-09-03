@@ -85,7 +85,6 @@ fun AuthGate(
         is AuthState.Authenticated -> {
             key(current.context.contextId) {
                 AppShell(
-                    showFixturePlanning = runtimeConfig.buildMode == BuildMode.DEBUG,
                     onLogout = { controller.dispatch(AuthIntent.Logout) },
                 )
             }

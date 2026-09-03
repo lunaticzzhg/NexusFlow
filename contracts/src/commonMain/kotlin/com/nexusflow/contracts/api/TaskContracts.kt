@@ -5,38 +5,13 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
-enum class TaskState {
-    @SerialName("draft")
-    Draft,
-
-    @SerialName("collecting_constraints")
-    CollectingConstraints,
-
-    @SerialName("planning")
-    Planning,
-
-    @SerialName("waiting_for_approval")
-    WaitingForApproval,
-
-    @SerialName("executing")
-    Executing,
-
-    @SerialName("needs_attention")
-    NeedsAttention,
-
-    @SerialName("completed")
-    Completed,
-
-    @SerialName("cancelled")
-    Cancelled,
-}
-
-@Serializable
 data class CreateTaskRequest(
     @SerialName("clientRequestId")
     val clientRequestId: String,
-    @SerialName("goal")
-    val goal: String,
+    @SerialName("message")
+    val message: String,
+    @SerialName("timeZoneId")
+    val timeZoneId: String,
 )
 
 @Serializable
@@ -50,37 +25,51 @@ data class SendTaskMessageRequest(
 )
 
 @Serializable
+data class UpdateRequirementRequest(
+    @SerialName("kind")
+    val kind: RequirementKind,
+    @SerialName("value")
+    val value: RequirementValueResponse,
+    @SerialName("strength")
+    val strength: RequirementStrength,
+)
+
+@Serializable
 data class TaskSummaryResponse(
     @SerialName("id")
     val id: String,
-    @SerialName("title")
-    val title: String,
-    @SerialName("currentGoal")
-    val currentGoal: String,
-    @SerialName("state")
-    val state: TaskState,
+    @SerialName("intent")
+    val intent: String,
+    @SerialName("requirements")
+    val requirements: List<RequirementSummaryResponse>,
+    @SerialName("selectedPlanId")
+    val selectedPlanId: String? = null,
     @SerialName("updatedAt")
     val updatedAt: Instant,
 )
 
 @Serializable
 data class TaskDetailResponse(
-    @SerialName("id")
-    val id: String,
-    @SerialName("title")
-    val title: String,
-    @SerialName("currentGoal")
-    val currentGoal: String,
-    @SerialName("state")
-    val state: TaskState,
-    @SerialName("version")
-    val version: Long,
-    @SerialName("constraints")
-    val constraints: List<ConstraintResponse>,
+    @SerialName("task")
+    val task: TaskResponse,
+    @SerialName("requirements")
+    val requirements: List<RequirementResponse>,
     @SerialName("messages")
-    val messages: List<ConversationMessageResponse>,
+    val messages: List<TaskMessageResponse>,
     @SerialName("plans")
     val plans: List<PlanResponse>,
+    @SerialName("planning")
+    val planning: PlanningStatusResponse,
+)
+
+@Serializable
+data class TaskResponse(
+    @SerialName("id")
+    val id: String,
+    @SerialName("intent")
+    val intent: String,
+    @SerialName("revision")
+    val revision: Long,
     @SerialName("selectedPlanId")
     val selectedPlanId: String? = null,
     @SerialName("createdAt")
@@ -90,7 +79,29 @@ data class TaskDetailResponse(
 )
 
 @Serializable
-data class ConversationMessageResponse(
+data class RequirementSummaryResponse(
+    @SerialName("id")
+    val id: String,
+    @SerialName("label")
+    val label: String,
+    @SerialName("strength")
+    val strength: RequirementStrength,
+)
+
+@Serializable
+data class PlanningStatusResponse(
+    @SerialName("status")
+    val status: PlanningStatus,
+)
+
+@Serializable
+enum class PlanningStatus {
+    @SerialName("idle")
+    Idle,
+}
+
+@Serializable
+data class TaskMessageResponse(
     @SerialName("id")
     val id: String,
     @SerialName("role")
@@ -117,21 +128,19 @@ enum class MessageRole {
 }
 
 @Serializable
-data class ConstraintResponse(
+data class RequirementResponse(
     @SerialName("id")
     val id: String,
     @SerialName("kind")
-    val kind: ConstraintKind,
+    val kind: RequirementKind,
     @SerialName("value")
-    val value: ConstraintValueResponse,
+    val value: RequirementValueResponse,
     @SerialName("strength")
-    val strength: ConstraintStrength,
+    val strength: RequirementStrength,
     @SerialName("source")
-    val source: ConstraintSource,
+    val source: RequirementSource,
     @SerialName("evidenceMessageId")
-    val evidenceMessageId: String,
-    @SerialName("confirmedAt")
-    val confirmedAt: Instant,
+    val evidenceMessageId: String? = null,
     @SerialName("createdAt")
     val createdAt: Instant,
     @SerialName("updatedAt")
@@ -139,7 +148,7 @@ data class ConstraintResponse(
 )
 
 @Serializable
-enum class ConstraintKind {
+enum class RequirementKind {
     @SerialName("time_window")
     TimeWindow,
 
@@ -149,11 +158,17 @@ enum class ConstraintKind {
     @SerialName("commute_limit")
     CommuteLimit,
 
+    @SerialName("commute_preference")
+    CommutePreference,
+
     @SerialName("location")
     Location,
 
     @SerialName("activity_domain")
     ActivityDomain,
+
+    @SerialName("activity_mode")
+    ActivityMode,
 
     @SerialName("topic")
     Topic,
@@ -163,31 +178,25 @@ enum class ConstraintKind {
 }
 
 @Serializable
-enum class ConstraintStrength {
-    @SerialName("hard")
-    Hard,
+enum class RequirementStrength {
+    @SerialName("must")
+    Must,
 
-    @SerialName("soft")
-    Soft,
+    @SerialName("prefer")
+    Prefer,
 }
 
 @Serializable
-enum class ConstraintSource {
+enum class RequirementSource {
     @SerialName("user_explicit")
     UserExplicit,
-
-    @SerialName("accepted_suggestion")
-    AcceptedSuggestion,
-
-    @SerialName("opportunity_context")
-    OpportunityContext,
 
     @SerialName("system_derived")
     SystemDerived,
 }
 
 @Serializable
-sealed class ConstraintValueResponse {
+sealed class RequirementValueResponse {
     @Serializable
     @SerialName("time_window")
     data class TimeWindow(
@@ -199,7 +208,7 @@ sealed class ConstraintValueResponse {
         val timeZoneId: String,
         @SerialName("originalText")
         val originalText: String,
-    ) : ConstraintValueResponse()
+    ) : RequirementValueResponse()
 
     @Serializable
     @SerialName("budget_limit")
@@ -208,40 +217,69 @@ sealed class ConstraintValueResponse {
         val wholeUnits: Long,
         @SerialName("currencyCode")
         val currencyCode: String? = null,
-    ) : ConstraintValueResponse()
+    ) : RequirementValueResponse()
 
     @Serializable
     @SerialName("commute_limit")
     data class CommuteLimit(
         @SerialName("maxMinutes")
         val maxMinutes: Int,
-    ) : ConstraintValueResponse()
+    ) : RequirementValueResponse()
+
+    @Serializable
+    @SerialName("commute_preference")
+    data class CommutePreference(
+        @SerialName("value")
+        val value: CommutePreferenceValue,
+    ) : RequirementValueResponse()
 
     @Serializable
     @SerialName("location")
     data class Location(
         @SerialName("text")
         val text: String,
-    ) : ConstraintValueResponse()
+    ) : RequirementValueResponse()
 
     @Serializable
     @SerialName("activity_domain")
     data class ActivityDomain(
         @SerialName("value")
         val value: String,
-    ) : ConstraintValueResponse()
+    ) : RequirementValueResponse()
+
+    @Serializable
+    @SerialName("activity_mode")
+    data class ActivityMode(
+        @SerialName("value")
+        val value: ActivityModeValue,
+    ) : RequirementValueResponse()
 
     @Serializable
     @SerialName("topic")
     data class Topic(
         @SerialName("text")
         val text: String,
-    ) : ConstraintValueResponse()
+    ) : RequirementValueResponse()
 
     @Serializable
     @SerialName("experience_preference")
     data class ExperiencePreference(
         @SerialName("text")
         val text: String,
-    ) : ConstraintValueResponse()
+    ) : RequirementValueResponse()
+}
+
+@Serializable
+enum class CommutePreferenceValue {
+    @SerialName("prefer_shorter")
+    PreferShorter,
+}
+
+@Serializable
+enum class ActivityModeValue {
+    @SerialName("at_home")
+    AtHome,
+
+    @SerialName("out_of_home")
+    OutOfHome,
 }

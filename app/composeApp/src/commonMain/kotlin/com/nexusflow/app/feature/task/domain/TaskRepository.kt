@@ -9,7 +9,9 @@ interface TaskRepository {
 
     suspend fun sendMessage(command: SendTaskMessageCommand): Result<TaskDetail>
 
-    suspend fun generatePlans(command: GeneratePlansCommand): Result<List<TaskPlan>>
+    suspend fun updateRequirement(command: UpdateRequirementCommand): Result<TaskDetail>
+
+    suspend fun removeRequirement(command: RemoveRequirementCommand): Result<TaskDetail>
 
     suspend fun selectPlan(command: SelectPlanCommand): Result<TaskDetail>
 }

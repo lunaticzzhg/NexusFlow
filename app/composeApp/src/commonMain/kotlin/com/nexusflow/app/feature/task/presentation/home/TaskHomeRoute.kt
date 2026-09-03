@@ -24,9 +24,9 @@ import com.nexusflow.app.core.design.AppSpacing
 import com.nexusflow.app.core.design.feedback.AppErrorState
 import com.nexusflow.app.core.design.feedback.AppFullScreenLoading
 import com.nexusflow.app.feature.task.domain.TaskId
-import com.nexusflow.app.feature.task.domain.TaskState
 import com.nexusflow.app.feature.task.domain.TaskSummary
 import nexusflow.app.composeapp.generated.resources.Res
+import nexusflow.app.composeapp.generated.resources.task_detail_empty_requirements
 import nexusflow.app.composeapp.generated.resources.task_home_create
 import nexusflow.app.composeapp.generated.resources.task_home_empty_body
 import nexusflow.app.composeapp.generated.resources.task_home_empty_title
@@ -37,14 +37,6 @@ import nexusflow.app.composeapp.generated.resources.task_home_title
 import nexusflow.app.composeapp.generated.resources.task_home_unavailable_body
 import nexusflow.app.composeapp.generated.resources.task_home_unavailable_title
 import nexusflow.app.composeapp.generated.resources.task_retry
-import nexusflow.app.composeapp.generated.resources.task_state_cancelled
-import nexusflow.app.composeapp.generated.resources.task_state_collecting_constraints
-import nexusflow.app.composeapp.generated.resources.task_state_completed
-import nexusflow.app.composeapp.generated.resources.task_state_draft
-import nexusflow.app.composeapp.generated.resources.task_state_executing
-import nexusflow.app.composeapp.generated.resources.task_state_needs_attention
-import nexusflow.app.composeapp.generated.resources.task_state_planning
-import nexusflow.app.composeapp.generated.resources.task_state_waiting_for_approval
 import org.jetbrains.compose.resources.stringResource
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -176,29 +168,19 @@ private fun TaskSummaryCard(
             verticalArrangement = Arrangement.spacedBy(AppSpacing.small),
         ) {
             Text(
-                text = taskStateLabel(summary.state),
+                text =
+                    summary.requirements
+                        .take(2)
+                        .joinToString(" · ") { it.label }
+                        .ifBlank { stringResource(Res.string.task_detail_empty_requirements) },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.secondary,
             )
-            Text(summary.title, style = MaterialTheme.typography.titleMedium)
             Text(
-                text = summary.currentGoal,
+                text = summary.intent,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
 }
-
-@Composable
-private fun taskStateLabel(state: TaskState): String =
-    when (state) {
-        TaskState.Draft -> stringResource(Res.string.task_state_draft)
-        TaskState.CollectingConstraints -> stringResource(Res.string.task_state_collecting_constraints)
-        TaskState.Planning -> stringResource(Res.string.task_state_planning)
-        TaskState.WaitingForApproval -> stringResource(Res.string.task_state_waiting_for_approval)
-        TaskState.Executing -> stringResource(Res.string.task_state_executing)
-        TaskState.NeedsAttention -> stringResource(Res.string.task_state_needs_attention)
-        TaskState.Completed -> stringResource(Res.string.task_state_completed)
-        TaskState.Cancelled -> stringResource(Res.string.task_state_cancelled)
-    }

@@ -1,6 +1,6 @@
 # NexusFlow AI 架构主规范
 
-当前实现状态：M0 已加入 `:ai` Gradle module 和 `UserMessageUnderstanding` / OpenAI structured-output adapter，用于用户消息理解。它不是完整 Planner、agent runtime、tool router、RAG、memory 或 side-effect executor；任何文档或计划都不能被解读为当前存在 working Planner。
+当前实现状态：`:ai` Gradle module 已包含 structured model provider boundary、用户消息理解、第一版计划生成/解释 capability，以及 V2 LLM Context Framework 的 AI-facing payload contract。它不是 agent runtime、tool router、RAG、memory、provider fallback router 或 side-effect executor；任何文档或计划都不能被解读为当前存在这些 runtime。
 
 本规范是 NexusFlow AI/planning 边界的长期 authority。它冻结的是 Backend/AI 信任边界、ownership 和 Kotlin-first 默认方向；内部 Planner architecture 在真实源码出现前保持 `UNPROVEN`。
 
@@ -8,23 +8,27 @@
 
 ```text
 Boundary / ownership rules: PROVEN
-Current M0 understanding implementation: PRESENT
-Internal Planner architecture: UNPROVEN until real source exists
+Current structured Understanding / Planning capabilities: PRESENT
+LLM Context Framework V2 boundary: PRESENT
+Agent runtime / RAG / memory / tool router: UNPROVEN until real source exists
 ```
 
 ## 0. 范围、权威与当前状态
 
 ### 适用范围
 
-本规范适用于未来 `ai/` planning module、Planner API、provider adapter、guardrails、PlanProposal、RequestedAction、reason/risk tag、evaluation 和 Backend 集成边界。
+本规范适用于当前和未来的 `ai/` planning module、Planner API、provider adapter、guardrails、PlanProposal、RequestedAction、reason/risk tag、evaluation 和 Backend 集成边界。
 
 ### 事实来源
 
 - `settings.gradle.kts`：当前 include `:app:composeApp`、`:contracts`、`:backend`、`:ai`。
-- `ai/src/main/kotlin/com/nexusflow/ai/understanding/`：M0 user-message understanding boundary and OpenAI adapter。
+- `ai/src/main/kotlin/com/nexusflow/ai/understanding/`：user-message understanding capability。
+- `ai/src/main/kotlin/com/nexusflow/ai/planner/`：first-version planning proposal and explanation capabilities。
+- `ai/src/main/kotlin/com/nexusflow/ai/provider/`：provider-neutral structured request and provider adapters。
+- `backend/src/main/kotlin/com/nexusflow/backend/core/aicontext/`：Backend-owned model context catalog, resolver, assembler, budget and external projection boundary。
 - `docs/v0.1/requirements.md` 与 `docs/v0.1/app-module-technical-plan.md`：Backend authoritative state、read-only planning context、Kotlin Planner、structured proposal、Backend validation/approval/persistence/execution。
 
-这些需求和技术计划是边界证据，不是实现许可。不得据此补出 Planner、RAG、memory、agent loop、tool router、vector store、model registry、retry framework 或独立 AI service。
+这些需求、技术计划和当前源码是边界证据，不是实现许可。不得据此补出 RAG、memory、agent loop、tool router、vector store、model registry、retry framework、provider fallback router 或独立 AI service。
 
 ## 1. Kotlin/JVM-first Default
 
@@ -74,18 +78,115 @@ AI 不得：
 
 ## 4. PlanningContext
 
-`PlanningContext` 由 Backend 构造，是 typed、immutable、最小必要的 planning facts snapshot。它只能包含当前 planning 需要的偏好、时间范围、约束、只读插件结果摘要、busy-time projection、task identity/version 等事实。
+`PlanningContext` 由 Backend 构造，是 typed、immutable、最小必要的 planning facts snapshot。它只能包含当前 planning 需要的 intent、requirements、真实 Opportunity snapshot、只读插件结果摘要、busy-time projection、task identity/revision 等事实。
 
-AI 不应独立访问 Backend business repository、用户 credential、secret storage 或任意 plugin 来重建 authority。若未来引入 async planning，context 必须包含足够的 identity/version，使 Backend 可以判断 Planner result 是否仍适用于当前 task、approval 或 user/tenant scope。
+AI 不应独立访问 Backend business repository、用户 credential、secret storage 或任意 plugin 来重建 authority。若未来引入 async planning，context 必须包含足够的 identity/revision，使 Backend 可以判断 Planner result 是否仍适用于当前 task、approval 或 user/tenant scope。
 
 设计 PlanningContext 时至少回答：
 
 ```text
 Backend authoritative facts 来自哪里？
 哪些字段是 planning 必需，哪些敏感字段被排除？
-context identity / version 如何让 Backend 拒绝 stale result？
+context identity / revision 如何让 Backend 拒绝过期 result？
 AI 是否只读？
 ```
+
+Memory/storage ownership and model Context are separate concepts. Backend owns authoritative data and memory. A model request receives only a bounded Context snapshot constructed for the current capability.
+
+### 4.1 Core Context 与 Optional Context
+
+Capability core context 是强类型、能力专属、 correctness-relevant 的输入。例如 Understanding 的 Task.intent / current requirements，Planning 的 Task.intent / current requirements / Opportunity snapshots。Core context 不因为 token budget 被静默裁剪；如果 correctness-critical 输入过大，必须由上游明确失败或降级处理。
+
+Optional Context 是扩展 seam，使用 model-facing `ModelContextBlock` envelope：
+
+```text
+key
+trust
+content
+```
+
+`content` 可以是 `JsonObject`，但只能来自 source-owned typed DTO 或 domain data 的 deterministic projection/distillation，不能是 raw MCP/API JSON、raw HTML、raw string、repository entity 或 `toString()`。Supplemental reasoning facts 进入 optional Context；会参与 deterministic feasibility/validation 的事实必须走 typed core/domain path。
+
+### 4.2 Context Catalog、Resolver 与 Assembler
+
+Context Catalog / Resolver / Assembler 由 Backend 拥有。Catalog 注册 code-defined semantic keys、definition、lifecycle、priority、capability allowance，并拒绝 duplicate / unknown / disallowed keys。Resolver 在 verified actor/task scope 内读取自己的 authoritative source，返回 filtered/distilled `ResolvedModelContextBlock` 和 Backend-only provenance。Assembler 负责 dedupe、empty omission、per-block bound、global optional budget、AI-facing block mapping 和 safe diagnostics。
+
+Provider adapters 不得查询 profile repository、calendar repository、task repository、location service、MCP tool 或外部 API。Provider 层只接收已经构造好的 `StructuredModelRequest` 并执行协议映射。
+
+### 4.3 Context Selection 与 Lifecycle
+
+Understanding 是当前 Context selection owner。Payload 可以包含：
+
+```text
+availableContextDefinitions[] = bounded key + description + selectionHint
+optionalContext[] = already selected and resolved blocks
+```
+
+Model 只能从本次 request 明确提供的 definitions 中选择 bounded keys。Backend 必须本地验证 unknown、unoffered、duplicate、over-limit 和 no-definition selections；selection 不是权限授予，也不是 Requirement acceptance。
+
+Context lifecycle 描述 model-context selection 的有效期，不等于 source storage owner：
+
+```text
+Request       = one inference snapshot
+Execution     = one ask/execution process, reserved until real runtime exists
+Task         = later turns for the same task
+```
+
+当前只持久化 Task-lifecycle selected keys，且只持久化 key；后续 model input 重新从 authoritative source resolve 当前值。新增 Task Context selection 会改变 future Planning input，因此 Backend 使用现有 version/freshness 语义使旧 plan 不再 current。
+
+### 4.4 StructuredModelRequest 与 Capability Contract
+
+AI capabilities follow a stable four-part request:
+
+```text
+systemPrompt  = capability behavior and payload interpretation rules
+userPayload   = JsonObject built from typed capability DTO
+outputSchema  = expected structured output contract
+metadata      = local-only request identity, prompt version, capability, attempt and safe diagnostics
+```
+
+Capability code owns typed Kotlin payloads and semantic output validation. It serializes typed DTOs to `JsonObject` before creating `StructuredModelRequest`. Provider adapters serialize that JSON once at the transport boundary and must not learn Context key semantics.
+
+`systemPrompt` may describe field semantics and trust precedence, but must not duplicate runtime values already present in `userPayload`. Opaque Backend IDs such as task/request/trace IDs stay in metadata unless the model has a specific semantic need.
+
+### 4.5 External / MCP Distillation Boundary
+
+Raw MCP/external API output is never model context. Source-specific typed decoding, allowlist projection, normalization, relevance filtering, bounds, and trust/provenance handling are mandatory before model exposure.
+
+The legal future path is:
+
+```text
+MCP/API transport
+-> tool/source-specific DTO
+-> source-specific projector/filter/distiller
+-> typed distilled Context payload or typed Backend domain model
+-> Context Resolver / domain service
+-> Context Assembler
+-> model
+```
+
+Malformed, scope-mismatched, unsafe or unparseable external source data fails closed. External free text remains data, never instruction, and must be stripped/bounded before exposure.
+
+### 4.6 Context Budget 与 Observability
+
+Context is budgeted structurally and by serialized size, not by provider-specific tokenizers in the first version. Optional blocks and definitions have finite counts and serialized-char limits; lower-priority optional blocks can be omitted deterministically. Core context is not silently trimmed by optional context budget.
+
+Each AI invocation may carry safe diagnostics such as capability, prompt version, available definition count, selected/resolved/included/omitted context counts, serialized optional/definition/full payload chars, and provider-reported token usage. Diagnostics are local-only metadata/audit evidence. They must not become model input and must not include full prompts, raw payloads, resolved preference values, provider response text, external free text, credentials, tokens or secrets.
+
+### 4.7 Token-saving Rules
+
+The default model-visible payload follows these rules:
+
+- never send a full task message history by default;
+- never send a full profile/preferences snapshot by default;
+- first turn sends Context definitions, not all Context values;
+- later turns send selected resolved values, not the whole definition catalog;
+- opaque Backend IDs stay in metadata unless semantically required;
+- raw MCP/API payloads never enter model input;
+- external/domain payloads are projected to the smallest fields needed for current reasoning;
+- candidate/item lists are bounded before model injection;
+- do not add an extra LLM call merely to summarize structured external data;
+- Context blocks are assembled per capability; one giant universal prompt is forbidden.
 
 ## 5. Typed Kotlin Boundary
 
@@ -93,11 +194,13 @@ Application-facing Planner inputs/outputs 使用 typed Kotlin model，例如 `da
 
 不得让 `String`、`JsonObject` 或 `Map<String, Any>` 成为系统 planning domain model。可以在 adapter 内解析 raw output，但 adapter 必须产出 typed candidate，再由 deterministic guardrails 检查。
 
+`JsonObject` 只允许作为 provider-bound payload envelope 或 optional Context block 的 already-distilled heterogeneous content；它不能替代 capability core DTO、Backend domain model、source DTO 或 deterministic guardrail input。
+
 `PlanProposal`、`RequestedAction`、reason 和 risk tag 的类型边界必须表达业务语义，而不是 provider 机制。
 
 ## 6. Deterministic Guardrails
 
-Hard constraints 必须由 deterministic code 执行，不能交给 prompt instruction。
+MUST requirements 必须由 deterministic code 执行，不能交给 prompt instruction。
 
 包括但不限于：
 
@@ -175,7 +278,7 @@ AI context、prompt、provider request、provider response 和日志默认最小
 
 AI quality verification 与 deterministic correctness 分开：
 
-- deterministic Kotlin unit tests：guardrails、normalization、hard constraints、policy rejection；
+- deterministic Kotlin unit tests：guardrails、normalization、MUST requirement enforcement、policy rejection；
 - schema/contract tests：typed input/output boundary 和 serialization；
 - Backend integration tests：Backend 是否拒绝 stale/unauthorized/invalid proposal；
 - AI eval cases：semantic quality、reason correctness、risk tags、invariant preservation；
