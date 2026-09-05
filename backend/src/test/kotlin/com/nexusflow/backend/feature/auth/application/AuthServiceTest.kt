@@ -1,5 +1,9 @@
 package com.nexusflow.backend.feature.auth.application
 
+import com.nexusflow.backend.core.config.BackendRuntimeConfig
+import com.nexusflow.backend.core.config.LogFormat
+import com.nexusflow.backend.core.config.LoggingRuntimeConfig
+import com.nexusflow.backend.core.config.RuntimeEnvironment
 import com.nexusflow.backend.feature.auth.domain.AccessTokenIssuer
 import com.nexusflow.backend.feature.auth.domain.AuthPrincipal
 import com.nexusflow.backend.feature.auth.domain.ExternalIdentityProvider
@@ -11,18 +15,17 @@ import com.nexusflow.backend.feature.auth.domain.VerifiedExternalIdentity
 import com.nexusflow.backend.feature.auth.infrastructure.InvalidGoogleIdentityException
 import com.nexusflow.backend.feature.auth.infrastructure.JwtAccessTokenCodec
 import com.nexusflow.backend.feature.auth.infrastructure.accessTokenCodec
-import com.nexusflow.backend.core.config.BackendRuntimeConfig
-
+import com.nexusflow.observability.LogLevel
 import java.security.KeyPairGenerator
 import java.security.SecureRandom
 import java.security.interfaces.RSAPrivateKey
 import java.security.interfaces.RSAPublicKey
+import java.util.Base64
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneOffset
 import java.util.UUID
-import java.util.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -155,6 +158,13 @@ class AuthServiceTest {
             accessLifetime = Duration.ofMinutes(15),
             refreshLifetime = Duration.ofDays(30),
             ai = null,
+            logging =
+                LoggingRuntimeConfig(
+                    environment = RuntimeEnvironment.Local,
+                    level = LogLevel.INFO,
+                    format = LogFormat.Pretty,
+                    serviceName = "nexusflow-backend",
+                ),
             devLoginEnabled = false,
             devLoginEmail = null,
             devLoginPassword = null,

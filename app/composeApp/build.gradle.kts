@@ -26,6 +26,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":contracts"))
+            implementation(project(":observability"))
             implementation(compose.runtime)
             implementation(compose.foundation)
             implementation(compose.material3)
@@ -36,6 +37,7 @@ kotlin {
             implementation(libs.navigation.compose)
             implementation(libs.serialization.core)
             implementation(libs.serialization.json)
+            implementation(libs.coroutines.core)
             implementation(libs.kotlinx.datetime)
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.content.negotiation)

@@ -15,17 +15,19 @@ import com.auth0.jwt.interfaces.RSAKeyProvider
 import com.nexusflow.backend.feature.auth.domain.ExternalIdentityProvider
 import com.nexusflow.backend.feature.auth.domain.GoogleIdentityVerifier
 import com.nexusflow.backend.feature.auth.domain.VerifiedExternalIdentity
+import com.nexusflow.observability.LogFields
+import com.nexusflow.observability.StructuredLogger
+import com.nexusflow.observability.logFields
 import java.net.URL
 import java.security.interfaces.RSAPublicKey
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
-import org.slf4j.Logger
 
 class GoogleJwtIdentityVerifier(
     private val allowedAudiences: Set<String>,
     jwksUrl: URL = URL(GOOGLE_JWKS_URL),
-    private val logger: Logger,
+    private val logger: StructuredLogger,
     private val clock: Clock = Clock.systemUTC(),
 ) : GoogleIdentityVerifier {
     private val jwkProvider = JwkProviderBuilder(jwksUrl).cached(10, Duration.ofHours(1)).build()
@@ -66,8 +68,11 @@ class GoogleJwtIdentityVerifier(
     private fun logVerificationFailure(error: InvalidGoogleIdentityException) {
         val metadata = error.metadata
         logger.error(
-            "Google ID token verification failed " +
-                "[category=${error.failureCategory}, ${metadata.logFields()}]",
+            component = "auth",
+            event = "google_id_token_verification_failed",
+            fields = logFields {
+                "failure_category" value error.failureCategory
+            }.plus(metadata.toLogFields()),
         )
     }
 
@@ -108,6 +113,18 @@ data class GoogleJwtMetadata(
         "algorithm=$algorithm, keyId=$keyId, issuerPresent=$issuerPresent, issuerAllowed=$issuerAllowed, " +
             "audiencePresent=$audiencePresent, audienceAllowed=$audienceAllowed, " +
             "issuedAt=$issuedAtStatus, expiresAt=$expiresAtStatus"
+
+    internal fun toLogFields(): LogFields =
+        logFields {
+            "algorithm" value algorithm
+            "key_id" value keyId
+            "issuer_present" value issuerPresent
+            "issuer_allowed" value issuerAllowed
+            "audience_present" value audiencePresent
+            "audience_allowed" value audienceAllowed
+            "issued_at_status" value issuedAtStatus
+            "expires_at_status" value expiresAtStatus
+        }
 
     companion object {
         fun from(idToken: String, allowedAudiences: Set<String>, now: Instant): GoogleJwtMetadata = try {
@@ -168,3 +185,5 @@ private fun JWTVerificationException.toFailureCategory(): GoogleIdentityVerifica
 
 private val SAFE_HEADER_VALUE = Regex("[A-Za-z0-9_-]{1,128}")
 private val GOOGLE_ISSUERS = arrayOf("https://accounts.google.com", "accounts.google.com")
+
+private fun LogFields.plus(other: LogFields): LogFields = LogFields.from(values + other.values)

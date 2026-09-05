@@ -43,7 +43,7 @@ internal data class HttpFailureDiagnostics(
     val message: String? = null,
 )
 
-/** Normalizes first-party response failures and emits the sole API failure event. */
+/** Normalizes first-party response failures and records only invalid response diagnostics. */
 internal class ApiCallExecutor(
     private val logger: AppLogger,
 ) {
@@ -69,18 +69,14 @@ internal class ApiCallExecutor(
             val response = call()
             if (response.code != HTTP_OK) {
                 return apiFailure(
-                    endpoint = endpoint,
-                    diagnostics = response.toFailureDiagnostics(),
-                    fallbackMessage = REQUEST_REJECTED_MESSAGE,
                     exception = response.code.toHttpFailure().toAppException(),
                 )
             }
             success(response).also { result ->
                 if (result.isFailure) {
-                    logApiFailure(
+                    logApiResponseInvalid(
                         endpoint = endpoint,
-                        diagnostics = response.toFailureDiagnostics(),
-                        fallbackMessage = INVALID_RESPONSE_MESSAGE,
+                        errorType = "missing_data",
                     )
                 }
             }
@@ -88,71 +84,43 @@ internal class ApiCallExecutor(
             throw cause
         } catch (cause: HttpFailureException) {
             apiFailure(
-                endpoint = endpoint,
-                diagnostics = cause.diagnostics ?: HttpFailureDiagnostics(code = cause.failure.statusCode()),
-                fallbackMessage = cause.failure.fallbackMessage(),
                 exception = cause.failure.toAppException(),
             )
         } catch (cause: HttpRequestTimeoutException) {
             apiFailure(
-                endpoint = endpoint,
-                diagnostics = null,
-                fallbackMessage = REQUEST_TIMEOUT_MESSAGE,
                 exception = AppException.Unavailable(cause),
-                cause = cause,
             )
         } catch (cause: IOException) {
             apiFailure(
-                endpoint = endpoint,
-                diagnostics = null,
-                fallbackMessage = NETWORK_UNAVAILABLE_MESSAGE,
                 exception = AppException.Unavailable(cause),
-                cause = cause,
             )
         } catch (cause: ContentConvertException) {
+            logApiResponseInvalid(endpoint, "content_convert", cause)
             apiFailure(
-                endpoint = endpoint,
-                diagnostics = null,
-                fallbackMessage = INVALID_RESPONSE_MESSAGE,
                 exception = AppException.InvalidResponse(cause),
-                cause = cause,
             )
         } catch (cause: SerializationException) {
+            logApiResponseInvalid(endpoint, "serialization", cause)
             apiFailure(
-                endpoint = endpoint,
-                diagnostics = null,
-                fallbackMessage = INVALID_RESPONSE_MESSAGE,
                 exception = AppException.InvalidResponse(cause),
-                cause = cause,
             )
         }
     }
 
-    private fun <T> apiFailure(
-        endpoint: String,
-        diagnostics: HttpFailureDiagnostics?,
-        fallbackMessage: String,
-        exception: AppException,
-        cause: Throwable? = null,
-    ): Result<T> {
-        logApiFailure(endpoint, diagnostics, fallbackMessage, cause)
-        return Result.failure(exception)
-    }
+    private fun <T> apiFailure(exception: AppException): Result<T> = Result.failure(exception)
 
-    private fun logApiFailure(
+    private fun logApiResponseInvalid(
         endpoint: String,
-        diagnostics: HttpFailureDiagnostics?,
-        fallbackMessage: String,
+        errorType: String,
         cause: Throwable? = null,
     ) {
         logger.error(
             tag = ApiLogTag,
-            event = "api_request_failed",
+            event = "api_response_invalid",
             fields =
                 logFields {
                     "api_path" value endpoint.toApiPath()
-                    "code" value diagnostics?.code
-                    "message" value (diagnostics?.message ?: fallbackMessage)
+                    "error_type" value errorType
                 },
             cause = cause,
         )
@@ -160,9 +128,6 @@ internal class ApiCallExecutor(
 }
 
 private fun String.toApiPath(): String = if (startsWith('/')) this else "/$this"
-
-private fun KResponse<*>.toFailureDiagnostics(): HttpFailureDiagnostics =
-    HttpFailureDiagnostics(code = code, message = message?.takeUnless(String::isEmpty))
 
 private val ApiLogTag = LogTag.of("API")
 
@@ -177,28 +142,6 @@ private fun HttpFailure.toAppException(): AppException =
         is HttpFailure.ServerError -> AppException.Unavailable()
     }
 
-private fun HttpFailure.statusCode(): Int =
-    when (this) {
-        HttpFailure.Unauthorized -> 401
-        HttpFailure.Forbidden -> 403
-        HttpFailure.NotFound -> 404
-        HttpFailure.Conflict -> 409
-        HttpFailure.RateLimited -> 429
-        is HttpFailure.ClientError -> statusCode
-        is HttpFailure.ServerError -> statusCode
-    }
-
-private fun HttpFailure.fallbackMessage(): String =
-    when (this) {
-        HttpFailure.Unauthorized -> "Unauthorized"
-        HttpFailure.Forbidden -> "Forbidden"
-        HttpFailure.NotFound -> "Not found"
-        HttpFailure.Conflict -> "Conflict"
-        HttpFailure.RateLimited -> "Rate limited"
-        is HttpFailure.ClientError -> "Client error"
-        is HttpFailure.ServerError -> "Server error"
-    }
-
 internal fun Int.toHttpFailure(): HttpFailure =
     when (this) {
         401 -> HttpFailure.Unauthorized
@@ -211,7 +154,3 @@ internal fun Int.toHttpFailure(): HttpFailure =
     }
 
 private const val HTTP_OK = 200
-private const val INVALID_RESPONSE_MESSAGE = "Invalid response"
-private const val NETWORK_UNAVAILABLE_MESSAGE = "Network unavailable"
-private const val REQUEST_REJECTED_MESSAGE = "Request rejected"
-private const val REQUEST_TIMEOUT_MESSAGE = "Request timeout"

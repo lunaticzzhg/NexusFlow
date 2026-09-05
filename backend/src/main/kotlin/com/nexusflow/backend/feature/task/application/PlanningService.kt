@@ -53,10 +53,13 @@ import com.nexusflow.backend.feature.task.domain.TaskOwner
 import com.nexusflow.backend.feature.task.domain.TaskRepository
 import com.nexusflow.backend.feature.task.domain.TenantId
 import com.nexusflow.backend.feature.task.domain.UserId
+import com.nexusflow.observability.StructuredLogger
+import com.nexusflow.observability.logFields
 import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.Instant as ContractInstant
 import java.time.Clock
 import java.time.DateTimeException
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
@@ -69,6 +72,7 @@ class PlanningService(
     private val planExplainer: PlanExplainer? = null,
     private val modelContextAssembler: ModelContextAssembler? = null,
     private val readinessPolicy: PlanningReadinessPolicy = PlanningReadinessPolicy(),
+    private val logger: StructuredLogger? = null,
     private val clock: Clock = Clock.systemUTC(),
     private val uuidFactory: () -> UUID = UUID::randomUUID,
     private val timeZoneId: String = "UTC",
@@ -121,44 +125,91 @@ class PlanningService(
         owner: TaskOwner,
         detail: TaskDetail,
     ): TaskDetail {
-        val now = clock.instant()
-        val opportunities = opportunityProvider.discover(
-            OpportunityRequest(
+        val startedAt = clock.instant()
+        var stage = "opportunity_discovery"
+        var planningFailureLogged = false
+        logPlanningStarted(detail)
+        try {
+            val now = clock.instant()
+            val opportunities = opportunityProvider.discover(
+                OpportunityRequest(
+                    task = detail.task,
+                    requirements = detail.requirements,
+                    referenceTime = now,
+                ),
+            ).filterVerified(now)
+            if (opportunities.isEmpty()) {
+                planningFailureLogged = true
+                logPlanningFailed(
+                    detail = detail,
+                    startedAt = startedAt,
+                    stage = stage,
+                    failureCategory = "no_verified_candidates",
+                )
+                throw TaskDependencyUnavailableException("Planning candidates are temporarily unavailable")
+            }
+
+            stage = "optional_context"
+            val optionalContext = planningOptionalContext(actor, detail)
+            stage = "plan_compose"
+            val drafts = composePlans(detail, opportunities, now, optionalContext)
+            val context = PlanningContextSnapshot(
                 task = detail.task,
                 requirements = detail.requirements,
+                opportunities = opportunities,
                 referenceTime = now,
-            ),
-        ).filterVerified(now)
-        if (opportunities.isEmpty()) {
-            throw TaskDependencyUnavailableException("Planning candidates are temporarily unavailable")
-        }
-
-        val optionalContext = planningOptionalContext(actor, detail)
-        val drafts = composePlans(detail, opportunities, now, optionalContext)
-        val context = PlanningContextSnapshot(
-            task = detail.task,
-            requirements = detail.requirements,
-            opportunities = opportunities,
-            referenceTime = now,
-        )
-        val materialized = validatePlans(context, drafts)
-        val finalPlans = explainPlans(detail.task.id.value.toString(), materialized, opportunities, now)
-
-        return when (
-            val persisted = repository.persistPlans(
-                PersistPlansCommand(
-                    owner = owner,
-                    taskId = detail.task.id,
-                    expectedTaskRevision = detail.task.revision,
-                    opportunities = opportunities,
-                    plans = finalPlans,
-                    now = clock.instant(),
-                ),
             )
-        ) {
-            is PersistPlansResult.Persisted -> persisted.detail
-            PersistPlansResult.TaskNotFound -> throw TaskNotFoundException()
-            PersistPlansResult.StaleTaskRevision -> throw TaskConflictException()
+            stage = "plan_validation"
+            val materialized = validatePlans(context, drafts)
+            stage = "plan_explain"
+            val finalPlans = explainPlans(detail.task.id.value.toString(), materialized, opportunities, now)
+
+            stage = "persist"
+            val planned = when (
+                val persisted = repository.persistPlans(
+                    PersistPlansCommand(
+                        owner = owner,
+                        taskId = detail.task.id,
+                        expectedTaskRevision = detail.task.revision,
+                        opportunities = opportunities,
+                        plans = finalPlans,
+                        now = clock.instant(),
+                    ),
+                )
+            ) {
+                is PersistPlansResult.Persisted -> persisted.detail
+                PersistPlansResult.TaskNotFound -> throw TaskNotFoundException()
+                PersistPlansResult.StaleTaskRevision -> {
+                    logger?.warn(
+                        component = PLANNING_LOG_COMPONENT,
+                        event = "planning_persist_conflict",
+                        fields =
+                            logFields {
+                                "task_id" value detail.task.id.value.toString()
+                                "task_revision" value detail.task.revision
+                                "failure_category" value "stale_task_revision"
+                            },
+                    )
+                    throw TaskConflictException()
+                }
+            }
+            logPlanningFinished(
+                detail = planned,
+                startedAt = startedAt,
+                opportunityCount = opportunities.size,
+                planCount = finalPlans.size,
+            )
+            return planned
+        } catch (cause: CancellationException) {
+            if (!planningFailureLogged) {
+                logPlanningFailed(detail, startedAt, stage, "cancelled", cause)
+            }
+            throw cause
+        } catch (cause: Throwable) {
+            if (!planningFailureLogged) {
+                logPlanningFailed(detail, startedAt, stage, cause.safeFailureCategory(), cause)
+            }
+            throw cause
         }
     }
 
@@ -232,8 +283,33 @@ class PlanningService(
             )
         }
         return when (val result = planValidator.validate(context, drafts)) {
-            is PlanValidationResult.Accepted -> result.plans
-            is PlanValidationResult.Rejected -> throw TaskDependencyUnavailableException("Planning result is temporarily unavailable")
+            is PlanValidationResult.Accepted -> {
+                logger?.debug(
+                    component = PLANNING_LOG_COMPONENT,
+                    event = "plan_validation_finished",
+                    fields =
+                        logFields {
+                            "task_id" value context.task.id.value.toString()
+                            "task_revision" value context.task.revision
+                            "plan_count" value result.plans.size
+                        },
+                )
+                result.plans
+            }
+            is PlanValidationResult.Rejected -> {
+                logger?.warn(
+                    component = PLANNING_LOG_COMPONENT,
+                    event = "plan_validation_failed",
+                    fields =
+                        logFields {
+                            "task_id" value context.task.id.value.toString()
+                            "task_revision" value context.task.revision
+                            "failure_count" value result.failures.size
+                            "failure_codes" value result.failures.joinToString(",") { it.code.name.toSnakeCase() }
+                        },
+                )
+                throw TaskDependencyUnavailableException("Planning result is temporarily unavailable")
+            }
         }
     }
 
@@ -267,7 +343,19 @@ class PlanningService(
         return plans.map { plan ->
             val planId = plan.id.value.toString()
             val narrative = narratives.getValue(planId)
-            narrative.verifyFactRefs(factsByPlan.getValue(planId))
+            if (narrative.hasInvalidFactRefs(factsByPlan.getValue(planId))) {
+                logger?.warn(
+                    component = PLANNING_LOG_COMPONENT,
+                    event = "plan_explanation_validation_failed",
+                    fields =
+                        logFields {
+                            "task_id" value requestId
+                            "task_revision" value plan.revision
+                            "failure_category" value "invalid_fact_reference"
+                        },
+                )
+                throw TaskDependencyUnavailableException("Planning explanation is temporarily unavailable")
+            }
             plan.copy(
                 title = narrative.title,
                 summary = narrative.summary,
@@ -277,11 +365,63 @@ class PlanningService(
         }
     }
 
-    private fun AiPlanNarrative.verifyFactRefs(allowedFactIds: Set<String>) {
+    private fun AiPlanNarrative.hasInvalidFactRefs(allowedFactIds: Set<String>): Boolean {
         val referenced = (reasons + tradeoffs).flatMap { it.factIds }
-        if (referenced.any { it !in allowedFactIds }) {
-            throw TaskDependencyUnavailableException("Planning explanation is temporarily unavailable")
-        }
+        return referenced.any { it !in allowedFactIds }
+    }
+
+    private fun logPlanningStarted(detail: TaskDetail) {
+        logger?.info(
+            component = PLANNING_LOG_COMPONENT,
+            event = "planning_started",
+            fields =
+                logFields {
+                    "task_id" value detail.task.id.value.toString()
+                    "task_revision" value detail.task.revision
+                },
+        )
+    }
+
+    private fun logPlanningFinished(
+        detail: TaskDetail,
+        startedAt: java.time.Instant,
+        opportunityCount: Int,
+        planCount: Int,
+    ) {
+        logger?.info(
+            component = PLANNING_LOG_COMPONENT,
+            event = "planning_finished",
+            fields =
+                logFields {
+                    "task_id" value detail.task.id.value.toString()
+                    "task_revision" value detail.task.revision
+                    "duration_ms" value Duration.between(startedAt, clock.instant()).toMillis().coerceAtLeast(0)
+                    "opportunity_count" value opportunityCount
+                    "plan_count" value planCount
+                },
+        )
+    }
+
+    private fun logPlanningFailed(
+        detail: TaskDetail,
+        startedAt: java.time.Instant,
+        stage: String,
+        failureCategory: String,
+        cause: Throwable? = null,
+    ) {
+        logger?.error(
+            component = PLANNING_LOG_COMPONENT,
+            event = "planning_failed",
+            fields =
+                logFields {
+                    "task_id" value detail.task.id.value.toString()
+                    "task_revision" value detail.task.revision
+                    "duration_ms" value Duration.between(startedAt, clock.instant()).toMillis().coerceAtLeast(0)
+                    "stage" value stage
+                    "failure_category" value failureCategory
+                },
+            cause = cause,
+        )
     }
 
     private fun ActorContext.taskOwner(): TaskOwner =
@@ -452,3 +592,15 @@ private data class PlanningOptionalContext(
 )
 
 private const val WRITE_SCOPE = "orbit.tasks.write"
+private const val PLANNING_LOG_COMPONENT = "planning"
+
+private fun Throwable.safeFailureCategory(): String =
+    (this::class.simpleName ?: "Throwable").toSnakeCase()
+
+private fun String.toSnakeCase(): String =
+    buildString(length + 4) {
+        this@toSnakeCase.forEachIndexed { index, character ->
+            if (character.isUpperCase() && index > 0) append('_')
+            append(character.lowercaseChar())
+        }
+    }

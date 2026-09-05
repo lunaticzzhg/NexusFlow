@@ -7,6 +7,8 @@ import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.ai.provider.StructuredModelRequestDiagnostics
 import com.nexusflow.ai.provider.StructuredModelRequestMetadata
 import com.nexusflow.ai.provider.StructuredOutputSchema
+import com.nexusflow.observability.StructuredLogger
+import com.nexusflow.observability.logFields
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
@@ -17,6 +19,7 @@ import kotlinx.serialization.json.jsonObject
 
 class StructuredPlanComposer(
     private val provider: StructuredModelProvider,
+    private val logger: StructuredLogger? = null,
     private val json: Json = Json {
         ignoreUnknownKeys = false
         explicitNulls = false
@@ -32,9 +35,23 @@ class StructuredPlanComposer(
                 if (attempt == MAX_ATTEMPTS) {
                     throw InvalidPlanProposalException(error.message ?: "Invalid plan proposal", error)
                 }
+                logRetry(nextAttempt = attempt + 1)
                 attempt += 1
             }
         }
+    }
+
+    private fun logRetry(nextAttempt: Int) {
+        logger?.warn(
+            component = "ai",
+            event = "ai_request_retry",
+            fields =
+                logFields {
+                    "operation" value "plan_compose"
+                    "next_attempt" value nextAttempt
+                    "failure_category" value "invalid_plan_proposal"
+                },
+        )
     }
 
     private suspend fun requestOnce(

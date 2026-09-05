@@ -3,6 +3,8 @@ package com.nexusflow.app.feature.task.presentation.detail
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nexusflow.app.core.error.AppException
+import com.nexusflow.app.core.observability.AppTraceManager
+import com.nexusflow.app.core.observability.PassthroughAppTraceManager
 import com.nexusflow.app.feature.task.data.newTaskClientId
 import com.nexusflow.app.feature.task.domain.PlanId
 import com.nexusflow.app.feature.task.domain.RemoveRequirementCommand
@@ -23,6 +25,7 @@ import kotlinx.datetime.TimeZone
 class TaskDetailViewModel(
     private val taskId: TaskId,
     private val repository: TaskRepository,
+    private val traceManager: AppTraceManager = PassthroughAppTraceManager,
     private val clientMessageIdFactory: () -> String = ::newTaskClientId,
     private val timeZoneIdProvider: () -> String = { TimeZone.currentSystemDefault().id },
     private val nowProvider: () -> Instant = { Clock.System.now() },
@@ -122,14 +125,19 @@ class TaskDetailViewModel(
                 ),
             )
         viewModelScope.launch {
-            repository.sendMessage(
-                SendTaskMessageCommand(
-                    taskId = taskId,
-                    clientMessageId = pending.clientMessageId,
-                    text = pending.text,
-                    timeZoneId = timeZoneIdProvider(),
-                ),
-            ).fold(
+            traceManager.withNewResultTrace(
+                operation = "task_message_send",
+                trigger = if (clearDraft) "user" else "retry",
+            ) {
+                repository.sendMessage(
+                    SendTaskMessageCommand(
+                        taskId = taskId,
+                        clientMessageId = pending.clientMessageId,
+                        text = pending.text,
+                        timeZoneId = timeZoneIdProvider(),
+                    ),
+                )
+            }.fold(
                 onSuccess = { detail ->
                     val latest = _state.value.content as? TaskDetailContent.Success
                     _state.value =

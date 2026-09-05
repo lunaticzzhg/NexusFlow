@@ -17,8 +17,8 @@ fun main() {
 fun Application.module(
     profile: BackendRuntimeProfile = BackendRuntimeProfile.fromEnvironment(),
 ) {
-    configureHttpPlatform()
     val runtime = bootstrapBackend(profile)
+    configureHttpPlatform(runtime.logging)
     configureCoreRoutes(runtime.readinessProbe)
     configureFeatureRoutes(runtime)
 }

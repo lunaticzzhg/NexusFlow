@@ -20,6 +20,7 @@ class ObservabilityModuleTest {
 
         try {
             assertIs<AppLogger>(application.koin.get<AppLogger>())
+            assertIs<AppTraceManager>(application.koin.get<AppTraceManager>())
         } finally {
             application.close()
         }

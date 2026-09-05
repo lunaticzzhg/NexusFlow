@@ -2,10 +2,19 @@ package com.nexusflow.app.core.observability
 
 import com.nexusflow.app.core.config.BuildMode
 import com.nexusflow.app.core.config.RuntimeConfig
+import com.nexusflow.observability.CoroutineTraceContext
+import com.nexusflow.observability.LogRecord
+import com.nexusflow.observability.LogSanitizer
+import com.nexusflow.observability.PrettyLogFormatter
+import com.nexusflow.observability.TraceContext
+import com.nexusflow.observability.TraceId
+import kotlinx.datetime.Clock
 
 internal class StructuredAppLogger(
     private val runtimeConfig: RuntimeConfig,
     private val sink: PlatformLogSink,
+    private val traceContext: TraceContext = CoroutineTraceContext,
+    private val clock: Clock = Clock.System,
 ) : AppLogger {
     override fun log(
         level: LogLevel,
@@ -16,97 +25,42 @@ internal class StructuredAppLogger(
     ) {
         if (!isEnabled(level)) return
 
-        runCatching { sink.write(level, tag, format(level, event, fields, cause)) }
+        runCatching { sink.write(level, tag, format(level, tag, event, fields, cause)) }
     }
 
-    private fun isEnabled(level: LogLevel): Boolean = level.ordinal >= minimumLevel.ordinal
+    private fun isEnabled(level: LogLevel): Boolean = level.priority >= minimumLevel.priority
 
     private val minimumLevel: LogLevel
         get() = if (runtimeConfig.buildMode == BuildMode.DEBUG) LogLevel.DEBUG else LogLevel.INFO
 
     private fun format(
         level: LogLevel,
+        tag: LogTag,
         event: String,
         fields: LogFields,
         cause: Throwable?,
-    ): String =
-        buildString {
-            append("level=")
-            append(level.name)
-            append(" event=")
-            append(event.takeIf(::isValidEvent) ?: INVALID_EVENT)
-
-            fields.values
-                .asSequence()
-                .filter { (key, _) -> isValidFieldKey(key) && !isSensitiveField(key) }
-                .sortedBy { (key, _) -> key }
-                .take(MAX_FIELD_COUNT)
-                .forEach { (key, value) ->
-                    append(' ')
-                    append(key)
-                    append('=')
-                    append(escape(value, MAX_VALUE_LENGTH))
-                }
-
-            cause?.let {
-                append(" error_type=")
-                append(escape(it::class.simpleName ?: UNKNOWN_THROWABLE, MAX_VALUE_LENGTH))
-            }
-        }
-
-    private fun isValidEvent(value: String): Boolean = EVENT_PATTERN.matches(value)
-
-    private fun isValidFieldKey(value: String): Boolean = FIELD_KEY_PATTERN.matches(value)
-
-    private fun isSensitiveField(key: String): Boolean {
-        val normalizedKey = key.lowercase()
-        return SENSITIVE_KEY_PARTS.any(normalizedKey::contains)
-    }
-
-    private fun escape(
-        value: String,
-        maxLength: Int,
     ): String {
-        val bounded = value.take(maxLength)
-        return buildString(bounded.length) {
-            bounded.forEach { character ->
-                when (character) {
-                    '\\' -> append("\\\\")
-                    '\n' -> append("\\n")
-                    '\r' -> append("\\r")
-                    '\t' -> append("\\t")
-                    else -> if (character.code < CONTROL_CHARACTER_LIMIT) append('?') else append(character)
-                }
-            }
-        }
+        val traceId =
+            fields.values[TRACE_ID_FIELD]?.takeIf(TraceId::isValid)
+                ?: traceContext.currentTraceId()?.value
+        val record =
+            LogRecord(
+                timestamp = clock.now().toString(),
+                level = level,
+                traceId = traceId,
+                service = SERVICE_NAME,
+                component = LogSanitizer.sanitizeComponent(tag.value),
+                environment = if (runtimeConfig.buildMode == BuildMode.DEBUG) "debug" else "release",
+                event = LogSanitizer.sanitizeEvent(event),
+                fields = LogSanitizer.sanitizeFields(fields.without(TRACE_ID_FIELD)),
+                errorType = cause?.let { it::class.simpleName ?: UNKNOWN_THROWABLE },
+            )
+        return PrettyLogFormatter.format(record)
     }
 
     private companion object {
-        const val MAX_FIELD_COUNT = 16
-        const val MAX_VALUE_LENGTH = 256
-        const val CONTROL_CHARACTER_LIMIT = 32
-        const val INVALID_EVENT = "invalid_event"
+        const val TRACE_ID_FIELD = "trace_id"
+        const val SERVICE_NAME = "nexusflow-app"
         const val UNKNOWN_THROWABLE = "UnknownThrowable"
-
-        val EVENT_PATTERN = Regex("[a-z][a-z0-9_]{0,63}")
-        val FIELD_KEY_PATTERN = Regex("[a-z][a-z0-9_]{0,47}")
-        val SENSITIVE_KEY_PARTS =
-            setOf(
-                "token",
-                "credential",
-                "authorization",
-                "password",
-                "secret",
-                "cookie",
-                "session",
-                "user_id",
-                "tenant_id",
-                "email",
-                "subject",
-                "header",
-                "body",
-                "detail",
-                "query",
-            )
     }
 }

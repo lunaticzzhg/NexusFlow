@@ -34,6 +34,7 @@ class AuthDiagnosticReporterTest {
     private enum class LogCall {
         Debug,
         Info,
+        Warn,
         Error,
     }
 
@@ -53,6 +54,7 @@ class AuthDiagnosticReporterTest {
                         when (level) {
                             LogLevel.DEBUG -> LogCall.Debug
                             LogLevel.INFO -> LogCall.Info
+                            LogLevel.WARN -> LogCall.Warn
                             LogLevel.ERROR -> LogCall.Error
                         },
                     event = event,

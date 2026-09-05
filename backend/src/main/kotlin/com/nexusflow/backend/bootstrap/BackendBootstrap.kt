@@ -5,6 +5,8 @@ import com.nexusflow.backend.core.health.configureProductionHealthDependencies
 import com.nexusflow.backend.core.health.configureTestHealthDependencies
 import com.nexusflow.backend.core.health.healthRoutes
 import com.nexusflow.backend.core.identity.ActorResolver
+import com.nexusflow.backend.core.config.BackendRuntimeConfig
+import com.nexusflow.backend.core.observability.defaultBackendLoggingRuntimeConfig
 import com.nexusflow.backend.core.persistence.configureDatabaseDependencies
 import com.nexusflow.backend.feature.auth.api.authRoutes
 import com.nexusflow.backend.feature.auth.application.AuthService
@@ -48,6 +50,7 @@ private fun Application.bootstrapProduction(): BackendRuntime {
     configureProductionHealthDependencies()
     configureAuthDependencies()
     configureTaskDependencies()
+    val config: BackendRuntimeConfig by dependencies
     val flyway: Flyway by dependencies
     flyway.migrate()
     val authService: AuthService by dependencies
@@ -56,6 +59,7 @@ private fun Application.bootstrapProduction(): BackendRuntime {
     val planningService: PlanningService by dependencies
     val readinessProbe: ReadinessProbe by dependencies
     return BackendRuntime(
+        logging = config.logging,
         readinessProbe = readinessProbe,
         authService = authService,
         actorResolver = actorResolver,
@@ -68,6 +72,7 @@ private fun Application.bootstrapTest(): BackendRuntime {
     configureTestHealthDependencies()
     val readinessProbe: ReadinessProbe by dependencies
     return BackendRuntime(
+        logging = defaultBackendLoggingRuntimeConfig(),
         readinessProbe = readinessProbe,
         authService = null,
         actorResolver = null,

@@ -12,17 +12,17 @@ import com.nexusflow.backend.feature.auth.infrastructure.GoogleJwtIdentityVerifi
 import com.nexusflow.backend.feature.auth.infrastructure.JdbcIdentitySessionRepository
 import com.nexusflow.backend.feature.auth.infrastructure.JwtAccessTokenCodec
 import com.nexusflow.backend.feature.auth.infrastructure.accessTokenCodec
+import com.nexusflow.observability.StructuredLogger
 import com.zaxxer.hikari.HikariDataSource
 import io.ktor.server.application.Application
 import io.ktor.server.plugins.di.dependencies
 
 fun Application.configureAuthDependencies() {
-    val applicationLogger = environment.log
     dependencies {
         provide<GoogleIdentityVerifier> {
             GoogleJwtIdentityVerifier(
                 allowedAudiences = resolve<BackendRuntimeConfig>().googleAllowedAudiences,
-                logger = applicationLogger,
+                logger = resolve<StructuredLogger>(),
             )
         }
         provide<IdentitySessionRepository> {

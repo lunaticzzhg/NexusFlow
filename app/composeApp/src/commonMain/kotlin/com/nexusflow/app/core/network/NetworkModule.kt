@@ -14,7 +14,11 @@ fun networkModule(httpClient: HttpClient): Module =
         single<HttpClient> {
             httpClient.also {
                 val koin = getKoin()
-                it.installFirstPartyHttpInterceptors(get<RuntimeConfig>().apiBaseUrl) {
+                it.installFirstPartyHttpInterceptors(
+                    apiBaseUrl = get<RuntimeConfig>().apiBaseUrl,
+                    logger = get<AppLogger>(),
+                    traceManager = get(),
+                ) {
                     koin.getOrNull<FirstPartyApiSession>()
                 }
             }

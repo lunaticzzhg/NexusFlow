@@ -10,6 +10,7 @@ application { mainClass.set("com.nexusflow.backend.ApplicationKt") }
 
 dependencies {
     implementation(project(":contracts"))
+    implementation(project(":observability"))
     implementation(project(":ai"))
     implementation("io.ktor:ktor-server-core-jvm:${libs.versions.ktor.get()}")
     implementation(libs.ktor.server.di)

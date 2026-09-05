@@ -6,4 +6,5 @@ val observabilityModule =
     module {
         single { createPlatformLogSink() }
         single<AppLogger> { StructuredAppLogger(runtimeConfig = get(), sink = get()) }
+        single<AppTraceManager> { DefaultAppTraceManager(logger = get()) }
     }

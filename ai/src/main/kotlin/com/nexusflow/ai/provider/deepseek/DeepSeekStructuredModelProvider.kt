@@ -5,6 +5,7 @@ import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.ai.provider.StructuredModelResult
 import com.nexusflow.ai.provider.compatible.OpenAiCompatibleMode
 import com.nexusflow.ai.provider.compatible.OpenAiCompatibleStructuredTransport
+import com.nexusflow.observability.StructuredLogger
 import io.ktor.client.HttpClient
 import kotlinx.serialization.json.Json
 
@@ -13,6 +14,7 @@ class DeepSeekStructuredModelProvider(
     apiKey: String,
     model: String,
     baseUrl: String,
+    logger: StructuredLogger? = null,
     json: Json = Json {
         ignoreUnknownKeys = true
         explicitNulls = false
@@ -25,6 +27,7 @@ class DeepSeekStructuredModelProvider(
         model = model,
         baseUrl = baseUrl,
         mode = OpenAiCompatibleMode.ChatJsonObject,
+        logger = logger,
         json = json,
     )
 

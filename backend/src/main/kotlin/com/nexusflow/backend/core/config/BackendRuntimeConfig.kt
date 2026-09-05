@@ -1,5 +1,7 @@
 package com.nexusflow.backend.core.config
 
+import com.nexusflow.observability.LogLevel
+import com.nexusflow.observability.toLogLevelOrNull
 import java.time.Duration
 
 data class BackendRuntimeConfig(
@@ -15,6 +17,7 @@ data class BackendRuntimeConfig(
     val accessLifetime: Duration,
     val refreshLifetime: Duration,
     val ai: AiRuntimeConfig?,
+    val logging: LoggingRuntimeConfig,
     val devLoginEnabled: Boolean,
     val devLoginEmail: String?,
     val devLoginPassword: String?,
@@ -37,6 +40,7 @@ data class BackendRuntimeConfig(
             accessLifetime = Duration.ofSeconds(required(environment, "AUTH_ACCESS_TTL_SECONDS").toLong()),
             refreshLifetime = Duration.ofDays(required(environment, "AUTH_REFRESH_TTL_DAYS").toLong()),
             ai = aiRuntimeConfig(environment),
+            logging = loggingRuntimeConfig(environment),
             devLoginEnabled = environment["ORBIT_DEV_LOGIN_ENABLED"]?.toBooleanStrictOrNull() ?: false,
             devLoginEmail = environment["ORBIT_DEV_LOGIN_EMAIL"]?.takeIf(String::isNotBlank),
             devLoginPassword = environment["ORBIT_DEV_LOGIN_PASSWORD"]?.takeIf(String::isNotBlank),
@@ -70,7 +74,50 @@ data class BackendRuntimeConfig(
                 "deepseek" -> AiProvider.DeepSeek
                 else -> error("AI_PROVIDER must be one of openai, qwen, deepseek")
             }
+
+        private fun loggingRuntimeConfig(environment: Map<String, String>): LoggingRuntimeConfig =
+            LoggingRuntimeConfig(
+                environment = environment["APP_ENV"]?.toRuntimeEnvironment() ?: RuntimeEnvironment.Local,
+                level = environment["LOG_LEVEL"]?.toLogLevelOrNull() ?: LogLevel.INFO,
+                format = environment["LOG_FORMAT"]?.toLogFormat() ?: LogFormat.Pretty,
+                serviceName = environment["SERVICE_NAME"]?.takeIf(String::isNotBlank) ?: "nexusflow-backend",
+            )
+
+        private fun String.toRuntimeEnvironment(): RuntimeEnvironment =
+            when (trim().lowercase()) {
+                "local" -> RuntimeEnvironment.Local
+                "staging" -> RuntimeEnvironment.Staging
+                "prod", "production" -> RuntimeEnvironment.Prod
+                else -> error("APP_ENV must be one of local, staging, prod")
+            }
+
+        private fun String.toLogFormat(): LogFormat =
+            when (trim().lowercase()) {
+                "pretty" -> LogFormat.Pretty
+                "json" -> LogFormat.Json
+                else -> error("LOG_FORMAT must be one of pretty, json")
+            }
     }
+}
+
+data class LoggingRuntimeConfig(
+    val environment: RuntimeEnvironment,
+    val level: LogLevel,
+    val format: LogFormat,
+    val serviceName: String,
+)
+
+enum class RuntimeEnvironment(
+    val value: String,
+) {
+    Local("local"),
+    Staging("staging"),
+    Prod("prod"),
+}
+
+enum class LogFormat {
+    Pretty,
+    Json,
 }
 
 data class AiRuntimeConfig(

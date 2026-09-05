@@ -7,6 +7,8 @@ import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.ai.provider.StructuredModelRequestDiagnostics
 import com.nexusflow.ai.provider.StructuredModelRequestMetadata
 import com.nexusflow.ai.provider.StructuredOutputSchema
+import com.nexusflow.observability.StructuredLogger
+import com.nexusflow.observability.logFields
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
@@ -25,6 +27,7 @@ import com.nexusflow.ai.provider.ProviderUnavailableException as ProviderUnavail
 
 class StructuredUserMessageUnderstanding(
     private val provider: StructuredModelProvider,
+    private val logger: StructuredLogger? = null,
     private val json: Json = Json {
         ignoreUnknownKeys = false
         explicitNulls = false
@@ -40,9 +43,23 @@ class StructuredUserMessageUnderstanding(
                 if (attempt == MAX_ATTEMPTS) {
                     throw InvalidStructuredOutputException(error.message ?: "Invalid structured output", error)
                 }
+                logRetry(nextAttempt = attempt + 1)
                 attempt += 1
             }
         }
+    }
+
+    private fun logRetry(nextAttempt: Int) {
+        logger?.warn(
+            component = "ai",
+            event = "ai_request_retry",
+            fields =
+                logFields {
+                    "operation" value "understanding"
+                    "next_attempt" value nextAttempt
+                    "failure_category" value "invalid_structured_output"
+                },
+        )
     }
 
     private suspend fun requestOnce(

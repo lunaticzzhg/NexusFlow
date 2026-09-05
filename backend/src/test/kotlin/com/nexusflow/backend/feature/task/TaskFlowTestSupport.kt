@@ -43,6 +43,7 @@ import com.nexusflow.backend.feature.task.domain.PlanValidator
 import com.nexusflow.backend.feature.task.domain.SourceRef
 import com.nexusflow.backend.feature.task.infrastructure.JdbcTaskRepository
 import com.nexusflow.backend.test.PostgresTestGate
+import com.nexusflow.observability.StructuredLogger
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import kotlinx.datetime.Instant as KotlinInstant
@@ -75,6 +76,7 @@ internal fun createTaskService(
     taskIds: UuidSequence = UuidSequence(),
     planIds: UuidSequence = UuidSequence(500),
     clock: Clock = TaskFlowIds.FixedClock,
+    logger: StructuredLogger? = null,
 ): TaskService =
     createTaskServices(
         dataSource = dataSource,
@@ -85,6 +87,7 @@ internal fun createTaskService(
         taskIds = taskIds,
         planIds = planIds,
         clock = clock,
+        logger = logger,
     ).taskService
 
 internal fun createTaskServices(
@@ -96,6 +99,7 @@ internal fun createTaskServices(
     taskIds: UuidSequence = UuidSequence(),
     planIds: UuidSequence = UuidSequence(500),
     clock: Clock = TaskFlowIds.FixedClock,
+    logger: StructuredLogger? = null,
 ): TaskServices {
     val repository = JdbcTaskRepository(dataSource)
     val planningService = PlanningService(
@@ -107,6 +111,7 @@ internal fun createTaskServices(
         clock = clock,
         uuidFactory = planIds::next,
         timeZoneId = "Asia/Shanghai",
+        logger = logger,
     )
     val taskService = TaskService(
         repository = repository,
@@ -114,6 +119,7 @@ internal fun createTaskServices(
         understanding = understanding,
         clock = clock,
         uuidFactory = taskIds::next,
+        logger = logger,
     )
     return TaskServices(taskService, planningService, repository, planComposer, planExplainer)
 }

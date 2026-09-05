@@ -24,5 +24,5 @@ val taskModule =
         }
         viewModel { TaskHomeViewModel(get()) }
         viewModel { TaskCreateViewModel(get()) }
-        viewModel { parameters -> TaskDetailViewModel(taskId = parameters.get(), repository = get()) }
+        viewModel { parameters -> TaskDetailViewModel(taskId = parameters.get(), repository = get(), traceManager = get()) }
     }

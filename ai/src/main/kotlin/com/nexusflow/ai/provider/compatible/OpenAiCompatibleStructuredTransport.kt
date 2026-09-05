@@ -7,10 +7,15 @@ import com.nexusflow.ai.provider.ProviderTimeoutException
 import com.nexusflow.ai.provider.ProviderUnauthorizedException
 import com.nexusflow.ai.provider.ProviderUnavailableException
 import com.nexusflow.ai.provider.StructuredModelFinishCategory
+import com.nexusflow.ai.provider.StructuredModelCapability
+import com.nexusflow.ai.provider.StructuredModelException
 import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.ai.provider.StructuredModelResult
 import com.nexusflow.ai.provider.StructuredModelResultMetadata
 import com.nexusflow.ai.provider.StructuredModelUsage
+import com.nexusflow.observability.LogFields
+import com.nexusflow.observability.StructuredLogger
+import com.nexusflow.observability.logFields
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.request.bearerAuth
@@ -29,6 +34,8 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import java.io.IOException
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 
 internal class OpenAiCompatibleStructuredTransport(
     private val client: HttpClient,
@@ -37,6 +44,7 @@ internal class OpenAiCompatibleStructuredTransport(
     private val model: String,
     baseUrl: String,
     private val mode: OpenAiCompatibleMode,
+    private val logger: StructuredLogger? = null,
     private val json: Json = Json {
         ignoreUnknownKeys = true
         explicitNulls = false
@@ -52,6 +60,12 @@ internal class OpenAiCompatibleStructuredTransport(
     }
 
     suspend fun generate(request: StructuredModelRequest): StructuredModelResult {
+        val started = TimeSource.Monotonic.markNow()
+        logger?.info(
+            component = AI_COMPONENT,
+            event = "ai_request_started",
+            fields = request.safeLogFields(),
+        )
         val response = try {
             client.post(endpointUrl) {
                 bearerAuth(apiKey)
@@ -61,28 +75,94 @@ internal class OpenAiCompatibleStructuredTransport(
         } catch (error: CancellationException) {
             throw error
         } catch (error: HttpRequestTimeoutException) {
-            throw ProviderTimeoutException(error)
+            throw ProviderTimeoutException(error).also { failure -> logFailure(request, started, failure) }
         } catch (error: IOException) {
-            throw ProviderUnavailableException(error)
+            throw ProviderUnavailableException(error).also { failure -> logFailure(request, started, failure) }
         }
 
         when {
-            response.status == HttpStatusCode.RequestTimeout -> throw ProviderTimeoutException()
+            response.status == HttpStatusCode.RequestTimeout ->
+                throw ProviderTimeoutException().also { failure -> logFailure(request, started, failure) }
             response.status == HttpStatusCode.Unauthorized ||
-                response.status == HttpStatusCode.Forbidden -> throw ProviderUnauthorizedException()
-            response.status.value == 429 -> throw ProviderRateLimitedException()
-            response.status.value >= 500 -> throw ProviderUnavailableException()
-            response.status.value !in 200..299 -> throw ProviderUnavailableException()
+                response.status == HttpStatusCode.Forbidden ->
+                throw ProviderUnauthorizedException().also { failure -> logFailure(request, started, failure) }
+            response.status.value == 429 ->
+                throw ProviderRateLimitedException().also { failure -> logFailure(request, started, failure) }
+            response.status.value >= 500 ->
+                throw ProviderUnavailableException().also { failure -> logFailure(request, started, failure) }
+            response.status.value !in 200..299 ->
+                throw ProviderUnavailableException().also { failure -> logFailure(request, started, failure) }
         }
 
         val body = response.bodyAsText()
-        return when (mode) {
-            OpenAiCompatibleMode.Responses -> decodeResponses(body, request)
-            OpenAiCompatibleMode.ChatJsonSchema,
-            OpenAiCompatibleMode.ChatJsonObject,
-            -> decodeChatCompletion(body, request)
+        return try {
+            when (mode) {
+                OpenAiCompatibleMode.Responses -> decodeResponses(body, request)
+                OpenAiCompatibleMode.ChatJsonSchema,
+                OpenAiCompatibleMode.ChatJsonObject,
+                -> decodeChatCompletion(body, request)
+            }.also { result ->
+                logger?.info(
+                    component = AI_COMPONENT,
+                    event = "ai_request_finished",
+                    fields = request.safeLogFields(started, result),
+                )
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            logFailure(request, started, error)
+            throw error
         }
     }
+
+    private fun logFailure(
+        request: StructuredModelRequest,
+        started: TimeMark,
+        failure: Throwable,
+    ) {
+        logger?.error(
+            component = AI_COMPONENT,
+            event = "ai_request_failed",
+            fields =
+                request.safeLogFields(started).withFailureCategory(
+                    when (failure) {
+                        is StructuredModelException -> failure.category.name.toSnakeCase()
+                        else -> failure::class.simpleName?.toSnakeCase() ?: "unknown"
+                    },
+                ),
+            cause = failure,
+        )
+    }
+
+    private fun StructuredModelRequest.safeLogFields(
+        started: TimeMark? = null,
+        result: StructuredModelResult? = null,
+    ): LogFields =
+        logFields {
+            "operation" value metadata.capability.toLogOperation()
+            "provider" value provider
+            "model" value model
+            "attempt" value metadata.attemptNumber
+            "prompt_version" value metadata.promptVersion
+            "available_context_definition_count" value metadata.diagnostics.availableContextDefinitionCount
+            "selected_context_key_count" value metadata.diagnostics.selectedContextKeyCount
+            "resolved_context_block_count" value metadata.diagnostics.resolvedContextBlockCount
+            "included_context_block_count" value metadata.diagnostics.includedContextBlockCount
+            "omitted_context_block_count" value metadata.diagnostics.omittedContextBlockCount
+            "optional_context_serialized_chars" value metadata.diagnostics.optionalContextSerializedChars
+            "context_definitions_serialized_chars" value metadata.diagnostics.contextDefinitionsSerializedChars
+            "full_user_payload_serialized_chars" value metadata.diagnostics.fullUserPayloadSerializedChars
+            started?.let { "duration_ms" value it.elapsedNow().inWholeMilliseconds }
+            result?.metadata?.usage?.inputTokens?.let { "input_tokens" value it }
+            result?.metadata?.usage?.outputTokens?.let { "output_tokens" value it }
+            result?.metadata?.usage?.totalTokens?.let { "total_tokens" value it }
+            result?.metadata?.finishCategory?.let { "finish_category" value it.name.toSnakeCase() }
+            result?.metadata?.providerRequestId?.let { "provider_request_id" value it }
+        }
+
+    private fun LogFields.withFailureCategory(failureCategory: String): LogFields =
+        LogFields.from(values + ("failure_category" to failureCategory))
 
     private fun decodeResponses(
         body: String,
@@ -153,6 +233,23 @@ internal enum class OpenAiCompatibleMode(val path: String) {
     ChatJsonSchema("chat/completions"),
     ChatJsonObject("chat/completions"),
 }
+
+private fun String.toSnakeCase(): String =
+    buildString(length + 4) {
+        this@toSnakeCase.forEachIndexed { index, character ->
+            if (character.isUpperCase() && index > 0) append('_')
+            append(character.lowercaseChar())
+        }
+    }
+
+private fun StructuredModelCapability.toLogOperation(): String =
+    when (this) {
+        StructuredModelCapability.UserMessageUnderstanding -> "understanding"
+        StructuredModelCapability.PlanComposition -> "plan_compose"
+        StructuredModelCapability.PlanExplanation -> "plan_explain"
+    }
+
+private const val AI_COMPONENT = "ai"
 
 private fun OpenAiCompatibleMode.body(
     model: String,

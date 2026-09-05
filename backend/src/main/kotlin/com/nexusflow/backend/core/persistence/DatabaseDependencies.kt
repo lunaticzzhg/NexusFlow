@@ -1,6 +1,8 @@
 package com.nexusflow.backend.core.persistence
 
 import com.nexusflow.backend.core.config.BackendRuntimeConfig
+import com.nexusflow.backend.core.observability.backendStructuredLogger
+import com.nexusflow.observability.StructuredLogger
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import io.ktor.server.application.Application
@@ -10,6 +12,9 @@ import org.flywaydb.core.Flyway
 fun Application.configureDatabaseDependencies() {
     dependencies {
         provide { BackendRuntimeConfig.fromEnvironment() }
+        provide<StructuredLogger> {
+            backendStructuredLogger(resolve<BackendRuntimeConfig>().logging)
+        }
         provide<HikariDataSource> {
             resolve<BackendRuntimeConfig>().dataSource()
         }

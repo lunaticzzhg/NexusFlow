@@ -2,10 +2,14 @@ package com.nexusflow.app.core.network
 
 import com.nexusflow.app.core.error.AppException
 import com.nexusflow.app.core.observability.AppLogger
+import com.nexusflow.app.core.observability.AppTraceManager
 import com.nexusflow.app.core.observability.LogFields
 import com.nexusflow.app.core.observability.LogLevel
 import com.nexusflow.app.core.observability.LogTag
 import com.nexusflow.contracts.api.KResponse
+import com.nexusflow.observability.TraceHeaders
+import com.nexusflow.observability.TraceId
+import com.nexusflow.observability.TraceIdGenerator
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
@@ -41,14 +45,7 @@ class NetworkCallTest {
                 }
 
             assertIs<AppException.Rejected>(result.exceptionOrNull())
-            assertEquals(
-                mapOf(
-                    "api_path" to "/v1/auth/google/exchange",
-                    "code" to "422",
-                    "message" to "Invalid credential",
-                ),
-                logger.entries.single().fields,
-            )
+            assertEquals(emptyList(), logger.entries)
         }
 
     @Test
@@ -79,6 +76,25 @@ class NetworkCallTest {
         }
 
     @Test
+    fun `records invalid response logging without remote message`() =
+        runBlocking {
+            val logger = RecordingApiLogger()
+
+            val result = ApiCallExecutor(logger).execute<String>(ENDPOINT) { KResponse(code = 200) }
+
+            assertIs<AppException.InvalidResponse>(result.exceptionOrNull())
+            val entry = logger.entries.single()
+            assertEquals("api_response_invalid", entry.event)
+            assertEquals(
+                mapOf(
+                    "api_path" to "/v1/auth/google/exchange",
+                    "error_type" to "missing_data",
+                ),
+                entry.fields,
+            )
+        }
+
+    @Test
     fun `protected first party requests inject bearer token`() =
         runBlocking {
             val session = RecordingFirstPartyApiSession(currentToken = "access-token")
@@ -95,6 +111,65 @@ class NetworkCallTest {
 
             assertEquals("""{"code":200}""", client.get("$API_BASE_URL/v1/tasks").bodyAsText())
             assertEquals(listOf<String?>("Bearer access-token"), seenAuthorization)
+            client.close()
+        }
+
+    @Test
+    fun `first party requests inject trace id`() =
+        runBlocking {
+            val seenTraceIds = mutableListOf<String?>()
+            val logger = RecordingApiLogger()
+            val client =
+                testClient(
+                    session = null,
+                    logger = logger,
+                    engine =
+                        MockEngine { request ->
+                            seenTraceIds += request.headers[TraceHeaders.TraceId]
+                            jsonResponse("""{"code":200}""")
+                        },
+                )
+
+            assertEquals("""{"code":200}""", client.get("$API_BASE_URL/v1/tasks").bodyAsText())
+            assertEquals(listOf<String?>(TRACE_ID), seenTraceIds)
+            assertEquals("http_request_started", logger.entries.first().event)
+            assertEquals("http_request_finished", logger.entries.last().event)
+            client.close()
+        }
+
+    @Test
+    fun `first party lifecycle logs do not include dynamic path identifiers`() =
+        runBlocking {
+            val logger = RecordingApiLogger()
+            val client =
+                testClient(
+                    session = null,
+                    logger = logger,
+                    engine = MockEngine { jsonResponse("""{"code":200}""") },
+                )
+
+            client.get("$API_BASE_URL/v1/tasks/80bbf3577b34da6a/messages").bodyAsText()
+
+            assertEquals("/v1/tasks/{id}/messages", logger.entries.first().fields["http_path"])
+            client.close()
+        }
+
+    @Test
+    fun `third party requests do not receive trace header`() =
+        runBlocking {
+            val seenTraceIds = mutableListOf<String?>()
+            val client =
+                testClient(
+                    session = null,
+                    engine =
+                        MockEngine { request ->
+                            seenTraceIds += request.headers[TraceHeaders.TraceId]
+                            jsonResponse("""{"ok":true}""")
+                        },
+                )
+
+            client.get("https://uploads.example/object").bodyAsText()
+            assertEquals(listOf<String?>(null), seenTraceIds)
             client.close()
         }
 
@@ -125,6 +200,67 @@ class NetworkCallTest {
             assertEquals(listOf<String?>("Bearer old-token", "Bearer new-token"), seenAuthorization)
             assertEquals(listOf("old-token"), session.refreshRequests)
             assertEquals(emptyList(), session.clearRequests)
+            client.close()
+        }
+
+    @Test
+    fun `401 replay preserves the original trace id`() =
+        runBlocking {
+            val session =
+                RecordingFirstPartyApiSession(
+                    currentToken = "old-token",
+                    refreshResult = FirstPartySessionRefresh.TokenAvailable("new-token"),
+                )
+            val seenTraceIds = mutableListOf<String?>()
+            val client =
+                testClient(
+                    session = session,
+                    engine =
+                        MockEngine { request ->
+                            seenTraceIds += request.headers[TraceHeaders.TraceId]
+                            if (seenTraceIds.size == 1) {
+                                jsonResponse("""{"code":401}""", HttpStatusCode.Unauthorized)
+                            } else {
+                                jsonResponse("""{"code":200}""")
+                            }
+                        },
+                )
+
+            assertEquals("""{"code":200}""", client.get("$API_BASE_URL/v1/tasks").bodyAsText())
+            assertEquals(listOf<String?>(TRACE_ID, TRACE_ID), seenTraceIds)
+            client.close()
+        }
+
+    @Test
+    fun `401 replay records replayed lifecycle events`() =
+        runBlocking {
+            val logger = RecordingApiLogger()
+            val session =
+                RecordingFirstPartyApiSession(
+                    currentToken = "old-token",
+                    refreshResult = FirstPartySessionRefresh.TokenAvailable("new-token"),
+                )
+            val client =
+                testClient(
+                    session = session,
+                    logger = logger,
+                    engine =
+                        MockEngine { request ->
+                            if (request.headers[HttpHeaders.Authorization] == "Bearer old-token") {
+                                jsonResponse("""{"code":401}""", HttpStatusCode.Unauthorized)
+                            } else {
+                                jsonResponse("""{"code":200}""")
+                            }
+                        },
+                )
+
+            client.get("$API_BASE_URL/v1/tasks").bodyAsText()
+
+            assertEquals(
+                listOf("http_request_started", "http_request_replayed", "http_request_finished"),
+                logger.entries.map { it.event },
+            )
+            assertEquals("true", logger.entries.last().fields["replayed"])
             client.close()
         }
 
@@ -247,17 +383,28 @@ class NetworkCallTest {
 
 private const val ENDPOINT = "v1/auth/google/exchange"
 private const val API_BASE_URL = "https://api.example"
+private const val TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736"
 
 private fun executor(): ApiCallExecutor = ApiCallExecutor(RecordingApiLogger())
 
 private fun testClient(
     session: FirstPartyApiSession?,
     engine: MockEngine,
+    logger: AppLogger? = null,
+    traceManager: AppTraceManager? = null,
+    traceIdGenerator: TraceIdGenerator = FixedTraceIdGenerator,
 ): HttpClient =
     HttpClient(engine) {
         configureAppHttpClient()
     }.also { client ->
-        client.installFirstPartyHttpInterceptors(API_BASE_URL) { session }
+        client.installFirstPartyHttpInterceptors(
+            apiBaseUrl = API_BASE_URL,
+            logger = logger,
+            traceManager = traceManager,
+            traceIdGenerator = traceIdGenerator,
+        ) {
+            session
+        }
     }
 
 private fun MockRequestHandleScope.jsonResponse(
@@ -283,6 +430,10 @@ private class RecordingFirstPartyApiSession(
         clearRequests += accessToken
         return true
     }
+}
+
+private object FixedTraceIdGenerator : TraceIdGenerator {
+    override fun newTraceId(): TraceId = TraceId.requireValid(TRACE_ID)
 }
 
 private class RecordingApiLogger : AppLogger {

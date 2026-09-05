@@ -2,9 +2,9 @@ package com.nexusflow.backend.core.config
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 
 class BackendRuntimeConfigTest {
     @Test
@@ -12,6 +12,10 @@ class BackendRuntimeConfigTest {
         val config = BackendRuntimeConfig.fromEnvironment(baseEnvironment())
 
         assertNull(config.ai)
+        assertEquals(RuntimeEnvironment.Local, config.logging.environment)
+        assertEquals(com.nexusflow.observability.LogLevel.INFO, config.logging.level)
+        assertEquals(LogFormat.Pretty, config.logging.format)
+        assertEquals("nexusflow-backend", config.logging.serviceName)
         assertEquals(false, config.devLoginEnabled)
         assertNull(config.devLoginEmail)
         assertNull(config.devLoginPassword)
@@ -71,6 +75,35 @@ class BackendRuntimeConfigTest {
                         "AI_MODEL" to "gpt-test",
                     ),
             )
+        }
+    }
+
+    @Test
+    fun `logging settings can be configured for production json output`() {
+        val config =
+            BackendRuntimeConfig.fromEnvironment(
+                baseEnvironment() +
+                    mapOf(
+                        "APP_ENV" to "prod",
+                        "LOG_LEVEL" to "warn",
+                        "LOG_FORMAT" to "json",
+                        "SERVICE_NAME" to "nexusflow-backend",
+                    ),
+            )
+
+        assertEquals(RuntimeEnvironment.Prod, config.logging.environment)
+        assertEquals(com.nexusflow.observability.LogLevel.WARN, config.logging.level)
+        assertEquals(LogFormat.Json, config.logging.format)
+        assertEquals("nexusflow-backend", config.logging.serviceName)
+    }
+
+    @Test
+    fun `logging settings reject unknown values`() {
+        assertFailsWith<IllegalStateException> {
+            BackendRuntimeConfig.fromEnvironment(baseEnvironment() + mapOf("LOG_FORMAT" to "xml"))
+        }
+        assertFailsWith<IllegalStateException> {
+            BackendRuntimeConfig.fromEnvironment(baseEnvironment() + mapOf("APP_ENV" to "qa"))
         }
     }
 

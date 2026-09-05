@@ -2,6 +2,8 @@
 
 package com.nexusflow.app.feature.task.presentation
 
+import com.nexusflow.app.core.error.AppException
+import com.nexusflow.app.core.observability.AppTraceManager
 import com.nexusflow.app.feature.task.data.TaskFixtures
 import com.nexusflow.app.feature.task.domain.CreateTaskCommand
 import com.nexusflow.app.feature.task.domain.RemoveRequirementCommand
@@ -23,6 +25,7 @@ import com.nexusflow.app.feature.task.presentation.home.TaskHomeAction
 import com.nexusflow.app.feature.task.presentation.home.TaskHomeContent
 import com.nexusflow.app.feature.task.presentation.home.TaskHomeEffect
 import com.nexusflow.app.feature.task.presentation.home.TaskHomeViewModel
+import com.nexusflow.observability.TraceId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -141,6 +144,52 @@ class TaskViewModelTest {
             val content = assertIs<TaskDetailContent.Success>(viewModel.state.value.content)
             assertEquals(emptyList(), content.detail.requirements)
         }
+
+    @Test
+    fun `detail send retry starts a new operation while reusing client message id`() =
+        viewModelTest {
+            val repository =
+                RecordingTaskRepository(
+                    detailResults = listOf(Result.success(TaskFixtures.detail)),
+                    sendResults =
+                        listOf(
+                            Result.failure(AppException.Unavailable()),
+                            Result.success(TaskFixtures.detail.copy(revision = 2)),
+                        ),
+                )
+            val traceManager = RecordingTraceManager()
+            val viewModel =
+                TaskDetailViewModel(
+                    taskId = TaskFixtures.detail.id,
+                    repository = repository,
+                    traceManager = traceManager,
+                    clientMessageIdFactory = { "message-1" },
+                    timeZoneIdProvider = { "Asia/Shanghai" },
+                )
+
+            viewModel.onAction(TaskDetailAction.Load)
+            advanceUntilIdle()
+            viewModel.onAction(TaskDetailAction.DraftChanged("Keep it nearby"))
+            viewModel.onAction(TaskDetailAction.SendMessage)
+            advanceUntilIdle()
+            viewModel.onAction(TaskDetailAction.RetryMessage)
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(
+                    SendTaskMessageCommand(TaskFixtures.detail.id, "message-1", "Keep it nearby", "Asia/Shanghai"),
+                    SendTaskMessageCommand(TaskFixtures.detail.id, "message-1", "Keep it nearby", "Asia/Shanghai"),
+                ),
+                repository.sendCommands,
+            )
+            assertEquals(
+                listOf(
+                    TraceOperation("task_message_send", "user"),
+                    TraceOperation("task_message_send", "retry"),
+                ),
+                traceManager.operations,
+            )
+        }
 }
 
 private fun viewModelTest(block: suspend kotlinx.coroutines.test.TestScope.() -> Unit) =
@@ -205,3 +254,38 @@ private class RecordingTaskRepository(
         return selectQueue.removeFirst()
     }
 }
+
+private class RecordingTraceManager : AppTraceManager {
+    val operations = mutableListOf<TraceOperation>()
+
+    override fun currentTraceId(): TraceId? = null
+
+    override suspend fun <T> withNewTrace(
+        operation: String,
+        trigger: String?,
+        block: suspend () -> T,
+    ): T {
+        operations += TraceOperation(operation, trigger)
+        return block()
+    }
+
+    override suspend fun <T> withTrace(
+        traceId: TraceId,
+        operation: String?,
+        block: suspend () -> T,
+    ): T = block()
+
+    override suspend fun <T> withNewResultTrace(
+        operation: String,
+        trigger: String?,
+        block: suspend () -> Result<T>,
+    ): Result<T> {
+        operations += TraceOperation(operation, trigger)
+        return block()
+    }
+}
+
+private data class TraceOperation(
+    val operation: String,
+    val trigger: String?,
+)

@@ -23,6 +23,9 @@ import com.nexusflow.backend.feature.task.domain.RequirementEvidence
 import com.nexusflow.backend.feature.task.domain.RequirementKind
 import com.nexusflow.backend.feature.task.domain.RequirementStrength
 import com.nexusflow.backend.feature.task.domain.RequirementValue
+import com.nexusflow.observability.LogFields
+import com.nexusflow.observability.LogLevel
+import com.nexusflow.observability.StructuredLogger
 import com.zaxxer.hikari.HikariDataSource
 import kotlinx.coroutines.runBlocking
 import kotlin.test.AfterTest
@@ -121,6 +124,56 @@ class TaskServiceTest {
             assertEquals(firstPlan.id, changed.plans.single { it.revision == 2L }.id)
             assertNotEquals(firstPlan.id, changed.plans.single { it.revision == 3L }.id)
             assertEquals(null, changed.task.selectedPlanId)
+        }
+
+    @Test
+    fun `send message logs task understanding and planning lifecycle`() =
+        runBlocking {
+            val logger = RecordingStructuredLogger()
+            val services = createTaskServices(
+                dataSource = dataSource,
+                logger = logger,
+                understanding = ScriptedUnderstanding(
+                    {
+                        understandingOutcome(
+                            changes = listOf(activityDomainChange("movie", "movie")),
+                        )
+                    },
+                    {
+                        understandingOutcome(
+                            changes = listOf(locationChange("Futian", "Futian")),
+                        )
+                    },
+                ),
+            )
+            val created = services.taskService.createTask(taskActor(), "create-log", "Find a movie", "Asia/Shanghai")
+            logger.entries.clear()
+
+            services.taskService.sendMessage(
+                actor = taskActor(),
+                taskId = created.task.id.value.toString(),
+                clientMessageId = "message-log",
+                text = "Near Futian",
+                timeZoneId = "Asia/Shanghai",
+            )
+
+            assertEquals(
+                listOf(
+                    "task_message_started",
+                    "ai_understanding_started",
+                    "ai_understanding_finished",
+                    "planning_started",
+                    "plan_validation_finished",
+                    "planning_finished",
+                    "task_message_finished",
+                ),
+                logger.entries.map { it.event },
+            )
+            val finished = logger.entries.last()
+            assertEquals("false", finished.fields.values["replayed"])
+            assertEquals("true", finished.fields.values["planning_triggered"])
+            assertTrue(logger.renderedFields().contains("task_id="))
+            assertTrue(!logger.renderedFields().contains("Near Futian"))
         }
 
     @Test
@@ -255,13 +308,14 @@ class TaskServiceTest {
     @Test
     fun `duplicate create and message retries continue pending understanding and planning`() =
         runBlocking {
+            val logger = RecordingStructuredLogger()
             val understanding = ScriptedUnderstanding(
                 { throw InvalidStructuredOutputException("temporary bad output") },
                 { understandingOutcome(changes = listOf(activityDomainChange("movie", "movie"))) },
                 { throw InvalidStructuredOutputException("temporary bad output") },
                 { understandingOutcome(changes = listOf(locationChange("Futian", "Futian"))) },
             )
-            val services = createTaskServices(dataSource = dataSource, understanding = understanding)
+            val services = createTaskServices(dataSource = dataSource, understanding = understanding, logger = logger)
 
             assertFailsWith<TaskDependencyUnavailableException> {
                 services.taskService.createTask(taskActor(), "create-retry", "Find a movie", "Asia/Shanghai")
@@ -281,6 +335,7 @@ class TaskServiceTest {
                     "Asia/Shanghai",
                 )
             }
+            logger.entries.clear()
             val sentByRetry = services.taskService.sendMessage(
                 taskActor(),
                 createdByRetry.task.id.value.toString(),
@@ -293,5 +348,38 @@ class TaskServiceTest {
             assertEquals(3, sentByRetry.task.revision)
             assertEquals(1, sentByRetry.plans.count { it.revision == sentByRetry.task.revision })
             assertEquals(4, understanding.calls.size)
+            val replay = logger.entries.single { it.event == "task_request_replay_detected" }
+            assertEquals("task_message", replay.fields.values["operation"])
+            assertEquals("true", replay.fields.values["pending_understanding"])
+            val finished = logger.entries.last()
+            assertEquals("task_message_finished", finished.event)
+            assertEquals("true", finished.fields.values["replayed"])
         }
+}
+
+private class RecordingStructuredLogger : StructuredLogger {
+    val entries = mutableListOf<Entry>()
+
+    override fun log(
+        level: LogLevel,
+        component: String,
+        event: String,
+        fields: LogFields,
+        cause: Throwable?,
+    ) {
+        entries += Entry(level, component, event, fields, cause?.let { it::class.simpleName })
+    }
+
+    fun renderedFields(): String =
+        entries.joinToString("|") { entry ->
+            entry.fields.values.entries.joinToString("|") { (key, value) -> "$key=$value" }
+        }
+
+    data class Entry(
+        val level: LogLevel,
+        val component: String,
+        val event: String,
+        val fields: LogFields,
+        val errorType: String?,
+    )
 }

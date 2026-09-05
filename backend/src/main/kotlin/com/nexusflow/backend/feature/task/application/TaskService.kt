@@ -62,6 +62,8 @@ import com.nexusflow.backend.feature.task.domain.TaskRepository
 import com.nexusflow.backend.feature.task.domain.TenantId
 import com.nexusflow.backend.feature.task.domain.UpdateRequirementCommand
 import com.nexusflow.backend.feature.task.domain.UserId
+import com.nexusflow.observability.StructuredLogger
+import com.nexusflow.observability.logFields
 import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.Instant as ContractInstant
 import java.time.Clock
@@ -77,6 +79,7 @@ class TaskService(
     private val modelContextCatalog: ModelContextCatalog? = null,
     private val modelContextAssembler: ModelContextAssembler? = modelContextCatalog?.let(::ModelContextAssembler),
     private val logUnderstandingFailure: (TaskUnderstandingFailureEvent) -> Unit = {},
+    private val logger: StructuredLogger? = null,
     private val clock: Clock = Clock.systemUTC(),
     private val uuidFactory: () -> UUID = UUID::randomUUID,
 ) {
@@ -150,36 +153,64 @@ class TaskService(
         val trimmedText = text.requireBounded("text", MAX_MESSAGE_LENGTH)
         val normalizedTimeZoneId = timeZoneId.requireBounded("timeZoneId", MAX_TIME_ZONE_LENGTH).requireValidTimeZoneId()
         val aiRequestId = "understand-${uuidFactory()}"
+        val operationStartedAt = clock.instant()
+        logTaskMessageStarted(parsedTaskId)
 
-        val pending = when (
-            val result = repository.appendUserMessage(
-                AppendUserMessageCommand(
-                    owner = owner,
+        try {
+            val pending = when (
+                val result = repository.appendUserMessage(
+                    AppendUserMessageCommand(
+                        owner = owner,
+                        taskId = parsedTaskId,
+                        messageId = MessageId(uuidFactory()),
+                        clientMessageId = parsedClientMessageId,
+                        text = trimmedText,
+                        aiRequestId = aiRequestId,
+                        now = clock.instant(),
+                    ),
+                )
+            ) {
+                is AppendUserMessageResult.Appended -> PendingUnderstanding(result.detail, result.message, result.taskRevision)
+                is AppendUserMessageResult.Existing -> {
+                    logTaskRequestReplayDetected(
+                        taskId = parsedTaskId,
+                        pendingUnderstanding = result.detail.hasPendingUserMessage(parsedClientMessageId, trimmedText),
+                    )
+                    val detail = continueExistingRequestIfNeeded(
+                        actor = actor,
+                        owner = owner,
+                        detail = result.detail,
+                        clientMessageId = parsedClientMessageId,
+                        text = trimmedText,
+                        timeZoneId = normalizedTimeZoneId,
+                    )
+                    logTaskMessageFinished(
+                        taskId = parsedTaskId,
+                        detail = detail,
+                        replayed = true,
+                        startedAt = operationStartedAt,
+                    )
+                    return detail
+                }
+                AppendUserMessageResult.ConflictingMessage -> throw TaskConflictException()
+                AppendUserMessageResult.TaskNotFound -> throw TaskNotFoundException()
+            }
+
+            return understandAndMaybePlan(actor, owner, pending, normalizedTimeZoneId).also { detail ->
+                logTaskMessageFinished(
                     taskId = parsedTaskId,
-                    messageId = MessageId(uuidFactory()),
-                    clientMessageId = parsedClientMessageId,
-                    text = trimmedText,
-                    aiRequestId = aiRequestId,
-                    now = clock.instant(),
-                ),
-            )
-        ) {
-            is AppendUserMessageResult.Appended -> PendingUnderstanding(result.detail, result.message, result.taskRevision)
-            is AppendUserMessageResult.Existing -> {
-                return continueExistingRequestIfNeeded(
-                    actor = actor,
-                    owner = owner,
-                    detail = result.detail,
-                    clientMessageId = parsedClientMessageId,
-                    text = trimmedText,
-                    timeZoneId = normalizedTimeZoneId,
+                    detail = detail,
+                    replayed = false,
+                    startedAt = operationStartedAt,
                 )
             }
-            AppendUserMessageResult.ConflictingMessage -> throw TaskConflictException()
-            AppendUserMessageResult.TaskNotFound -> throw TaskNotFoundException()
+        } catch (cause: CancellationException) {
+            logTaskMessageFailed(parsedTaskId, operationStartedAt, "cancelled", cause)
+            throw cause
+        } catch (cause: Throwable) {
+            logTaskMessageFailed(parsedTaskId, operationStartedAt, cause.safeFailureCategory(), cause)
+            throw cause
         }
-
-        return understandAndMaybePlan(actor, owner, pending, normalizedTimeZoneId)
     }
 
     suspend fun updateRequirement(
@@ -265,6 +296,83 @@ class TaskService(
         }
     }
 
+    private fun TaskDetail.hasPendingUserMessage(
+        clientMessageId: String,
+        text: String,
+    ): Boolean =
+        messages.any { message ->
+            message.role == MessageRole.User &&
+                message.clientMessageId == clientMessageId &&
+                message.content == text &&
+                message.understoodAt == null
+        }
+
+    private fun logTaskMessageStarted(taskId: TaskId) {
+        logger?.info(
+            component = TASK_LOG_COMPONENT,
+            event = "task_message_started",
+            fields =
+                logFields {
+                    "task_id" value taskId.value.toString()
+                },
+        )
+    }
+
+    private fun logTaskRequestReplayDetected(
+        taskId: TaskId,
+        pendingUnderstanding: Boolean,
+    ) {
+        logger?.info(
+            component = TASK_LOG_COMPONENT,
+            event = "task_request_replay_detected",
+            fields =
+                logFields {
+                    "operation" value "task_message"
+                    "task_id" value taskId.value.toString()
+                    "pending_understanding" value pendingUnderstanding
+                },
+        )
+    }
+
+    private fun logTaskMessageFinished(
+        taskId: TaskId,
+        detail: TaskDetail,
+        replayed: Boolean,
+        startedAt: java.time.Instant,
+    ) {
+        logger?.info(
+            component = TASK_LOG_COMPONENT,
+            event = "task_message_finished",
+            fields =
+                logFields {
+                    "task_id" value taskId.value.toString()
+                    "task_revision" value detail.task.revision
+                    "replayed" value replayed
+                    "planning_triggered" value detail.plans.any { it.revision == detail.task.revision }
+                    "duration_ms" value startedAt.elapsedMs()
+                },
+        )
+    }
+
+    private fun logTaskMessageFailed(
+        taskId: TaskId,
+        startedAt: java.time.Instant,
+        failureCategory: String,
+        cause: Throwable,
+    ) {
+        logger?.error(
+            component = TASK_LOG_COMPONENT,
+            event = "task_message_failed",
+            fields =
+                logFields {
+                    "task_id" value taskId.value.toString()
+                    "duration_ms" value startedAt.elapsedMs()
+                    "failure_category" value failureCategory
+                },
+            cause = cause,
+        )
+    }
+
     private suspend fun understandAndMaybePlan(
         actor: ActorContext,
         owner: TaskOwner,
@@ -274,15 +382,18 @@ class TaskService(
     ): TaskDetail {
         val attemptStartedAt = clock.instant()
         pending.recordAiUnderstandingStarted(attemptStartedAt)
+        logAiUnderstandingStarted(pending)
         val capability = understanding
         if (capability == null) {
             pending.recordAiUnderstandingFailed("DependencyUnavailable", attemptStartedAt.elapsedMs())
+            logAiUnderstandingFailed(pending, "dependency_unavailable", attemptStartedAt.elapsedMs())
             throw TaskDependencyUnavailableException("Task understanding is temporarily unavailable")
         }
         val understandingModelContext = try {
             pending.understandingModelContext(actor)
         } catch (_: IllegalArgumentException) {
             pending.recordAiUnderstandingFailed("InvalidModelContext", attemptStartedAt.elapsedMs())
+            logAiUnderstandingFailed(pending, "invalid_model_context", attemptStartedAt.elapsedMs())
             throw TaskDependencyUnavailableException("Task understanding is temporarily unavailable")
         }
         val outcome = try {
@@ -296,27 +407,33 @@ class TaskService(
             throw error
         } catch (error: UserMessageUnderstandingException) {
             pending.recordAiUnderstandingFailed(error.safeFailureCategory(), attemptStartedAt.elapsedMs())
+            logAiUnderstandingFailed(pending, error.safeFailureCategory().toSnakeCase(), attemptStartedAt.elapsedMs(), error)
             throw error.toUnavailable(pending)
         }
         val selectedContextKeys = try {
             outcome.contextSelection.selectedKeys.validateSelectedContextKeys(understandingModelContext.availableDefinitions)
         } catch (error: TaskDependencyUnavailableException) {
             pending.recordAiUnderstandingFailed("InvalidAiContextSelection", attemptStartedAt.elapsedMs())
+            logAiUnderstandingFailed(pending, "invalid_ai_context_selection", attemptStartedAt.elapsedMs(), error)
             throw error
         }
         val requirements = try {
             outcome.requirementChanges.toRequirementWrites(pending.message.content)
         } catch (error: TaskDependencyUnavailableException) {
             pending.recordAiUnderstandingFailed("InvalidAiResult", attemptStartedAt.elapsedMs())
+            logAiUnderstandingFailed(pending, "invalid_ai_result", attemptStartedAt.elapsedMs(), error)
             throw error
         }
         val assistantMessage = try {
             outcome.assistantMessageWrite()
         } catch (error: TaskDependencyUnavailableException) {
             pending.recordAiUnderstandingFailed("InvalidAiResult", attemptStartedAt.elapsedMs())
+            logAiUnderstandingFailed(pending, "invalid_ai_result", attemptStartedAt.elapsedMs(), error)
             throw error
         }
-        pending.recordAiUnderstandingSucceeded(outcome.metadata, attemptStartedAt.elapsedMs())
+        val understandingLatencyMs = attemptStartedAt.elapsedMs()
+        pending.recordAiUnderstandingSucceeded(outcome.metadata, understandingLatencyMs)
+        logAiUnderstandingFinished(pending, outcome.metadata, understandingLatencyMs)
 
         val applied = when (
             val result = repository.applyUnderstanding(
@@ -351,6 +468,61 @@ class TaskService(
         } else {
             applied.detail
         }
+    }
+
+    private fun logAiUnderstandingStarted(pending: PendingUnderstanding) {
+        logger?.info(
+            component = AI_LOG_COMPONENT,
+            event = "ai_understanding_started",
+            fields =
+                logFields {
+                    "task_id" value pending.detail.task.id.value.toString()
+                    "task_revision" value pending.taskRevision
+                },
+        )
+    }
+
+    private fun logAiUnderstandingFinished(
+        pending: PendingUnderstanding,
+        metadata: com.nexusflow.ai.understanding.UnderstandingMetadata,
+        durationMs: Long,
+    ) {
+        logger?.info(
+            component = AI_LOG_COMPONENT,
+            event = "ai_understanding_finished",
+            fields =
+                logFields {
+                    "task_id" value pending.detail.task.id.value.toString()
+                    "task_revision" value pending.taskRevision
+                    "duration_ms" value durationMs
+                    "provider" value metadata.provider
+                    "model" value metadata.model
+                    "prompt_version" value metadata.promptVersion
+                    "attempt_count" value metadata.attemptCount
+                    "input_tokens" value metadata.usage?.inputTokens
+                    "output_tokens" value metadata.usage?.outputTokens
+                },
+        )
+    }
+
+    private fun logAiUnderstandingFailed(
+        pending: PendingUnderstanding,
+        failureCategory: String,
+        durationMs: Long,
+        cause: Throwable? = null,
+    ) {
+        logger?.error(
+            component = AI_LOG_COMPONENT,
+            event = "ai_understanding_failed",
+            fields =
+                logFields {
+                    "task_id" value pending.detail.task.id.value.toString()
+                    "task_revision" value pending.taskRevision
+                    "duration_ms" value durationMs
+                    "failure_category" value failureCategory
+                },
+            cause = cause,
+        )
     }
 
     private fun ActorContext.taskOwner(): TaskOwner =
@@ -842,3 +1014,16 @@ private const val MAX_MESSAGE_LENGTH = 4_000
 private const val MAX_TIME_ZONE_LENGTH = 128
 private const val MAX_NEW_CONTEXT_SELECTIONS = 6
 private const val MAX_CONTEXT_DEFINITIONS_OFFERED = 24
+private const val TASK_LOG_COMPONENT = "task"
+private const val AI_LOG_COMPONENT = "ai"
+
+private fun Throwable.safeFailureCategory(): String =
+    (this::class.simpleName ?: "Throwable").toSnakeCase()
+
+private fun String.toSnakeCase(): String =
+    buildString(length + 4) {
+        this@toSnakeCase.forEachIndexed { index, character ->
+            if (character.isUpperCase() && index > 0) append('_')
+            append(character.lowercaseChar())
+        }
+    }

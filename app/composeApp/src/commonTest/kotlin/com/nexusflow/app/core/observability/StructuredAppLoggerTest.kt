@@ -2,6 +2,8 @@ package com.nexusflow.app.core.observability
 
 import com.nexusflow.app.core.config.BuildMode
 import com.nexusflow.app.core.config.RuntimeConfig
+import com.nexusflow.observability.TraceId
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -23,10 +25,14 @@ class StructuredAppLoggerTest {
                 },
         )
 
-        assertEquals(
-            "level=DEBUG event=app_started retry_count=1 source=cold_start",
-            sink.messages.single(),
-        )
+        val message = sink.messages.single()
+        assertTrue(message.contains("level=DEBUG"))
+        assertTrue(message.contains("service=nexusflow-app"))
+        assertTrue(message.contains("component=observabilitytest"))
+        assertTrue(message.contains("environment=debug"))
+        assertTrue(message.contains("event=app_started"))
+        assertTrue(message.contains("retry_count=1"))
+        assertTrue(message.contains("source=cold_start"))
         assertEquals(LogLevel.DEBUG, sink.levels.single())
         assertEquals(TestLogTag.value, sink.tags.single().value)
     }
@@ -39,7 +45,9 @@ class StructuredAppLoggerTest {
         logger.debug(tag = TestLogTag, event = "verbose_diagnostic")
         logger.info(tag = TestLogTag, event = "app_started")
 
-        assertEquals(listOf("level=INFO event=app_started"), sink.messages)
+        assertEquals(1, sink.messages.size)
+        assertTrue(sink.messages.single().contains("level=INFO"))
+        assertTrue(sink.messages.single().contains("event=app_started"))
     }
 
     @Test
@@ -59,10 +67,12 @@ class StructuredAppLoggerTest {
                 },
         )
 
-        assertEquals(
-            "level=INFO event=network_failed step=restore\\nsession\\t1",
-            sink.messages.single(),
-        )
+        val message = sink.messages.single()
+        assertTrue(message.contains("level=INFO"))
+        assertTrue(message.contains("event=network_failed"))
+        assertTrue(message.contains("step=restore\\nsession\\t1"))
+        assertFalse(message.contains("Bearer secret"))
+        assertFalse(message.contains("must-not-appear"))
     }
 
     @Test
@@ -76,11 +86,26 @@ class StructuredAppLoggerTest {
             cause = IllegalStateException("contains user content"),
         )
 
-        assertEquals(
-            "level=ERROR event=invalid_event error_type=IllegalStateException",
-            sink.messages.single(),
-        )
+        val message = sink.messages.single()
+        assertTrue(message.contains("level=ERROR"))
+        assertTrue(message.contains("event=invalid_event"))
+        assertTrue(message.contains("error_type=IllegalStateException"))
+        assertFalse(message.contains("contains user content"))
     }
+
+    @Test
+    fun includesCurrentCoroutineTraceId() =
+        runBlocking {
+            val sink = RecordingLogSink()
+            val logger = loggerFor(BuildMode.DEBUG, sink)
+            val traceManager = DefaultAppTraceManager(logger)
+
+            traceManager.withTrace(TraceId.requireValid("4bf92f3577b34da6a3ce929d0e0e4736")) {
+                logger.info(tag = TestLogTag, event = "operation_started")
+            }
+
+            assertTrue(sink.messages.single().contains("trace_id=4bf92f3577b34da6a3ce929d0e0e4736"))
+        }
 
     @Test
     fun logFieldsSupportOnlyTheExpectedScalarTypesAndOmitNullOrEmptyStrings() {

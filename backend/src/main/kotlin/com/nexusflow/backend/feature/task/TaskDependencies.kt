@@ -19,11 +19,14 @@ import com.nexusflow.backend.feature.profile.domain.ExplicitPreferenceRepository
 import com.nexusflow.backend.feature.profile.infrastructure.JdbcExplicitPreferenceRepository
 import com.nexusflow.backend.feature.task.application.PlanningService
 import com.nexusflow.backend.feature.task.application.TaskService
+import com.nexusflow.backend.feature.task.application.TaskUnderstandingFailureEvent
 import com.nexusflow.backend.feature.task.domain.ControlledOpportunityProvider
 import com.nexusflow.backend.feature.task.domain.PlanValidator
 import com.nexusflow.backend.feature.task.domain.OpportunityProvider
 import com.nexusflow.backend.feature.task.domain.TaskRepository
 import com.nexusflow.backend.feature.task.infrastructure.JdbcTaskRepository
+import com.nexusflow.observability.StructuredLogger
+import com.nexusflow.observability.logFields
 import com.zaxxer.hikari.HikariDataSource
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
@@ -35,7 +38,6 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 
 fun Application.configureTaskDependencies() {
-    val applicationLogger = environment.log
     dependencies {
         provide<TaskRepository> {
             JdbcTaskRepository(resolve<HikariDataSource>())
@@ -70,24 +72,27 @@ fun Application.configureTaskDependencies() {
                     apiKey = ai.apiKey,
                     model = ai.model,
                     baseUrl = ai.baseUrl,
+                    logger = resolve<StructuredLogger>(),
                 )
                 AiProvider.Qwen -> QwenStructuredModelProvider(
                     client = resolve<HttpClient>(),
                     apiKey = ai.apiKey,
                     model = ai.model,
                     baseUrl = ai.baseUrl,
+                    logger = resolve<StructuredLogger>(),
                 )
                 AiProvider.DeepSeek -> DeepSeekStructuredModelProvider(
                     client = resolve<HttpClient>(),
                     apiKey = ai.apiKey,
                     model = ai.model,
                     baseUrl = ai.baseUrl,
+                    logger = resolve<StructuredLogger>(),
                 )
             }
         }
         provide<UserMessageUnderstanding?> {
             val provider = resolve<StructuredModelProvider?>() ?: return@provide null
-            StructuredUserMessageUnderstanding(provider)
+            StructuredUserMessageUnderstanding(provider, logger = resolve<StructuredLogger>())
         }
         provide<ModelContextCatalog> {
             ModelContextCatalog(
@@ -101,11 +106,11 @@ fun Application.configureTaskDependencies() {
         }
         provide<PlanComposer?> {
             val provider = resolve<StructuredModelProvider?>() ?: return@provide null
-            StructuredPlanComposer(provider)
+            StructuredPlanComposer(provider, logger = resolve<StructuredLogger>())
         }
         provide<PlanExplainer?> {
             val provider = resolve<StructuredModelProvider?>() ?: return@provide null
-            StructuredPlanExplainer(provider)
+            StructuredPlanExplainer(provider, logger = resolve<StructuredLogger>())
         }
         provide<OpportunityProvider> {
             ControlledOpportunityProvider()
@@ -121,25 +126,33 @@ fun Application.configureTaskDependencies() {
                 planComposer = resolve(),
                 planExplainer = resolve(),
                 modelContextAssembler = resolve(),
+                logger = resolve<StructuredLogger>(),
             )
         }
         provide {
+            val logger = resolve<StructuredLogger>()
             TaskService(
                 repository = resolve(),
                 planningService = resolve(),
                 understanding = resolve(),
                 modelContextCatalog = resolve(),
                 modelContextAssembler = resolve(),
-                logUnderstandingFailure = { event ->
-                    applicationLogger.warn(
-                        "Task understanding failed [taskId={}, taskRevision={}, aiRequestId={}, failureType={}]",
-                        event.taskId,
-                        event.taskRevision,
-                        event.aiRequestId,
-                        event.failureType,
-                    )
-                },
+                logUnderstandingFailure = { event -> logger.logTaskUnderstandingFailure(event) },
+                logger = logger,
             )
         }
     }
+}
+
+internal fun StructuredLogger.logTaskUnderstandingFailure(event: TaskUnderstandingFailureEvent) {
+    warn(
+        component = "task",
+        event = "task_understanding_failed",
+        fields = logFields {
+            "task_id" value event.taskId
+            "task_revision" value event.taskRevision
+            "ai_request_id" value event.aiRequestId
+            "failure_type" value event.failureType
+        },
+    )
 }

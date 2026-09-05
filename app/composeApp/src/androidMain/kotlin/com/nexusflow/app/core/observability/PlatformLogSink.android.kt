@@ -13,6 +13,7 @@ private object AndroidLogSink : PlatformLogSink {
         when (level) {
             LogLevel.DEBUG -> Log.d(tag.value, message)
             LogLevel.INFO -> Log.i(tag.value, message)
+            LogLevel.WARN -> Log.w(tag.value, message)
             LogLevel.ERROR -> Log.e(tag.value, message)
         }
     }

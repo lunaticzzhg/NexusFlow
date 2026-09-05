@@ -9,6 +9,7 @@ version = "0.1.0-SNAPSHOT"
 kotlin { jvmToolchain(17) }
 
 dependencies {
+    implementation(project(":observability"))
     implementation(libs.kotlinx.datetime)
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.cio)
