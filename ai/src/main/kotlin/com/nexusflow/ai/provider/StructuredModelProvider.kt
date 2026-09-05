@@ -1,5 +1,8 @@
 package com.nexusflow.ai.provider
 
+import com.nexusflow.contracts.backendai.common.StructuredModelCapability
+import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
+import com.nexusflow.contracts.backendai.common.StructuredModelUsage
 import kotlinx.serialization.json.JsonObject
 
 fun interface StructuredModelProvider {
@@ -27,34 +30,6 @@ data class StructuredModelRequestMetadata(
     val diagnostics: StructuredModelRequestDiagnostics = StructuredModelRequestDiagnostics(),
 )
 
-enum class StructuredModelCapability {
-    UserMessageUnderstanding,
-    PlanComposition,
-    PlanExplanation,
-}
-
-data class StructuredModelRequestDiagnostics(
-    val availableContextDefinitionCount: Int = 0,
-    val selectedContextKeyCount: Int = 0,
-    val resolvedContextBlockCount: Int = 0,
-    val includedContextBlockCount: Int = 0,
-    val omittedContextBlockCount: Int = 0,
-    val optionalContextSerializedChars: Int = 0,
-    val contextDefinitionsSerializedChars: Int = 0,
-    val fullUserPayloadSerializedChars: Int = 0,
-) {
-    init {
-        require(availableContextDefinitionCount >= 0) { "availableContextDefinitionCount must be non-negative" }
-        require(selectedContextKeyCount >= 0) { "selectedContextKeyCount must be non-negative" }
-        require(resolvedContextBlockCount >= 0) { "resolvedContextBlockCount must be non-negative" }
-        require(includedContextBlockCount >= 0) { "includedContextBlockCount must be non-negative" }
-        require(omittedContextBlockCount >= 0) { "omittedContextBlockCount must be non-negative" }
-        require(optionalContextSerializedChars >= 0) { "optionalContextSerializedChars must be non-negative" }
-        require(contextDefinitionsSerializedChars >= 0) { "contextDefinitionsSerializedChars must be non-negative" }
-        require(fullUserPayloadSerializedChars >= 0) { "fullUserPayloadSerializedChars must be non-negative" }
-    }
-}
-
 data class StructuredModelResult(
     val outputText: String,
     val metadata: StructuredModelResultMetadata,
@@ -68,12 +43,6 @@ data class StructuredModelResultMetadata(
     val usage: StructuredModelUsage? = null,
     val finishCategory: StructuredModelFinishCategory = StructuredModelFinishCategory.Complete,
     val requestDiagnostics: StructuredModelRequestDiagnostics = StructuredModelRequestDiagnostics(),
-)
-
-data class StructuredModelUsage(
-    val inputTokens: Int?,
-    val outputTokens: Int?,
-    val totalTokens: Int?,
 )
 
 enum class StructuredModelFinishCategory {

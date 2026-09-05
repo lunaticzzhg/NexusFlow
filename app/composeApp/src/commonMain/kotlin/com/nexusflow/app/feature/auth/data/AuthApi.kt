@@ -1,12 +1,12 @@
 package com.nexusflow.app.feature.auth.data
 
 import com.nexusflow.app.core.network.ApiCallExecutor
-import com.nexusflow.contracts.api.AuthSessionResponse
-import com.nexusflow.contracts.api.DevLoginRequest
-import com.nexusflow.contracts.api.GoogleExchangeRequest
-import com.nexusflow.contracts.api.KResponse
-import com.nexusflow.contracts.api.LogoutRequest
-import com.nexusflow.contracts.api.RefreshSessionRequest
+import com.nexusflow.contracts.appbackend.auth.AuthSessionResponse
+import com.nexusflow.contracts.appbackend.auth.DevLoginRequest
+import com.nexusflow.contracts.appbackend.auth.GoogleExchangeRequest
+import com.nexusflow.contracts.appbackend.auth.LogoutRequest
+import com.nexusflow.contracts.appbackend.auth.RefreshSessionRequest
+import com.nexusflow.contracts.appbackend.common.KResponse
 import de.jensklingenberg.ktorfit.http.Body
 import de.jensklingenberg.ktorfit.http.Headers
 import de.jensklingenberg.ktorfit.http.POST

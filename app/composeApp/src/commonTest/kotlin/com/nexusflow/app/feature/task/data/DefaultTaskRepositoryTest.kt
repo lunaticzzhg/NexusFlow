@@ -14,35 +14,35 @@ import com.nexusflow.app.feature.task.domain.RequirementValue
 import com.nexusflow.app.feature.task.domain.SelectPlanCommand
 import com.nexusflow.app.feature.task.domain.TaskId
 import com.nexusflow.app.feature.task.domain.UpdateRequirementCommand
-import com.nexusflow.contracts.api.CreateTaskRequest
-import com.nexusflow.contracts.api.KResponse
-import com.nexusflow.contracts.api.MessageRole
-import com.nexusflow.contracts.api.PlanDirection
-import com.nexusflow.contracts.api.PlanEstimatedCostResponse
-import com.nexusflow.contracts.api.PlanResponse
-import com.nexusflow.contracts.api.PlanSourceRefResponse
-import com.nexusflow.contracts.api.PlanTimelineItemResponse
-import com.nexusflow.contracts.api.PlanningStatus
-import com.nexusflow.contracts.api.PlanningStatusResponse
-import com.nexusflow.contracts.api.RequirementEvaluationResponse
-import com.nexusflow.contracts.api.RequirementEvaluationResult
-import com.nexusflow.contracts.api.RequirementResponse
-import com.nexusflow.contracts.api.RequirementSource
-import com.nexusflow.contracts.api.RequirementSummaryResponse
-import com.nexusflow.contracts.api.RequirementValueResponse
-import com.nexusflow.contracts.api.SendTaskMessageRequest
-import com.nexusflow.contracts.api.TaskDetailResponse
-import com.nexusflow.contracts.api.TaskMessageResponse
-import com.nexusflow.contracts.api.TaskResponse
-import com.nexusflow.contracts.api.TaskSummaryResponse
-import com.nexusflow.contracts.api.UpdateRequirementRequest
+import com.nexusflow.contracts.appbackend.common.KResponse
+import com.nexusflow.contracts.appbackend.plan.PlanDirection
+import com.nexusflow.contracts.appbackend.plan.PlanEstimatedCostResponse
+import com.nexusflow.contracts.appbackend.plan.PlanResponse
+import com.nexusflow.contracts.appbackend.plan.PlanSourceRefResponse
+import com.nexusflow.contracts.appbackend.plan.PlanTimelineItemResponse
+import com.nexusflow.contracts.appbackend.plan.RequirementEvaluationResponse
+import com.nexusflow.contracts.appbackend.plan.RequirementEvaluationResult
+import com.nexusflow.contracts.appbackend.task.CreateTaskRequest
+import com.nexusflow.contracts.appbackend.task.MessageRole
+import com.nexusflow.contracts.appbackend.task.PlanningStatus
+import com.nexusflow.contracts.appbackend.task.PlanningStatusResponse
+import com.nexusflow.contracts.appbackend.task.RequirementResponse
+import com.nexusflow.contracts.appbackend.task.RequirementSource
+import com.nexusflow.contracts.appbackend.task.RequirementSummaryResponse
+import com.nexusflow.contracts.appbackend.task.RequirementValueResponse
+import com.nexusflow.contracts.appbackend.task.SendTaskMessageRequest
+import com.nexusflow.contracts.appbackend.task.TaskDetailResponse
+import com.nexusflow.contracts.appbackend.task.TaskMessageResponse
+import com.nexusflow.contracts.appbackend.task.TaskResponse
+import com.nexusflow.contracts.appbackend.task.TaskSummaryResponse
+import com.nexusflow.contracts.appbackend.task.UpdateRequirementRequest
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
-import com.nexusflow.contracts.api.RequirementKind as WireRequirementKind
-import com.nexusflow.contracts.api.RequirementStrength as WireRequirementStrength
+import com.nexusflow.contracts.appbackend.task.RequirementKind as WireRequirementKind
+import com.nexusflow.contracts.appbackend.task.RequirementStrength as WireRequirementStrength
 
 class DefaultTaskRepositoryTest {
     @Test

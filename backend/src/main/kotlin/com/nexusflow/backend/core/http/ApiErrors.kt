@@ -1,6 +1,6 @@
 package com.nexusflow.backend.core.http
 
-import com.nexusflow.contracts.api.KResponse
+import com.nexusflow.contracts.appbackend.common.KResponse
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.response.respond

@@ -1,6 +1,6 @@
 package com.nexusflow.ai.planner
 
-import com.nexusflow.ai.context.ModelContextBlockPayload
+import com.nexusflow.contracts.backendai.common.ModelContextBlockPayload
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable

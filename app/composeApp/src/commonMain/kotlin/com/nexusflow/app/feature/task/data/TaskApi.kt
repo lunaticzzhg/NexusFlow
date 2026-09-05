@@ -1,12 +1,12 @@
 package com.nexusflow.app.feature.task.data
 
 import com.nexusflow.app.core.network.ApiCallExecutor
-import com.nexusflow.contracts.api.CreateTaskRequest
-import com.nexusflow.contracts.api.KResponse
-import com.nexusflow.contracts.api.SendTaskMessageRequest
-import com.nexusflow.contracts.api.TaskDetailResponse
-import com.nexusflow.contracts.api.TaskSummaryResponse
-import com.nexusflow.contracts.api.UpdateRequirementRequest
+import com.nexusflow.contracts.appbackend.common.KResponse
+import com.nexusflow.contracts.appbackend.task.CreateTaskRequest
+import com.nexusflow.contracts.appbackend.task.SendTaskMessageRequest
+import com.nexusflow.contracts.appbackend.task.TaskDetailResponse
+import com.nexusflow.contracts.appbackend.task.TaskSummaryResponse
+import com.nexusflow.contracts.appbackend.task.UpdateRequirementRequest
 import de.jensklingenberg.ktorfit.http.Body
 import de.jensklingenberg.ktorfit.http.DELETE
 import de.jensklingenberg.ktorfit.http.GET

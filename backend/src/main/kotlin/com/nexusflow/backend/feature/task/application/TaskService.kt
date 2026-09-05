@@ -1,22 +1,22 @@
 package com.nexusflow.backend.feature.task.application
 
-import com.nexusflow.ai.context.ModelContextBlockPayload as AiModelContextBlockPayload
-import com.nexusflow.ai.context.ModelContextTrustPayload as AiModelContextTrustPayload
-import com.nexusflow.ai.provider.StructuredModelCapability
-import com.nexusflow.ai.provider.StructuredModelRequestDiagnostics
-import com.nexusflow.ai.provider.StructuredModelUsage
-import com.nexusflow.ai.understanding.ActivityModeValue as AiActivityModeValue
-import com.nexusflow.ai.understanding.ClarificationReasonCategory as AiClarificationReasonCategory
-import com.nexusflow.ai.understanding.CommutePreferenceValue as AiCommutePreferenceValue
-import com.nexusflow.ai.understanding.CurrentRequirement as AiCurrentRequirement
-import com.nexusflow.ai.understanding.InvalidStructuredOutputException as AiInvalidStructuredOutputException
-import com.nexusflow.ai.understanding.ProposedRequirementChange as AiProposedRequirementChange
-import com.nexusflow.ai.understanding.RequirementKind as AiRequirementKind
-import com.nexusflow.ai.understanding.RequirementStrength as AiRequirementStrength
-import com.nexusflow.ai.understanding.RequirementValue as AiRequirementValue
-import com.nexusflow.ai.understanding.UnderstandingContext as AiUnderstandingContext
-import com.nexusflow.ai.understanding.UserMessageUnderstanding
-import com.nexusflow.ai.understanding.UserMessageUnderstandingException
+import com.nexusflow.contracts.backendai.common.ModelContextBlockPayload as AiModelContextBlockPayload
+import com.nexusflow.contracts.backendai.common.ModelContextTrustPayload as AiModelContextTrustPayload
+import com.nexusflow.contracts.backendai.common.AiCapabilityException
+import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException as AiInvalidCapabilityResultException
+import com.nexusflow.contracts.backendai.common.StructuredModelCapability
+import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
+import com.nexusflow.contracts.backendai.common.StructuredModelUsage
+import com.nexusflow.contracts.backendai.understanding.ActivityModeValue as AiActivityModeValue
+import com.nexusflow.contracts.backendai.understanding.ClarificationReasonCategory as AiClarificationReasonCategory
+import com.nexusflow.contracts.backendai.understanding.CommutePreferenceValue as AiCommutePreferenceValue
+import com.nexusflow.contracts.backendai.understanding.CurrentRequirement as AiCurrentRequirement
+import com.nexusflow.contracts.backendai.understanding.RequirementChangeProposal as AiRequirementChangeProposal
+import com.nexusflow.contracts.backendai.understanding.RequirementKind as AiRequirementKind
+import com.nexusflow.contracts.backendai.understanding.RequirementStrength as AiRequirementStrength
+import com.nexusflow.contracts.backendai.understanding.RequirementValue as AiRequirementValue
+import com.nexusflow.contracts.backendai.understanding.UnderstandMessageRequest as AiUnderstandMessageRequest
+import com.nexusflow.contracts.backendai.understanding.UserMessageUnderstanding
 import com.nexusflow.backend.core.aicontext.ModelContextAllowance
 import com.nexusflow.backend.core.aicontext.ModelContextAssemblyDiagnostics
 import com.nexusflow.backend.core.aicontext.ModelContextAssembler
@@ -438,7 +438,7 @@ class TaskService(
             )
         } catch (error: CancellationException) {
             throw error
-        } catch (error: UserMessageUnderstandingException) {
+        } catch (error: AiCapabilityException) {
             pending.recordAiUnderstandingFailed(error.safeFailureCategory(), attemptStartedAt.elapsedMs())
             logAiUnderstandingFailed(
                 pending = pending,
@@ -526,7 +526,7 @@ class TaskService(
 
     private fun logAiUnderstandingFinished(
         pending: PendingUnderstanding,
-        metadata: com.nexusflow.ai.understanding.UnderstandingMetadata,
+        metadata: com.nexusflow.contracts.backendai.understanding.UnderstandingMetadata,
         durationMs: Long,
     ) {
         logger?.info(
@@ -630,7 +630,7 @@ class TaskService(
     }
 
     private suspend fun PendingUnderstanding.recordAiUnderstandingSucceeded(
-        metadata: com.nexusflow.ai.understanding.UnderstandingMetadata,
+        metadata: com.nexusflow.contracts.backendai.understanding.UnderstandingMetadata,
         latencyMs: Long,
     ) {
         recordAiUnderstandingAudit(
@@ -689,7 +689,7 @@ class TaskService(
     private fun java.time.Instant.elapsedMs(): Long =
         Duration.between(this, clock.instant()).toMillis().coerceAtLeast(0)
 
-    private fun UserMessageUnderstandingException.toUnavailable(
+    private fun AiCapabilityException.toUnavailable(
         pending: PendingUnderstanding,
     ): TaskDependencyUnavailableException {
         logUnderstandingFailure(
@@ -697,23 +697,23 @@ class TaskService(
                 taskId = pending.detail.task.id.value.toString(),
                 taskRevision = pending.taskRevision,
                 aiRequestId = pending.message.aiRequestId ?: "",
-                failureType = this::class.simpleName ?: "UserMessageUnderstandingException",
+                failureType = this::class.simpleName ?: "AiCapabilityException",
             ),
         )
         return TaskDependencyUnavailableException("Task understanding is temporarily unavailable")
     }
 
-    private fun UserMessageUnderstandingException.safeFailureCategory(): String =
-        this::class.simpleName ?: "UserMessageUnderstandingException"
+    private fun AiCapabilityException.safeFailureCategory(): String =
+        this::class.simpleName ?: "AiCapabilityException"
 
-    private fun UserMessageUnderstandingException.safeFailureStage(): String? =
-        (this as? AiInvalidStructuredOutputException)?.failureStage
+    private fun AiCapabilityException.safeFailureStage(): String? =
+        (this as? AiInvalidCapabilityResultException)?.failureStage
 
     private suspend fun PendingUnderstanding.understandingModelContext(actor: ActorContext): UnderstandingModelContext {
         val catalog = modelContextCatalog ?: return UnderstandingModelContext()
         val assembler = modelContextAssembler ?: return UnderstandingModelContext()
         val allowance = ModelContextAllowance(
-            capability = StructuredModelCapability.UserMessageUnderstanding,
+            capability = StructuredModelCapability.UnderstandMessage,
             lifecycles = setOf(ModelContextLifecycle.Task),
         )
         val selectedKeys = detail.selectedContextKeys.map(::ModelContextKey)
@@ -741,8 +741,8 @@ class TaskService(
     private fun PendingUnderstanding.toAiContext(
         timeZoneId: String,
         modelContext: UnderstandingModelContext,
-    ): AiUnderstandingContext =
-        AiUnderstandingContext(
+    ): AiUnderstandMessageRequest =
+        AiUnderstandMessageRequest(
             aiRequestId = message.aiRequestId ?: "",
             taskId = detail.task.id.value.toString(),
             taskRevision = taskRevision,
@@ -777,7 +777,7 @@ class TaskService(
             modelContextCatalog?.validateSelectedKeys(
                 parsedKeys,
                 ModelContextAllowance(
-                    capability = StructuredModelCapability.UserMessageUnderstanding,
+                    capability = StructuredModelCapability.UnderstandMessage,
                     lifecycles = setOf(ModelContextLifecycle.Task),
                     allowedKeys = offeredKeys.mapTo(mutableSetOf(), ::ModelContextKey),
                 ),
@@ -798,8 +798,8 @@ class TaskService(
     private fun ModelContextTrust.toAiPayload(): AiModelContextTrustPayload =
         AiModelContextTrustPayload.valueOf(name)
 
-    private fun SelectableModelContextDefinition.toAiPayload(): com.nexusflow.ai.context.SelectableContextDefinitionPayload =
-        com.nexusflow.ai.context.SelectableContextDefinitionPayload(
+    private fun SelectableModelContextDefinition.toAiPayload(): com.nexusflow.contracts.backendai.common.SelectableContextDefinitionPayload =
+        com.nexusflow.contracts.backendai.common.SelectableContextDefinitionPayload(
             key = key,
             description = description,
             selectionHint = selectionHint,
@@ -903,7 +903,7 @@ class TaskService(
     private fun ContractInstant.toJavaInstant(): java.time.Instant =
         java.time.Instant.ofEpochSecond(epochSeconds, nanosecondsOfSecond.toLong())
 
-    private fun List<AiProposedRequirementChange>.toRequirementWrites(messageText: String): List<RequirementWrite> =
+    private fun List<AiRequirementChangeProposal>.toRequirementWrites(messageText: String): List<RequirementWrite> =
         map { proposal ->
             proposal.validate(messageText)
             RequirementWrite(
@@ -914,7 +914,7 @@ class TaskService(
             )
         }
 
-    private fun AiProposedRequirementChange.validate(messageText: String) {
+    private fun AiRequirementChangeProposal.validate(messageText: String) {
         if (evidenceText.isBlank() || !messageText.contains(evidenceText)) {
             throw TaskDependencyUnavailableException("Task understanding is temporarily unavailable")
         }
@@ -949,7 +949,7 @@ class TaskService(
         }
     }
 
-    private fun com.nexusflow.ai.understanding.UnderstandingOutcome.assistantMessageWrite(): AssistantMessageWrite? {
+    private fun com.nexusflow.contracts.backendai.understanding.UnderstandMessageResult.assistantMessageWrite(): AssistantMessageWrite? {
         if (clarification.needed && clarification.questionDraft.isNullOrBlank()) {
             throw TaskDependencyUnavailableException("Task understanding is temporarily unavailable")
         }

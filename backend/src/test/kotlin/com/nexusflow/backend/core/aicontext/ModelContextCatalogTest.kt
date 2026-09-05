@@ -1,6 +1,6 @@
 package com.nexusflow.backend.core.aicontext
 
-import com.nexusflow.ai.provider.StructuredModelCapability
+import com.nexusflow.contracts.backendai.common.StructuredModelCapability
 import com.nexusflow.backend.core.identity.ActorContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
@@ -90,20 +90,20 @@ class ModelContextCatalogTest {
                 FakeResolver(
                     definition(
                         ProfileTimeWindow,
-                        allowedCapabilities = setOf(StructuredModelCapability.UserMessageUnderstanding),
+                        allowedCapabilities = setOf(StructuredModelCapability.UnderstandMessage),
                     ),
                 ),
                 FakeResolver(
                     definition(
                         PlanningOnly,
-                        allowedCapabilities = setOf(StructuredModelCapability.PlanComposition),
+                        allowedCapabilities = setOf(StructuredModelCapability.CreatePlans),
                     ),
                 ),
             ),
         )
 
         val offered = catalog.definitions(
-            ModelContextAllowance(capability = StructuredModelCapability.UserMessageUnderstanding),
+            ModelContextAllowance(capability = StructuredModelCapability.UnderstandMessage),
         )
 
         assertContentEquals(listOf(ProfileTimeWindow), offered.map { it.key })
@@ -119,7 +119,7 @@ class ModelContextCatalogTest {
                 ),
             )
             val timeWindowOnly = ModelContextAllowance(
-                capability = StructuredModelCapability.UserMessageUnderstanding,
+                capability = StructuredModelCapability.UnderstandMessage,
                 allowedKeys = setOf(ProfileTimeWindow),
             )
 
@@ -143,7 +143,7 @@ class ModelContextCatalogTest {
                 ),
             )
             val taskOnly = ModelContextAllowance(
-                capability = StructuredModelCapability.UserMessageUnderstanding,
+                capability = StructuredModelCapability.UnderstandMessage,
                 lifecycles = setOf(ModelContextLifecycle.Task),
             )
 
@@ -328,7 +328,7 @@ class ModelContextCatalogTest {
 
     private fun resolveRequest(
         allowance: ModelContextAllowance = ModelContextAllowance(
-            capability = StructuredModelCapability.UserMessageUnderstanding,
+            capability = StructuredModelCapability.UnderstandMessage,
         ),
     ): ModelContextResolveRequest =
         ModelContextResolveRequest(

@@ -1,8 +1,8 @@
 package com.nexusflow.backend.feature.task.application
 
-import com.nexusflow.ai.understanding.InvalidStructuredOutputException
-import com.nexusflow.ai.planner.PlanDirection as AiPlanDirection
-import com.nexusflow.ai.planner.PlanDraft as AiPlanDraft
+import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
+import com.nexusflow.contracts.backendai.planning.PlanDirection as AiPlanDirection
+import com.nexusflow.contracts.backendai.planning.PlanProposal as AiPlanProposal
 import com.nexusflow.backend.feature.task.RecordingOpportunityProvider
 import com.nexusflow.backend.feature.task.ScriptedUnderstanding
 import com.nexusflow.backend.feature.task.TaskFlowIds
@@ -189,7 +189,7 @@ class TaskServiceTest {
                 dataSource = dataSource,
                 logger = logger,
                 understanding = ScriptedUnderstanding({
-                    throw InvalidStructuredOutputException(
+                    throw InvalidCapabilityResultException(
                         message = "Requirement evidence must be present in the current message",
                         failureStage = "evidence_not_substring",
                     )
@@ -200,7 +200,7 @@ class TaskServiceTest {
             assertEquals(PlanningOutcome.Unavailable, result.planningOutcome)
 
             val failed = logger.entries.single { it.event == "ai_understanding_failed" }
-            assertEquals("invalid_structured_output_exception", failed.fields.values["failure_category"])
+            assertEquals("invalid_capability_result_exception", failed.fields.values["failure_category"])
             assertEquals("evidence_not_substring", failed.fields.values["failure_stage"])
         }
 
@@ -402,9 +402,9 @@ class TaskServiceTest {
             )
             services.planComposer.draftFactory = { context ->
                 listOf(
-                    AiPlanDraft(AiPlanDirection.BestMatch, listOf(context.opportunities[0].id)),
-                    AiPlanDraft(AiPlanDirection.MoreRelaxed, listOf("00000000-0000-0000-0000-000000009999")),
-                    AiPlanDraft(AiPlanDirection.NewExperience, listOf(context.opportunities[1].id)),
+                    AiPlanProposal(AiPlanDirection.BestMatch, listOf(context.opportunities[0].id)),
+                    AiPlanProposal(AiPlanDirection.MoreRelaxed, listOf("00000000-0000-0000-0000-000000009999")),
+                    AiPlanProposal(AiPlanDirection.NewExperience, listOf(context.opportunities[1].id)),
                 )
             }
 
@@ -462,7 +462,7 @@ class TaskServiceTest {
             val services = createTaskServices(
                 dataSource = dataSource,
                 understanding = ScriptedUnderstanding({
-                    throw InvalidStructuredOutputException("temporary bad output")
+                    throw InvalidCapabilityResultException("temporary bad output")
                 }),
             )
 
@@ -512,9 +512,9 @@ class TaskServiceTest {
         runBlocking {
             val logger = RecordingStructuredLogger()
             val understanding = ScriptedUnderstanding(
-                { throw InvalidStructuredOutputException("temporary bad output") },
+                { throw InvalidCapabilityResultException("temporary bad output") },
                 { understandingOutcome(changes = listOf(activityDomainChange("movie", "movie"))) },
-                { throw InvalidStructuredOutputException("temporary bad output") },
+                { throw InvalidCapabilityResultException("temporary bad output") },
                 { understandingOutcome(changes = listOf(locationChange("Futian", "Futian"))) },
             )
             val services = createTaskServices(dataSource = dataSource, understanding = understanding, logger = logger)

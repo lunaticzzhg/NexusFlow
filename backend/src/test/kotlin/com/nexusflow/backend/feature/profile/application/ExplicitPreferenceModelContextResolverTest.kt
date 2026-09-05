@@ -1,6 +1,6 @@
 package com.nexusflow.backend.feature.profile.application
 
-import com.nexusflow.ai.provider.StructuredModelCapability
+import com.nexusflow.contracts.backendai.common.StructuredModelCapability
 import com.nexusflow.backend.core.aicontext.ModelContextAllowance
 import com.nexusflow.backend.core.aicontext.ModelContextKey
 import com.nexusflow.backend.core.aicontext.ModelContextResolveRequest
@@ -186,7 +186,7 @@ class ExplicitPreferenceModelContextResolverTest {
                 userId = owner.userId.value.toString(),
                 scopes = setOf("orbit.tasks.write"),
             ),
-            allowance = ModelContextAllowance(StructuredModelCapability.UserMessageUnderstanding),
+            allowance = ModelContextAllowance(StructuredModelCapability.UnderstandMessage),
             shadowedKeys = shadowedKeys,
         )
 

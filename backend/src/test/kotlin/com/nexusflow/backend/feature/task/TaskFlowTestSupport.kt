@@ -1,30 +1,30 @@
 package com.nexusflow.backend.feature.task
 
-import com.nexusflow.ai.planner.PlanComposition
-import com.nexusflow.ai.planner.PlanComposer
-import com.nexusflow.ai.planner.PlanDirection as AiPlanDirection
-import com.nexusflow.ai.planner.PlanDraft as AiPlanDraft
-import com.nexusflow.ai.planner.PlanExplainer
-import com.nexusflow.ai.planner.PlanExplanation
-import com.nexusflow.ai.planner.PlanExplanationContext
-import com.nexusflow.ai.planner.PlanModelMetadata
-import com.nexusflow.ai.planner.PlanNarrative
-import com.nexusflow.ai.planner.PlanNarrativePoint
-import com.nexusflow.ai.planner.PlanningContext
-import com.nexusflow.ai.provider.ProviderUnavailableException as AiProviderUnavailableException
-import com.nexusflow.ai.provider.StructuredModelRequestDiagnostics
-import com.nexusflow.ai.understanding.ClarificationProposal
-import com.nexusflow.ai.understanding.ClarificationReasonCategory
-import com.nexusflow.ai.understanding.ContextSelectionProposal
-import com.nexusflow.ai.understanding.ProposedRequirementChange
-import com.nexusflow.ai.understanding.RequirementKind as AiRequirementKind
-import com.nexusflow.ai.understanding.RequirementStrength as AiRequirementStrength
-import com.nexusflow.ai.understanding.RequirementValue as AiRequirementValue
-import com.nexusflow.ai.understanding.UnderstandingContext
-import com.nexusflow.ai.understanding.UnderstandingMetadata
-import com.nexusflow.ai.understanding.UnderstandingOutcome
-import com.nexusflow.ai.understanding.UserIntent
-import com.nexusflow.ai.understanding.UserMessageUnderstanding
+import com.nexusflow.contracts.backendai.planning.CreatePlansResult
+import com.nexusflow.contracts.backendai.planning.PlanComposer
+import com.nexusflow.contracts.backendai.planning.PlanDirection as AiPlanDirection
+import com.nexusflow.contracts.backendai.planning.PlanProposal as AiPlanProposal
+import com.nexusflow.contracts.backendai.planning.PlanExplainer
+import com.nexusflow.contracts.backendai.planning.ExplainPlansResult
+import com.nexusflow.contracts.backendai.planning.ExplainPlansRequest
+import com.nexusflow.contracts.backendai.planning.PlanModelMetadata
+import com.nexusflow.contracts.backendai.planning.PlanNarrative
+import com.nexusflow.contracts.backendai.planning.PlanNarrativePoint
+import com.nexusflow.contracts.backendai.planning.CreatePlansRequest
+import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
+import com.nexusflow.contracts.backendai.common.CapabilityUnavailableException
+import com.nexusflow.contracts.backendai.understanding.ClarificationProposal
+import com.nexusflow.contracts.backendai.understanding.ClarificationReasonCategory
+import com.nexusflow.contracts.backendai.understanding.ContextSelectionProposal
+import com.nexusflow.contracts.backendai.understanding.RequirementChangeProposal
+import com.nexusflow.contracts.backendai.understanding.RequirementKind as AiRequirementKind
+import com.nexusflow.contracts.backendai.understanding.RequirementStrength as AiRequirementStrength
+import com.nexusflow.contracts.backendai.understanding.RequirementValue as AiRequirementValue
+import com.nexusflow.contracts.backendai.understanding.UnderstandMessageRequest
+import com.nexusflow.contracts.backendai.understanding.UnderstandingMetadata
+import com.nexusflow.contracts.backendai.understanding.UnderstandMessageResult
+import com.nexusflow.contracts.backendai.understanding.UserIntent
+import com.nexusflow.contracts.backendai.understanding.UserMessageUnderstanding
 import com.nexusflow.backend.core.identity.ActorContext
 import com.nexusflow.backend.feature.task.application.PlanningService
 import com.nexusflow.backend.feature.task.application.TaskService
@@ -134,11 +134,11 @@ internal data class TaskServices(
 )
 
 internal class ScriptedUnderstanding(
-    private vararg val steps: suspend (UnderstandingContext) -> UnderstandingOutcome,
+    private vararg val steps: suspend (UnderstandMessageRequest) -> UnderstandMessageResult,
 ) : UserMessageUnderstanding {
-    val calls = mutableListOf<UnderstandingContext>()
+    val calls = mutableListOf<UnderstandMessageRequest>()
 
-    override suspend fun understand(context: UnderstandingContext): UnderstandingOutcome {
+    override suspend fun understand(context: UnderstandMessageRequest): UnderstandMessageResult {
         calls += context
         val index = calls.lastIndex.coerceAtMost(steps.lastIndex)
         return steps[index](context)
@@ -146,21 +146,21 @@ internal class ScriptedUnderstanding(
 }
 
 internal class RecordingPlanComposer : PlanComposer {
-    val contexts = mutableListOf<PlanningContext>()
+    val contexts = mutableListOf<CreatePlansRequest>()
     var composeFailure: Throwable? = null
-    var draftFactory: (PlanningContext) -> List<AiPlanDraft> = { context ->
+    var draftFactory: (CreatePlansRequest) -> List<AiPlanProposal> = { context ->
         listOf(
-            AiPlanDraft(
+            AiPlanProposal(
                 direction = AiPlanDirection.BestMatch,
                 opportunityRefs = listOf(context.opportunities.first().id),
             ),
         )
     }
 
-    override suspend fun compose(context: PlanningContext): PlanComposition {
+    override suspend fun compose(context: CreatePlansRequest): CreatePlansResult {
         contexts += context
         composeFailure?.let { throw it }
-        return PlanComposition(
+        return CreatePlansResult(
             drafts = draftFactory(context),
             metadata = PlanModelMetadata(provider = "test", model = "planner", promptVersion = "test", providerRequestId = "plan"),
         )
@@ -168,9 +168,9 @@ internal class RecordingPlanComposer : PlanComposer {
 }
 
 internal class RecordingPlanExplainer : PlanExplainer {
-    val contexts = mutableListOf<PlanExplanationContext>()
+    val contexts = mutableListOf<ExplainPlansRequest>()
     var explainFailure: Throwable? = null
-    var narrativeFactory: (PlanExplanationContext) -> List<PlanNarrative> = { context ->
+    var narrativeFactory: (ExplainPlansRequest) -> List<PlanNarrative> = { context ->
         context.plans.map { plan ->
             val firstFact = plan.facts.first().id
             PlanNarrative(
@@ -183,10 +183,10 @@ internal class RecordingPlanExplainer : PlanExplainer {
         }
     }
 
-    override suspend fun explain(context: PlanExplanationContext): PlanExplanation {
+    override suspend fun explain(context: ExplainPlansRequest): ExplainPlansResult {
         contexts += context
         explainFailure?.let { throw it }
-        return PlanExplanation(
+        return ExplainPlansResult(
             narratives = narrativeFactory(context),
             metadata = PlanModelMetadata(provider = "test", model = "explainer", promptVersion = "test", providerRequestId = "explain"),
         )
@@ -220,15 +220,15 @@ internal class RecordingOpportunityProvider : OpportunityProvider {
     }
 }
 
-internal fun planningUnavailable(): Throwable = AiProviderUnavailableException()
+internal fun planningUnavailable(): Throwable = CapabilityUnavailableException()
 
 internal fun understandingOutcome(
     intentPatch: String? = null,
-    changes: List<ProposedRequirementChange>,
+    changes: List<RequirementChangeProposal>,
     clarificationNeeded: Boolean = false,
     questionDraft: String? = null,
-): UnderstandingOutcome =
-    UnderstandingOutcome(
+): UnderstandMessageResult =
+    UnderstandMessageResult(
         userIntent = UserIntent.PlanRequest,
         intentPatch = intentPatch,
         requirementChanges = changes,
@@ -253,8 +253,8 @@ internal fun activityDomainChange(
     value: String,
     evidenceText: String,
     strength: AiRequirementStrength = AiRequirementStrength.Must,
-): ProposedRequirementChange =
-    ProposedRequirementChange(
+): RequirementChangeProposal =
+    RequirementChangeProposal(
         kind = AiRequirementKind.ActivityDomain,
         value = AiRequirementValue.ActivityDomain(value),
         strength = strength,
@@ -265,8 +265,8 @@ internal fun locationChange(
     text: String,
     evidenceText: String,
     strength: AiRequirementStrength = AiRequirementStrength.Prefer,
-): ProposedRequirementChange =
-    ProposedRequirementChange(
+): RequirementChangeProposal =
+    RequirementChangeProposal(
         kind = AiRequirementKind.Location,
         value = AiRequirementValue.Location(text),
         strength = strength,

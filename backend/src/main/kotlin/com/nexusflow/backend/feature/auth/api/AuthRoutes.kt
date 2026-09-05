@@ -8,11 +8,11 @@ import com.nexusflow.backend.feature.auth.application.InvalidDevLoginCredentialE
 import com.nexusflow.backend.feature.auth.application.InvalidSessionException
 import com.nexusflow.backend.feature.auth.domain.IssuedSession
 import com.nexusflow.backend.feature.auth.infrastructure.InvalidGoogleIdentityException
-import com.nexusflow.contracts.api.AuthSessionResponse
-import com.nexusflow.contracts.api.DevLoginRequest
-import com.nexusflow.contracts.api.GoogleExchangeRequest
-import com.nexusflow.contracts.api.LogoutRequest
-import com.nexusflow.contracts.api.RefreshSessionRequest
+import com.nexusflow.contracts.appbackend.auth.AuthSessionResponse
+import com.nexusflow.contracts.appbackend.auth.DevLoginRequest
+import com.nexusflow.contracts.appbackend.auth.GoogleExchangeRequest
+import com.nexusflow.contracts.appbackend.auth.LogoutRequest
+import com.nexusflow.contracts.appbackend.auth.RefreshSessionRequest
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
 import io.ktor.server.request.receive

@@ -4,6 +4,12 @@ import com.nexusflow.ai.provider.StructuredModelProvider
 import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.ai.provider.StructuredModelResult
 import com.nexusflow.ai.provider.StructuredModelResultMetadata
+import com.nexusflow.contracts.backendai.planning.CandidateOpportunity
+import com.nexusflow.contracts.backendai.planning.PlanDirection
+import com.nexusflow.contracts.backendai.planning.ExplainPlansRequest
+import com.nexusflow.contracts.backendai.planning.PlanExplanationFact
+import com.nexusflow.contracts.backendai.planning.PlanForExplanation
+import com.nexusflow.contracts.backendai.planning.CreatePlansRequest
 import com.nexusflow.observability.LogFields
 import com.nexusflow.observability.LogLevel
 import com.nexusflow.observability.StructuredLogger
@@ -45,8 +51,8 @@ class StructuredAiRetryLoggingTest {
             assertEquals("explanation_invalid", retry.fields["failure_category"])
         }
 
-    private fun planningContext(): PlanningContext =
-        PlanningContext(
+    private fun planningContext(): CreatePlansRequest =
+        CreatePlansRequest(
             planningRequestId = "planning-1",
             taskId = "task-1",
             taskRevision = 1,
@@ -75,8 +81,8 @@ class StructuredAiRetryLoggingTest {
             timeZoneId = "Asia/Shanghai",
         )
 
-    private fun explanationContext(): PlanExplanationContext =
-        PlanExplanationContext(
+    private fun explanationContext(): ExplainPlansRequest =
+        ExplainPlansRequest(
             planningRequestId = "planning-1",
             plans =
                 listOf(

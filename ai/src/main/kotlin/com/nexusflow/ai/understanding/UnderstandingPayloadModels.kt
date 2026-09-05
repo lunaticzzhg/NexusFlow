@@ -1,7 +1,7 @@
 package com.nexusflow.ai.understanding
 
-import com.nexusflow.ai.context.ModelContextBlockPayload
-import com.nexusflow.ai.context.SelectableContextDefinitionPayload
+import com.nexusflow.contracts.backendai.common.ModelContextBlockPayload
+import com.nexusflow.contracts.backendai.common.SelectableContextDefinitionPayload
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable

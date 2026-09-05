@@ -6,7 +6,7 @@ import com.nexusflow.app.core.observability.AppTraceManager
 import com.nexusflow.app.core.observability.LogFields
 import com.nexusflow.app.core.observability.LogLevel
 import com.nexusflow.app.core.observability.LogTag
-import com.nexusflow.contracts.api.KResponse
+import com.nexusflow.contracts.appbackend.common.KResponse
 import com.nexusflow.observability.TraceHeaders
 import com.nexusflow.observability.TraceId
 import com.nexusflow.observability.TraceIdGenerator

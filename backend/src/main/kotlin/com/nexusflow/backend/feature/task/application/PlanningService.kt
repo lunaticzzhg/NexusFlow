@@ -1,22 +1,22 @@
 package com.nexusflow.backend.feature.task.application
 
-import com.nexusflow.ai.context.ModelContextBlockPayload as AiModelContextBlockPayload
-import com.nexusflow.ai.context.ModelContextTrustPayload as AiModelContextTrustPayload
-import com.nexusflow.ai.planner.CandidateOpportunity as AiCandidateOpportunity
-import com.nexusflow.ai.planner.PlanComposer
-import com.nexusflow.ai.planner.PlanDirection as AiPlanDirection
-import com.nexusflow.ai.planner.PlanDraft as AiPlanDraft
-import com.nexusflow.ai.planner.PlanExplainer
-import com.nexusflow.ai.planner.PlanExplanationContext as AiPlanExplanationContext
-import com.nexusflow.ai.planner.PlanExplanationFact as AiPlanExplanationFact
-import com.nexusflow.ai.planner.PlanForExplanation as AiPlanForExplanation
-import com.nexusflow.ai.planner.PlanNarrative as AiPlanNarrative
-import com.nexusflow.ai.planner.PlanningContext as AiPlanningContext
-import com.nexusflow.ai.planner.PlanningRequirement as AiPlanningRequirement
-import com.nexusflow.ai.planner.PlanningRequirementStrength as AiPlanningRequirementStrength
-import com.nexusflow.ai.provider.StructuredModelCapability
-import com.nexusflow.ai.provider.StructuredModelException
-import com.nexusflow.ai.provider.StructuredModelRequestDiagnostics
+import com.nexusflow.contracts.backendai.common.ModelContextBlockPayload as AiModelContextBlockPayload
+import com.nexusflow.contracts.backendai.common.ModelContextTrustPayload as AiModelContextTrustPayload
+import com.nexusflow.contracts.backendai.common.AiCapabilityException
+import com.nexusflow.contracts.backendai.common.StructuredModelCapability
+import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
+import com.nexusflow.contracts.backendai.planning.CandidateOpportunity as AiCandidateOpportunity
+import com.nexusflow.contracts.backendai.planning.PlanComposer
+import com.nexusflow.contracts.backendai.planning.PlanDirection as AiPlanDirection
+import com.nexusflow.contracts.backendai.planning.PlanExplainer
+import com.nexusflow.contracts.backendai.planning.ExplainPlansRequest as AiExplainPlansRequest
+import com.nexusflow.contracts.backendai.planning.PlanExplanationFact as AiPlanExplanationFact
+import com.nexusflow.contracts.backendai.planning.PlanForExplanation as AiPlanForExplanation
+import com.nexusflow.contracts.backendai.planning.PlanNarrative as AiPlanNarrative
+import com.nexusflow.contracts.backendai.planning.PlanProposal as AiPlanProposal
+import com.nexusflow.contracts.backendai.planning.CreatePlansRequest as AiCreatePlansRequest
+import com.nexusflow.contracts.backendai.planning.PlanningRequirement as AiPlanningRequirement
+import com.nexusflow.contracts.backendai.planning.PlanningRequirementStrength as AiPlanningRequirementStrength
 import com.nexusflow.backend.core.aicontext.ModelContextAllowance
 import com.nexusflow.backend.core.aicontext.ModelContextAssemblyDiagnostics
 import com.nexusflow.backend.core.aicontext.ModelContextAssembler
@@ -245,11 +245,11 @@ class PlanningService(
         opportunities: List<Opportunity>,
         now: Instant,
         optionalContext: PlanningOptionalContext,
-    ): List<AiPlanDraft> {
+    ): List<AiPlanProposal> {
         val composer = planComposer ?: throw TaskDependencyUnavailableException("Planning is temporarily unavailable")
         return try {
             composer.compose(
-                AiPlanningContext(
+                AiCreatePlansRequest(
                     planningRequestId = "plan-${detail.task.id.value}-${detail.task.revision}",
                     taskId = detail.task.id.value.toString(),
                     taskRevision = detail.task.revision,
@@ -264,7 +264,7 @@ class PlanningService(
             ).drafts
         } catch (error: CancellationException) {
             throw error
-        } catch (_: StructuredModelException) {
+        } catch (_: AiCapabilityException) {
             throw TaskDependencyUnavailableException("Planning is temporarily unavailable")
         }
     }
@@ -278,7 +278,7 @@ class PlanningService(
         return try {
             val selectedKeys = detail.selectedContextKeys.map(::ModelContextKey)
             val allowance = ModelContextAllowance(
-                capability = StructuredModelCapability.PlanComposition,
+                capability = StructuredModelCapability.CreatePlans,
                 lifecycles = setOf(ModelContextLifecycle.Task),
             )
             val request = ModelContextResolveRequest(
@@ -300,7 +300,7 @@ class PlanningService(
 
     private fun validatePlans(
         context: PlanningContextSnapshot,
-        proposals: List<AiPlanDraft>,
+        proposals: List<AiPlanProposal>,
     ): PlanningValidationDecision {
         val drafts = proposals.map { proposal ->
             PlanDraft(
@@ -335,7 +335,7 @@ class PlanningService(
             ?: return plans.also {
                 logPlanningDegraded(requestId, plans.firstOrNull()?.revision, "explanation", "dependency_unavailable")
             }
-        val explanationContext = AiPlanExplanationContext(
+        val explanationContext = AiExplainPlansRequest(
             planningRequestId = requestId,
             plans = plans.map { it.toAiPlanForExplanation(opportunities) },
             referenceTime = now.toContractInstant(),
@@ -345,7 +345,7 @@ class PlanningService(
             explainer.explain(explanationContext)
         } catch (error: CancellationException) {
             throw error
-        } catch (_: StructuredModelException) {
+        } catch (_: AiCapabilityException) {
             logPlanningDegraded(requestId, plans.firstOrNull()?.revision, "explanation", "structured_model_exception")
             return plans
         }

@@ -9,9 +9,9 @@ import com.nexusflow.app.feature.task.domain.TaskId
 import com.nexusflow.app.feature.task.domain.TaskRepository
 import com.nexusflow.app.feature.task.domain.TaskSummary
 import com.nexusflow.app.feature.task.domain.UpdateRequirementCommand
-import com.nexusflow.contracts.api.CreateTaskRequest
-import com.nexusflow.contracts.api.SendTaskMessageRequest
-import com.nexusflow.contracts.api.UpdateRequirementRequest
+import com.nexusflow.contracts.appbackend.task.CreateTaskRequest
+import com.nexusflow.contracts.appbackend.task.SendTaskMessageRequest
+import com.nexusflow.contracts.appbackend.task.UpdateRequirementRequest
 
 internal class DefaultTaskRepository(
     private val remoteDataSource: TaskRemoteDataSource,

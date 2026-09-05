@@ -6,7 +6,7 @@ import com.nexusflow.app.feature.auth.domain.AppContextSnapshot
 import com.nexusflow.app.feature.auth.domain.AuthException
 import com.nexusflow.app.feature.auth.domain.AuthRepository
 import com.nexusflow.app.feature.auth.domain.AuthSession
-import com.nexusflow.contracts.api.AuthSessionResponse
+import com.nexusflow.contracts.appbackend.auth.AuthSessionResponse
 
 internal class DefaultAuthRepository(
     private val authRemoteDataSource: AuthRemoteDataSource,

@@ -33,31 +33,31 @@ import com.nexusflow.backend.feature.task.domain.RequirementStrength
 import com.nexusflow.backend.feature.task.domain.RequirementValue
 import com.nexusflow.backend.feature.task.domain.Task
 import com.nexusflow.backend.feature.task.domain.TaskDetail
-import com.nexusflow.contracts.api.ActivityModeValue as ActivityModeValueResponse
-import com.nexusflow.contracts.api.CommutePreferenceValue as CommutePreferenceValueResponse
-import com.nexusflow.contracts.api.CreateTaskRequest
-import com.nexusflow.contracts.api.MessageRole as MessageRoleResponse
-import com.nexusflow.contracts.api.PlanDirection as PlanDirectionResponse
-import com.nexusflow.contracts.api.PlanEstimatedCostResponse
-import com.nexusflow.contracts.api.PlanResponse
-import com.nexusflow.contracts.api.PlanSourceRefResponse
-import com.nexusflow.contracts.api.PlanTimelineItemResponse
-import com.nexusflow.contracts.api.PlanningStatus
-import com.nexusflow.contracts.api.PlanningStatusResponse
-import com.nexusflow.contracts.api.RequirementEvaluationResponse
-import com.nexusflow.contracts.api.RequirementEvaluationResult as RequirementEvaluationResultResponse
-import com.nexusflow.contracts.api.RequirementKind as RequirementKindResponse
-import com.nexusflow.contracts.api.RequirementResponse
-import com.nexusflow.contracts.api.RequirementSource as RequirementSourceResponse
-import com.nexusflow.contracts.api.RequirementStrength as RequirementStrengthResponse
-import com.nexusflow.contracts.api.RequirementSummaryResponse
-import com.nexusflow.contracts.api.RequirementValueResponse
-import com.nexusflow.contracts.api.SendTaskMessageRequest
-import com.nexusflow.contracts.api.TaskDetailResponse
-import com.nexusflow.contracts.api.TaskMessageResponse
-import com.nexusflow.contracts.api.TaskResponse
-import com.nexusflow.contracts.api.TaskSummaryResponse
-import com.nexusflow.contracts.api.UpdateRequirementRequest
+import com.nexusflow.contracts.appbackend.task.ActivityModeValue as ActivityModeValueResponse
+import com.nexusflow.contracts.appbackend.task.CommutePreferenceValue as CommutePreferenceValueResponse
+import com.nexusflow.contracts.appbackend.task.CreateTaskRequest
+import com.nexusflow.contracts.appbackend.task.MessageRole as MessageRoleResponse
+import com.nexusflow.contracts.appbackend.plan.PlanDirection as PlanDirectionResponse
+import com.nexusflow.contracts.appbackend.plan.PlanEstimatedCostResponse
+import com.nexusflow.contracts.appbackend.plan.PlanResponse
+import com.nexusflow.contracts.appbackend.plan.PlanSourceRefResponse
+import com.nexusflow.contracts.appbackend.plan.PlanTimelineItemResponse
+import com.nexusflow.contracts.appbackend.task.PlanningStatus
+import com.nexusflow.contracts.appbackend.task.PlanningStatusResponse
+import com.nexusflow.contracts.appbackend.plan.RequirementEvaluationResponse
+import com.nexusflow.contracts.appbackend.plan.RequirementEvaluationResult as RequirementEvaluationResultResponse
+import com.nexusflow.contracts.appbackend.task.RequirementKind as RequirementKindResponse
+import com.nexusflow.contracts.appbackend.task.RequirementResponse
+import com.nexusflow.contracts.appbackend.task.RequirementSource as RequirementSourceResponse
+import com.nexusflow.contracts.appbackend.task.RequirementStrength as RequirementStrengthResponse
+import com.nexusflow.contracts.appbackend.task.RequirementSummaryResponse
+import com.nexusflow.contracts.appbackend.task.RequirementValueResponse
+import com.nexusflow.contracts.appbackend.task.SendTaskMessageRequest
+import com.nexusflow.contracts.appbackend.task.TaskDetailResponse
+import com.nexusflow.contracts.appbackend.task.TaskMessageResponse
+import com.nexusflow.contracts.appbackend.task.TaskResponse
+import com.nexusflow.contracts.appbackend.task.TaskSummaryResponse
+import com.nexusflow.contracts.appbackend.task.UpdateRequirementRequest
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call

@@ -1,12 +1,35 @@
 package com.nexusflow.ai.understanding
 
-import com.nexusflow.ai.provider.StructuredModelCapability
 import com.nexusflow.ai.provider.StructuredModelException
 import com.nexusflow.ai.provider.StructuredModelProvider
 import com.nexusflow.ai.provider.StructuredModelRequest
-import com.nexusflow.ai.provider.StructuredModelRequestDiagnostics
 import com.nexusflow.ai.provider.StructuredModelRequestMetadata
 import com.nexusflow.ai.provider.StructuredOutputSchema
+import com.nexusflow.contracts.backendai.common.AiCapabilityException
+import com.nexusflow.contracts.backendai.common.CapabilityRateLimitedException
+import com.nexusflow.contracts.backendai.common.CapabilityRefusedException
+import com.nexusflow.contracts.backendai.common.CapabilityTimeoutException
+import com.nexusflow.contracts.backendai.common.CapabilityUnauthorizedException
+import com.nexusflow.contracts.backendai.common.CapabilityUnavailableException
+import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
+import com.nexusflow.contracts.backendai.common.StructuredModelCapability
+import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
+import com.nexusflow.contracts.backendai.understanding.ActivityModeValue
+import com.nexusflow.contracts.backendai.understanding.ClarificationProposal
+import com.nexusflow.contracts.backendai.understanding.ClarificationReasonCategory
+import com.nexusflow.contracts.backendai.understanding.CommutePreferenceValue
+import com.nexusflow.contracts.backendai.understanding.ContextSelectionProposal
+import com.nexusflow.contracts.backendai.understanding.CurrentRequirement
+import com.nexusflow.contracts.backendai.understanding.RequirementChangeProposal
+import com.nexusflow.contracts.backendai.understanding.RequirementKind
+import com.nexusflow.contracts.backendai.understanding.RequirementStrength
+import com.nexusflow.contracts.backendai.understanding.RequirementValue
+import com.nexusflow.contracts.backendai.understanding.UNDERSTAND_USER_MESSAGE_PROMPT_VERSION
+import com.nexusflow.contracts.backendai.understanding.UnderstandMessageRequest
+import com.nexusflow.contracts.backendai.understanding.UnderstandingMetadata
+import com.nexusflow.contracts.backendai.understanding.UnderstandMessageResult
+import com.nexusflow.contracts.backendai.understanding.UserIntent
+import com.nexusflow.contracts.backendai.understanding.UserMessageUnderstanding
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
 import kotlinx.coroutines.CancellationException
@@ -34,14 +57,14 @@ class StructuredUserMessageUnderstanding(
         encodeDefaults = true
     },
 ) : UserMessageUnderstanding {
-    override suspend fun understand(context: UnderstandingContext): UnderstandingOutcome {
+    override suspend fun understand(context: UnderstandMessageRequest): UnderstandMessageResult {
         var attempt = 1
         while (true) {
             try {
                 return requestOnce(context, attempt)
             } catch (error: RepairableUnderstandingOutputException) {
                 if (attempt == MAX_ATTEMPTS) {
-                    throw InvalidStructuredOutputException(
+                    throw InvalidCapabilityResultException(
                         message = error.message ?: "Invalid structured output",
                         cause = error,
                         failureStage = error.stage.logValue,
@@ -71,9 +94,9 @@ class StructuredUserMessageUnderstanding(
     }
 
     private suspend fun requestOnce(
-        context: UnderstandingContext,
+        context: UnderstandMessageRequest,
         attempt: Int,
-    ): UnderstandingOutcome {
+    ): UnderstandMessageResult {
         val userPayload = context.toPromptPayload()
         val requestDiagnostics = context.toRequestDiagnostics(userPayload)
         val result = try {
@@ -89,7 +112,7 @@ class StructuredUserMessageUnderstanding(
                     metadata = StructuredModelRequestMetadata(
                         requestId = context.aiRequestId,
                         promptVersion = UNDERSTAND_USER_MESSAGE_PROMPT_VERSION,
-                        capability = StructuredModelCapability.UserMessageUnderstanding,
+                        capability = StructuredModelCapability.UnderstandMessage,
                         attemptNumber = attempt,
                         diagnostics = requestDiagnostics,
                     ),
@@ -126,10 +149,10 @@ class StructuredUserMessageUnderstanding(
     }
 
     private fun StructuredUnderstandingPayload.toOutcome(
-        context: UnderstandingContext,
+        context: UnderstandMessageRequest,
         metadata: UnderstandingMetadata,
-    ): UnderstandingOutcome =
-        UnderstandingOutcome(
+    ): UnderstandMessageResult =
+        UnderstandMessageResult(
             userIntent = userIntent.toUserIntent(),
             intentPatch = intentPatch?.trim()?.takeIf(String::isNotBlank),
             requirementChanges = requirementChanges.map { it.toRequirementChange(context.currentMessage) },
@@ -138,7 +161,7 @@ class StructuredUserMessageUnderstanding(
             metadata = metadata,
         )
 
-    private fun StructuredContextSelectionPayload.toProposal(context: UnderstandingContext): ContextSelectionProposal {
+    private fun StructuredContextSelectionPayload.toProposal(context: UnderstandMessageRequest): ContextSelectionProposal {
         val offeredKeys = context.availableContextDefinitions.mapTo(linkedSetOf()) { it.key }
         val cleanKeys = selectedKeys.map { it.trim() }
         val duplicate = cleanKeys.groupBy { it }.entries.firstOrNull { it.value.size > 1 }?.key
@@ -196,7 +219,7 @@ class StructuredUserMessageUnderstanding(
         }
     }
 
-    private fun StructuredRequirementPayload.toRequirementChange(currentMessage: String): ProposedRequirementChange {
+    private fun StructuredRequirementPayload.toRequirementChange(currentMessage: String): RequirementChangeProposal {
         val cleanEvidence = evidenceText.trim()
         if (cleanEvidence.isBlank() || !currentMessage.contains(cleanEvidence)) {
             throw RepairableUnderstandingOutputException(
@@ -205,7 +228,7 @@ class StructuredUserMessageUnderstanding(
             )
         }
         val requirementKind = kind.toRequirementKind()
-        return ProposedRequirementChange(
+        return RequirementChangeProposal(
             kind = requirementKind,
             value = toRequirementValue(requirementKind, cleanEvidence),
             strength = strength.toRequirementStrength(),
@@ -430,19 +453,19 @@ class StructuredUserMessageUnderstanding(
             )
         }
 
-    private fun StructuredModelException.toUnderstandingException(): UserMessageUnderstandingException =
+    private fun StructuredModelException.toUnderstandingException(): AiCapabilityException =
         when (this) {
-            is ProviderUnauthorizedModelException -> ProviderUnauthorizedException(this)
-            is ProviderRateLimitedModelException -> ProviderRateLimitedException(this)
-            is ProviderTimeoutModelException -> ProviderTimeoutException(this)
-            is ProviderRefusedModelException -> ProviderRefusedException()
-            is ProviderUnavailableModelException -> ProviderUnavailableException(this)
-            is ProviderInvalidStructuredOutputException -> InvalidStructuredOutputException(
+            is ProviderUnauthorizedModelException -> CapabilityUnauthorizedException(this)
+            is ProviderRateLimitedModelException -> CapabilityRateLimitedException(this)
+            is ProviderTimeoutModelException -> CapabilityTimeoutException(this)
+            is ProviderRefusedModelException -> CapabilityRefusedException()
+            is ProviderUnavailableModelException -> CapabilityUnavailableException(this)
+            is ProviderInvalidStructuredOutputException -> InvalidCapabilityResultException(
                 message = message ?: "Invalid output",
                 cause = this,
                 failureStage = UnderstandingOutputFailureStage.ProviderInvalidStructuredOutput.logValue,
             )
-            else -> ProviderUnavailableException(this)
+            else -> CapabilityUnavailableException(this)
         }
 
     private fun understandingSystemPrompt(attempt: Int): String {
@@ -472,7 +495,7 @@ class StructuredUserMessageUnderstanding(
         """.trimIndent()
     }
 
-    private fun UnderstandingContext.toPromptPayload(): JsonObject =
+    private fun UnderstandMessageRequest.toPromptPayload(): JsonObject =
         json.encodeToJsonElement(
             UnderstandingModelPayload(
                 request = UnderstandingModelRequest(
@@ -489,7 +512,7 @@ class StructuredUserMessageUnderstanding(
             ),
         ).jsonObject
 
-    private fun UnderstandingContext.toRequestDiagnostics(userPayload: JsonObject): StructuredModelRequestDiagnostics =
+    private fun UnderstandMessageRequest.toRequestDiagnostics(userPayload: JsonObject): StructuredModelRequestDiagnostics =
         diagnostics.copy(
             availableContextDefinitionCount = availableContextDefinitions.size,
             selectedContextKeyCount = diagnostics.selectedContextKeyCount.takeUnless { it == 0 } ?: optionalContext.size,

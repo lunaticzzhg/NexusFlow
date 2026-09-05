@@ -1,12 +1,32 @@
 package com.nexusflow.ai.planner
 
-import com.nexusflow.ai.provider.ExplanationInvalidException
-import com.nexusflow.ai.provider.StructuredModelCapability
+import com.nexusflow.ai.provider.InvalidStructuredOutputException as ProviderInvalidStructuredOutputException
+import com.nexusflow.ai.provider.ProviderRateLimitedException as ProviderRateLimitedModelException
+import com.nexusflow.ai.provider.ProviderRefusedException as ProviderRefusedModelException
+import com.nexusflow.ai.provider.ProviderTimeoutException as ProviderTimeoutModelException
+import com.nexusflow.ai.provider.ProviderUnauthorizedException as ProviderUnauthorizedModelException
+import com.nexusflow.ai.provider.ProviderUnavailableException as ProviderUnavailableModelException
+import com.nexusflow.ai.provider.StructuredModelException
 import com.nexusflow.ai.provider.StructuredModelProvider
 import com.nexusflow.ai.provider.StructuredModelRequest
-import com.nexusflow.ai.provider.StructuredModelRequestDiagnostics
 import com.nexusflow.ai.provider.StructuredModelRequestMetadata
 import com.nexusflow.ai.provider.StructuredOutputSchema
+import com.nexusflow.contracts.backendai.common.CapabilityRateLimitedException
+import com.nexusflow.contracts.backendai.common.CapabilityRefusedException
+import com.nexusflow.contracts.backendai.common.CapabilityTimeoutException
+import com.nexusflow.contracts.backendai.common.CapabilityUnauthorizedException
+import com.nexusflow.contracts.backendai.common.CapabilityUnavailableException
+import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
+import com.nexusflow.contracts.backendai.common.StructuredModelCapability
+import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
+import com.nexusflow.contracts.backendai.planning.ExplainPlansResult
+import com.nexusflow.contracts.backendai.planning.ExplainPlansRequest
+import com.nexusflow.contracts.backendai.planning.PlanExplanationFact
+import com.nexusflow.contracts.backendai.planning.PlanExplainer
+import com.nexusflow.contracts.backendai.planning.PlanForExplanation
+import com.nexusflow.contracts.backendai.planning.PlanModelMetadata
+import com.nexusflow.contracts.backendai.planning.PlanNarrative
+import com.nexusflow.contracts.backendai.planning.PlanNarrativePoint
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
 import kotlinx.coroutines.CancellationException
@@ -26,14 +46,14 @@ class StructuredPlanExplainer(
         encodeDefaults = true
     },
 ) : PlanExplainer {
-    override suspend fun explain(context: PlanExplanationContext): PlanExplanation {
+    override suspend fun explain(context: ExplainPlansRequest): ExplainPlansResult {
         var attempt = 1
         while (true) {
             try {
                 return requestOnce(context, attempt)
             } catch (error: RepairablePlanExplanationException) {
                 if (attempt == MAX_ATTEMPTS) {
-                    throw ExplanationInvalidException(error.message ?: "Plan explanation is invalid", error)
+                    throw InvalidCapabilityResultException(error.message ?: "Plan explanation is invalid", error)
                 }
                 logRetry(nextAttempt = attempt + 1)
                 attempt += 1
@@ -55,9 +75,9 @@ class StructuredPlanExplainer(
     }
 
     private suspend fun requestOnce(
-        context: PlanExplanationContext,
+        context: ExplainPlansRequest,
         attempt: Int,
-    ): PlanExplanation {
+    ): ExplainPlansResult {
         val userPayload = context.toPayload()
         val requestDiagnostics = context.toRequestDiagnostics(userPayload)
         val result = try {
@@ -69,7 +89,7 @@ class StructuredPlanExplainer(
                     metadata = StructuredModelRequestMetadata(
                         requestId = context.planningRequestId,
                         promptVersion = EXPLAIN_PLANS_PROMPT_VERSION,
-                        capability = StructuredModelCapability.PlanExplanation,
+                        capability = StructuredModelCapability.ExplainPlans,
                         attemptNumber = attempt,
                         diagnostics = requestDiagnostics,
                     ),
@@ -77,6 +97,8 @@ class StructuredPlanExplainer(
             )
         } catch (error: CancellationException) {
             throw error
+        } catch (error: StructuredModelException) {
+            throw error.toPlanCapabilityException()
         }
         val payload = try {
             json.decodeFromString<PlanExplanationPayload>(result.outputText)
@@ -87,15 +109,15 @@ class StructuredPlanExplainer(
     }
 
     private fun PlanExplanationPayload.toExplanation(
-        context: PlanExplanationContext,
+        context: ExplainPlansRequest,
         metadata: PlanModelMetadata,
-    ): PlanExplanation {
+    ): ExplainPlansResult {
         val plansById = context.plans.associateBy { it.planId }
         val narrativePlanIds = narratives.map { it.planId }
         if (narrativePlanIds.toSet() != plansById.keys || narrativePlanIds.size != narrativePlanIds.toSet().size) {
             throw RepairablePlanExplanationException("Plan explanation must return one narrative for every plan")
         }
-        return PlanExplanation(
+        return ExplainPlansResult(
             narratives = narratives.map { narrative ->
                 val plan = plansById[narrative.planId]
                     ?: throw RepairablePlanExplanationException("Plan narrative referenced an unknown plan")
@@ -142,7 +164,7 @@ class StructuredPlanExplainer(
         """.trimIndent()
     }
 
-    private fun PlanExplanationContext.toPayload(): JsonObject =
+    private fun ExplainPlansRequest.toPayload(): JsonObject =
         json.encodeToJsonElement(
             PlanExplanationModelPayload(
                 request = PlanExplanationModelRequest(
@@ -155,7 +177,7 @@ class StructuredPlanExplainer(
             ),
         ).jsonObject
 
-    private fun PlanExplanationContext.toRequestDiagnostics(userPayload: JsonObject): StructuredModelRequestDiagnostics =
+    private fun ExplainPlansRequest.toRequestDiagnostics(userPayload: JsonObject): StructuredModelRequestDiagnostics =
         StructuredModelRequestDiagnostics(
             fullUserPayloadSerializedChars = json.encodeToString(JsonObject.serializer(), userPayload).length,
         )
@@ -172,6 +194,17 @@ class StructuredPlanExplainer(
             usage = usage,
             diagnostics = requestDiagnostics,
         )
+
+    private fun StructuredModelException.toPlanCapabilityException(): RuntimeException =
+        when (this) {
+            is ProviderUnauthorizedModelException -> CapabilityUnauthorizedException(this)
+            is ProviderRateLimitedModelException -> CapabilityRateLimitedException(this)
+            is ProviderTimeoutModelException -> CapabilityTimeoutException(this)
+            is ProviderRefusedModelException -> CapabilityRefusedException()
+            is ProviderUnavailableModelException -> CapabilityUnavailableException(this)
+            is ProviderInvalidStructuredOutputException -> InvalidCapabilityResultException(message ?: "Invalid structured output", this)
+            else -> CapabilityUnavailableException(this)
+        }
 
     private fun PlanForExplanation.toModelPayload(): PlanForExplanationPayload =
         PlanForExplanationPayload(

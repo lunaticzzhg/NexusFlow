@@ -1,9 +1,9 @@
 package com.nexusflow.ai.provider.compatible
 
 import com.nexusflow.ai.provider.ProviderUnauthorizedException
-import com.nexusflow.ai.provider.StructuredModelCapability
+import com.nexusflow.contracts.backendai.common.StructuredModelCapability
 import com.nexusflow.ai.provider.StructuredModelRequest
-import com.nexusflow.ai.provider.StructuredModelRequestDiagnostics
+import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
 import com.nexusflow.ai.provider.StructuredModelRequestMetadata
 import com.nexusflow.ai.provider.StructuredOutputSchema
 import com.nexusflow.observability.LogFields
@@ -169,7 +169,7 @@ class OpenAiCompatibleStructuredTransportLoggingTest {
                 StructuredModelRequestMetadata(
                     requestId = "diagnostic-request-id",
                     promptVersion = "prompt-v1",
-                    capability = StructuredModelCapability.UserMessageUnderstanding,
+                    capability = StructuredModelCapability.UnderstandMessage,
                     attemptNumber = attemptNumber,
                     diagnostics =
                         StructuredModelRequestDiagnostics(

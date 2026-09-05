@@ -9,7 +9,8 @@ kotlin { jvmToolchain(17) }
 application { mainClass.set("com.nexusflow.backend.ApplicationKt") }
 
 dependencies {
-    implementation(project(":contracts"))
+    implementation(project(":contracts:app-backend"))
+    implementation(project(":contracts:backend-ai"))
     implementation(project(":observability"))
     implementation(project(":ai"))
     implementation("io.ktor:ktor-server-core-jvm:${libs.versions.ktor.get()}")

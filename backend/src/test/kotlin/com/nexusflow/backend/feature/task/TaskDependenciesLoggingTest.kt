@@ -18,7 +18,7 @@ class TaskDependenciesLoggingTest {
                 taskId = "task-123",
                 taskRevision = 7,
                 aiRequestId = "understand-123",
-                failureType = "ProviderUnavailableException",
+                failureType = "CapabilityUnavailableException",
             ),
         )
 
@@ -29,7 +29,7 @@ class TaskDependenciesLoggingTest {
         assertEquals("task-123", entry.fields.values["task_id"])
         assertEquals("7", entry.fields.values["task_revision"])
         assertEquals("understand-123", entry.fields.values["ai_request_id"])
-        assertEquals("ProviderUnavailableException", entry.fields.values["failure_type"])
+        assertEquals("CapabilityUnavailableException", entry.fields.values["failure_type"])
 
         val rendered = entry.fields.values.entries.joinToString("|") { (key, value) -> "$key=$value" }
         assertFalse(rendered.contains("prompt"))

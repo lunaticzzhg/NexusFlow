@@ -4,7 +4,7 @@ import com.nexusflow.app.core.error.AppException
 import com.nexusflow.app.core.observability.AppLogger
 import com.nexusflow.app.core.observability.LogTag
 import com.nexusflow.app.core.observability.logFields
-import com.nexusflow.contracts.api.KResponse
+import com.nexusflow.contracts.appbackend.common.KResponse
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.serialization.ContentConvertException
 import kotlinx.coroutines.CancellationException

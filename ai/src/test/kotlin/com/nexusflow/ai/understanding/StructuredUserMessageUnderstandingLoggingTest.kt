@@ -4,6 +4,8 @@ import com.nexusflow.ai.provider.StructuredModelProvider
 import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.ai.provider.StructuredModelResult
 import com.nexusflow.ai.provider.StructuredModelResultMetadata
+import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
+import com.nexusflow.contracts.backendai.understanding.UnderstandMessageRequest
 import com.nexusflow.observability.LogFields
 import com.nexusflow.observability.LogLevel
 import com.nexusflow.observability.StructuredLogger
@@ -39,7 +41,7 @@ class StructuredUserMessageUnderstandingLoggingTest {
             val logger = RecordingLogger()
             val provider = ScriptedProvider(invalidEvidencePayload())
 
-            val error = assertFailsWith<InvalidStructuredOutputException> {
+            val error = assertFailsWith<InvalidCapabilityResultException> {
                 StructuredUserMessageUnderstanding(provider, logger = logger).understand(context())
             }
 
@@ -48,8 +50,8 @@ class StructuredUserMessageUnderstandingLoggingTest {
             assertEquals("evidence_not_substring", retry.fields["failure_stage"])
         }
 
-    private fun context(): UnderstandingContext =
-        UnderstandingContext(
+    private fun context(): UnderstandMessageRequest =
+        UnderstandMessageRequest(
             aiRequestId = "understand-1",
             taskId = "task-1",
             taskRevision = 1,

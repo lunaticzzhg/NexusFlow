@@ -23,19 +23,20 @@ import com.nexusflow.app.feature.task.domain.TaskMessage
 import com.nexusflow.app.feature.task.domain.TaskPlan
 import com.nexusflow.app.feature.task.domain.TaskRequirement
 import com.nexusflow.app.feature.task.domain.TaskSummary
-import com.nexusflow.contracts.api.PlanEstimatedCostResponse
-import com.nexusflow.contracts.api.PlanResponse
-import com.nexusflow.contracts.api.PlanSourceRefResponse
-import com.nexusflow.contracts.api.PlanTimelineItemResponse
-import com.nexusflow.contracts.api.PlanningStatus
-import com.nexusflow.contracts.api.RequirementEvaluationResponse
-import com.nexusflow.contracts.api.RequirementResponse
-import com.nexusflow.contracts.api.RequirementSummaryResponse
-import com.nexusflow.contracts.api.RequirementValueResponse
-import com.nexusflow.contracts.api.TaskDetailResponse
-import com.nexusflow.contracts.api.TaskMessageResponse
-import com.nexusflow.contracts.api.TaskSummaryResponse
-import com.nexusflow.contracts.api.RequirementKind as ContractRequirementKind
+import com.nexusflow.contracts.appbackend.plan.PlanEstimatedCostResponse
+import com.nexusflow.contracts.appbackend.plan.PlanResponse
+import com.nexusflow.contracts.appbackend.plan.PlanSourceRefResponse
+import com.nexusflow.contracts.appbackend.plan.PlanTimelineItemResponse
+import com.nexusflow.contracts.appbackend.plan.RequirementEvaluationResponse
+import com.nexusflow.contracts.appbackend.task.PlanningStatus
+import com.nexusflow.contracts.appbackend.task.RequirementResponse
+import com.nexusflow.contracts.appbackend.task.RequirementSummaryResponse
+import com.nexusflow.contracts.appbackend.task.RequirementValueResponse
+import com.nexusflow.contracts.appbackend.task.TaskDetailResponse
+import com.nexusflow.contracts.appbackend.task.TaskMessageResponse
+import com.nexusflow.contracts.appbackend.task.TaskSummaryResponse
+import com.nexusflow.contracts.appbackend.plan.RequirementEvaluationResult as ContractRequirementEvaluationResult
+import com.nexusflow.contracts.appbackend.task.RequirementKind as ContractRequirementKind
 
 internal fun TaskSummaryResponse.toDomain(): TaskSummary =
     TaskSummary(
@@ -139,44 +140,44 @@ private fun RequirementValueResponse.toDomain(): RequirementValue =
         is RequirementValueResponse.ExperiencePreference -> RequirementValue.Text(text)
     }
 
-private fun CommutePreferenceValue.toContract(): com.nexusflow.contracts.api.CommutePreferenceValue =
+private fun CommutePreferenceValue.toContract(): com.nexusflow.contracts.appbackend.task.CommutePreferenceValue =
     when (this) {
-        CommutePreferenceValue.PreferShorter -> com.nexusflow.contracts.api.CommutePreferenceValue.PreferShorter
+        CommutePreferenceValue.PreferShorter -> com.nexusflow.contracts.appbackend.task.CommutePreferenceValue.PreferShorter
     }
 
-private fun com.nexusflow.contracts.api.CommutePreferenceValue.toDomain(): CommutePreferenceValue =
+private fun com.nexusflow.contracts.appbackend.task.CommutePreferenceValue.toDomain(): CommutePreferenceValue =
     when (this) {
-        com.nexusflow.contracts.api.CommutePreferenceValue.PreferShorter -> CommutePreferenceValue.PreferShorter
+        com.nexusflow.contracts.appbackend.task.CommutePreferenceValue.PreferShorter -> CommutePreferenceValue.PreferShorter
     }
 
-private fun ActivityModeValue.toContract(): com.nexusflow.contracts.api.ActivityModeValue =
+private fun ActivityModeValue.toContract(): com.nexusflow.contracts.appbackend.task.ActivityModeValue =
     when (this) {
-        ActivityModeValue.AtHome -> com.nexusflow.contracts.api.ActivityModeValue.AtHome
-        ActivityModeValue.OutOfHome -> com.nexusflow.contracts.api.ActivityModeValue.OutOfHome
+        ActivityModeValue.AtHome -> com.nexusflow.contracts.appbackend.task.ActivityModeValue.AtHome
+        ActivityModeValue.OutOfHome -> com.nexusflow.contracts.appbackend.task.ActivityModeValue.OutOfHome
     }
 
-private fun com.nexusflow.contracts.api.ActivityModeValue.toDomain(): ActivityModeValue =
+private fun com.nexusflow.contracts.appbackend.task.ActivityModeValue.toDomain(): ActivityModeValue =
     when (this) {
-        com.nexusflow.contracts.api.ActivityModeValue.AtHome -> ActivityModeValue.AtHome
-        com.nexusflow.contracts.api.ActivityModeValue.OutOfHome -> ActivityModeValue.OutOfHome
+        com.nexusflow.contracts.appbackend.task.ActivityModeValue.AtHome -> ActivityModeValue.AtHome
+        com.nexusflow.contracts.appbackend.task.ActivityModeValue.OutOfHome -> ActivityModeValue.OutOfHome
     }
 
-internal fun RequirementStrength.toContract(): com.nexusflow.contracts.api.RequirementStrength =
+internal fun RequirementStrength.toContract(): com.nexusflow.contracts.appbackend.task.RequirementStrength =
     when (this) {
-        RequirementStrength.Must -> com.nexusflow.contracts.api.RequirementStrength.Must
-        RequirementStrength.Prefer -> com.nexusflow.contracts.api.RequirementStrength.Prefer
+        RequirementStrength.Must -> com.nexusflow.contracts.appbackend.task.RequirementStrength.Must
+        RequirementStrength.Prefer -> com.nexusflow.contracts.appbackend.task.RequirementStrength.Prefer
     }
 
-private fun com.nexusflow.contracts.api.RequirementStrength.toDomain(): RequirementStrength =
+private fun com.nexusflow.contracts.appbackend.task.RequirementStrength.toDomain(): RequirementStrength =
     when (this) {
-        com.nexusflow.contracts.api.RequirementStrength.Must -> RequirementStrength.Must
-        com.nexusflow.contracts.api.RequirementStrength.Prefer -> RequirementStrength.Prefer
+        com.nexusflow.contracts.appbackend.task.RequirementStrength.Must -> RequirementStrength.Must
+        com.nexusflow.contracts.appbackend.task.RequirementStrength.Prefer -> RequirementStrength.Prefer
     }
 
-private fun com.nexusflow.contracts.api.RequirementSource.toDomain(): RequirementSource =
+private fun com.nexusflow.contracts.appbackend.task.RequirementSource.toDomain(): RequirementSource =
     when (this) {
-        com.nexusflow.contracts.api.RequirementSource.UserExplicit -> RequirementSource.UserExplicit
-        com.nexusflow.contracts.api.RequirementSource.SystemDerived -> RequirementSource.SystemDerived
+        com.nexusflow.contracts.appbackend.task.RequirementSource.UserExplicit -> RequirementSource.UserExplicit
+        com.nexusflow.contracts.appbackend.task.RequirementSource.SystemDerived -> RequirementSource.SystemDerived
     }
 
 private fun TaskMessageResponse.toDomain(): TaskMessage =
@@ -184,8 +185,8 @@ private fun TaskMessageResponse.toDomain(): TaskMessage =
         id = id,
         role =
             when (role) {
-                com.nexusflow.contracts.api.MessageRole.User -> MessageRole.User
-                com.nexusflow.contracts.api.MessageRole.Assistant -> MessageRole.Assistant
+                com.nexusflow.contracts.appbackend.task.MessageRole.User -> MessageRole.User
+                com.nexusflow.contracts.appbackend.task.MessageRole.Assistant -> MessageRole.Assistant
             },
         content = content,
         clientMessageId = clientMessageId,
@@ -210,11 +211,11 @@ internal fun PlanResponse.toDomain(): TaskPlan =
         validUntil = validUntil,
     )
 
-private fun com.nexusflow.contracts.api.PlanDirection.toDomain(): PlanDirection =
+private fun com.nexusflow.contracts.appbackend.plan.PlanDirection.toDomain(): PlanDirection =
     when (this) {
-        com.nexusflow.contracts.api.PlanDirection.BestMatch -> PlanDirection.BestMatch
-        com.nexusflow.contracts.api.PlanDirection.MoreRelaxed -> PlanDirection.MoreRelaxed
-        com.nexusflow.contracts.api.PlanDirection.NewExperience -> PlanDirection.NewExperience
+        com.nexusflow.contracts.appbackend.plan.PlanDirection.BestMatch -> PlanDirection.BestMatch
+        com.nexusflow.contracts.appbackend.plan.PlanDirection.MoreRelaxed -> PlanDirection.MoreRelaxed
+        com.nexusflow.contracts.appbackend.plan.PlanDirection.NewExperience -> PlanDirection.NewExperience
     }
 
 private fun PlanTimelineItemResponse.toDomain(): PlanTimelineItem =
@@ -233,8 +234,8 @@ private fun RequirementEvaluationResponse.toDomain(): RequirementEvaluation =
         requirementId = RequirementId(requirementId),
         result =
             when (result) {
-                com.nexusflow.contracts.api.RequirementEvaluationResult.Satisfied -> RequirementEvaluationResult.Satisfied
-                com.nexusflow.contracts.api.RequirementEvaluationResult.NotApplicable -> RequirementEvaluationResult.NotApplicable
+                ContractRequirementEvaluationResult.Satisfied -> RequirementEvaluationResult.Satisfied
+                ContractRequirementEvaluationResult.NotApplicable -> RequirementEvaluationResult.NotApplicable
             },
         explanation = explanation,
     )

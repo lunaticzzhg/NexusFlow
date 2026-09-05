@@ -1,11 +1,15 @@
 package com.nexusflow.ai.planner
 
-import com.nexusflow.ai.provider.ExplanationInvalidException
 import com.nexusflow.ai.provider.StructuredModelProvider
 import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.ai.provider.StructuredModelResult
 import com.nexusflow.ai.provider.StructuredModelResultMetadata
-import com.nexusflow.ai.provider.StructuredModelUsage
+import com.nexusflow.contracts.backendai.common.StructuredModelUsage
+import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
+import com.nexusflow.contracts.backendai.planning.PlanDirection
+import com.nexusflow.contracts.backendai.planning.ExplainPlansRequest
+import com.nexusflow.contracts.backendai.planning.PlanExplanationFact
+import com.nexusflow.contracts.backendai.planning.PlanForExplanation
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
 import kotlinx.serialization.encodeToString
@@ -87,7 +91,7 @@ class StructuredPlanExplainerTest {
                 ),
             )
 
-            assertFailsWith<ExplanationInvalidException> {
+            assertFailsWith<InvalidCapabilityResultException> {
                 StructuredPlanExplainer(provider).explain(context())
             }
             Unit
@@ -188,14 +192,14 @@ class StructuredPlanExplainerTest {
         runBlocking {
             val provider = ScriptedExplanationProvider("""{"wrong":"shape"}""", """{"still":"wrong"}""")
 
-            assertFailsWith<ExplanationInvalidException> {
+            assertFailsWith<InvalidCapabilityResultException> {
                 StructuredPlanExplainer(provider).explain(context())
             }
             assertEquals(2, provider.requests.size)
         }
 
-    private fun context(): PlanExplanationContext =
-        PlanExplanationContext(
+    private fun context(): ExplainPlansRequest =
+        ExplainPlansRequest(
             planningRequestId = "planning-request-1",
             plans = listOf(
                 PlanForExplanation(

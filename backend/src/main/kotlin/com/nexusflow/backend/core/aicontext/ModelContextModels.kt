@@ -1,6 +1,6 @@
 package com.nexusflow.backend.core.aicontext
 
-import com.nexusflow.ai.provider.StructuredModelCapability
+import com.nexusflow.contracts.backendai.common.StructuredModelCapability
 import com.nexusflow.backend.core.identity.ActorContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject

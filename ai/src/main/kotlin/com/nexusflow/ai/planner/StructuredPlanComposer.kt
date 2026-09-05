@@ -1,12 +1,32 @@
 package com.nexusflow.ai.planner
 
-import com.nexusflow.ai.provider.InvalidPlanProposalException
-import com.nexusflow.ai.provider.StructuredModelCapability
+import com.nexusflow.ai.provider.InvalidStructuredOutputException as ProviderInvalidStructuredOutputException
+import com.nexusflow.ai.provider.ProviderRateLimitedException as ProviderRateLimitedModelException
+import com.nexusflow.ai.provider.ProviderRefusedException as ProviderRefusedModelException
+import com.nexusflow.ai.provider.ProviderTimeoutException as ProviderTimeoutModelException
+import com.nexusflow.ai.provider.ProviderUnauthorizedException as ProviderUnauthorizedModelException
+import com.nexusflow.ai.provider.ProviderUnavailableException as ProviderUnavailableModelException
+import com.nexusflow.ai.provider.StructuredModelException
 import com.nexusflow.ai.provider.StructuredModelProvider
 import com.nexusflow.ai.provider.StructuredModelRequest
-import com.nexusflow.ai.provider.StructuredModelRequestDiagnostics
 import com.nexusflow.ai.provider.StructuredModelRequestMetadata
 import com.nexusflow.ai.provider.StructuredOutputSchema
+import com.nexusflow.contracts.backendai.common.CapabilityRateLimitedException
+import com.nexusflow.contracts.backendai.common.CapabilityRefusedException
+import com.nexusflow.contracts.backendai.common.CapabilityTimeoutException
+import com.nexusflow.contracts.backendai.common.CapabilityUnauthorizedException
+import com.nexusflow.contracts.backendai.common.CapabilityUnavailableException
+import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
+import com.nexusflow.contracts.backendai.common.StructuredModelCapability
+import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
+import com.nexusflow.contracts.backendai.planning.CandidateOpportunity
+import com.nexusflow.contracts.backendai.planning.CreatePlansResult
+import com.nexusflow.contracts.backendai.planning.PlanDirection
+import com.nexusflow.contracts.backendai.planning.PlanProposal
+import com.nexusflow.contracts.backendai.planning.PlanModelMetadata
+import com.nexusflow.contracts.backendai.planning.CreatePlansRequest
+import com.nexusflow.contracts.backendai.planning.PlanningRequirement
+import com.nexusflow.contracts.backendai.planning.PlanComposer
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
 import kotlinx.coroutines.CancellationException
@@ -26,14 +46,14 @@ class StructuredPlanComposer(
         encodeDefaults = true
     },
 ) : PlanComposer {
-    override suspend fun compose(context: PlanningContext): PlanComposition {
+    override suspend fun compose(context: CreatePlansRequest): CreatePlansResult {
         var attempt = 1
         while (true) {
             try {
                 return requestOnce(context, attempt)
             } catch (error: RepairablePlanCompositionException) {
                 if (attempt == MAX_ATTEMPTS) {
-                    throw InvalidPlanProposalException(error.message ?: "Invalid plan proposal", error)
+                    throw InvalidCapabilityResultException(error.message ?: "Invalid plan proposal", error)
                 }
                 logRetry(nextAttempt = attempt + 1)
                 attempt += 1
@@ -55,9 +75,9 @@ class StructuredPlanComposer(
     }
 
     private suspend fun requestOnce(
-        context: PlanningContext,
+        context: CreatePlansRequest,
         attempt: Int,
-    ): PlanComposition {
+    ): CreatePlansResult {
         val userPayload = context.toPayload()
         val requestDiagnostics = context.toRequestDiagnostics(userPayload)
         val result = try {
@@ -69,7 +89,7 @@ class StructuredPlanComposer(
                     metadata = StructuredModelRequestMetadata(
                         requestId = context.planningRequestId,
                         promptVersion = COMPOSE_PLANS_PROMPT_VERSION,
-                        capability = StructuredModelCapability.PlanComposition,
+                        capability = StructuredModelCapability.CreatePlans,
                         attemptNumber = attempt,
                         diagnostics = requestDiagnostics,
                     ),
@@ -77,6 +97,8 @@ class StructuredPlanComposer(
             )
         } catch (error: CancellationException) {
             throw error
+        } catch (error: StructuredModelException) {
+            throw error.toPlanCapabilityException()
         }
         val payload = try {
             json.decodeFromString<PlanCompositionPayload>(result.outputText)
@@ -87,15 +109,15 @@ class StructuredPlanComposer(
     }
 
     private fun PlanCompositionPayload.toComposition(
-        context: PlanningContext,
+        context: CreatePlansRequest,
         metadata: PlanModelMetadata,
-    ): PlanComposition {
+    ): CreatePlansResult {
         if (drafts.size !in 1..3) {
             throw RepairablePlanCompositionException("Plan composition must return 1 to 3 plans")
         }
         val allowedOpportunityIds = context.opportunities.map { it.id }.toSet()
         val seenSignatures = mutableSetOf<List<String>>()
-        return PlanComposition(
+        return CreatePlansResult(
             drafts = drafts.map { payload ->
                 val direction = payload.direction.toPlanDirection()
                 val refs = payload.opportunityRefs.map { it.trim() }
@@ -108,7 +130,7 @@ class StructuredPlanComposer(
                 if (!seenSignatures.add(refs.distinct().sorted())) {
                     throw RepairablePlanCompositionException("Plan composition returned duplicate opportunity refs")
                 }
-                PlanDraft(direction = direction, opportunityRefs = refs.distinct())
+                PlanProposal(direction = direction, opportunityRefs = refs.distinct())
             },
             metadata = metadata,
         )
@@ -139,7 +161,7 @@ class StructuredPlanComposer(
         """.trimIndent()
     }
 
-    private fun PlanningContext.toPayload(): JsonObject =
+    private fun CreatePlansRequest.toPayload(): JsonObject =
         json.encodeToJsonElement(
             PlanningModelPayload(
                 request = PlanningModelRequest(
@@ -155,7 +177,7 @@ class StructuredPlanComposer(
             ),
         ).jsonObject
 
-    private fun PlanningContext.toRequestDiagnostics(userPayload: JsonObject): StructuredModelRequestDiagnostics =
+    private fun CreatePlansRequest.toRequestDiagnostics(userPayload: JsonObject): StructuredModelRequestDiagnostics =
         diagnostics.copy(
             selectedContextKeyCount = diagnostics.selectedContextKeyCount.takeUnless { it == 0 } ?: optionalContext.size,
             resolvedContextBlockCount = diagnostics.resolvedContextBlockCount.takeUnless { it == 0 } ?: optionalContext.size,
@@ -176,6 +198,17 @@ class StructuredPlanComposer(
             usage = usage,
             diagnostics = requestDiagnostics,
         )
+
+    private fun StructuredModelException.toPlanCapabilityException(): RuntimeException =
+        when (this) {
+            is ProviderUnauthorizedModelException -> CapabilityUnauthorizedException(this)
+            is ProviderRateLimitedModelException -> CapabilityRateLimitedException(this)
+            is ProviderTimeoutModelException -> CapabilityTimeoutException(this)
+            is ProviderRefusedModelException -> CapabilityRefusedException()
+            is ProviderUnavailableModelException -> CapabilityUnavailableException(this)
+            is ProviderInvalidStructuredOutputException -> InvalidCapabilityResultException(message ?: "Invalid structured output", this)
+            else -> CapabilityUnavailableException(this)
+        }
 
     private fun PlanningRequirement.toModelPayload(): PlanningRequirementPayload =
         PlanningRequirementPayload(

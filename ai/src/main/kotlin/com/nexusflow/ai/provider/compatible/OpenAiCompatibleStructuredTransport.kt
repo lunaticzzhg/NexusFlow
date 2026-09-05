@@ -7,12 +7,12 @@ import com.nexusflow.ai.provider.ProviderTimeoutException
 import com.nexusflow.ai.provider.ProviderUnauthorizedException
 import com.nexusflow.ai.provider.ProviderUnavailableException
 import com.nexusflow.ai.provider.StructuredModelFinishCategory
-import com.nexusflow.ai.provider.StructuredModelCapability
+import com.nexusflow.contracts.backendai.common.StructuredModelCapability
 import com.nexusflow.ai.provider.StructuredModelException
 import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.ai.provider.StructuredModelResult
 import com.nexusflow.ai.provider.StructuredModelResultMetadata
-import com.nexusflow.ai.provider.StructuredModelUsage
+import com.nexusflow.contracts.backendai.common.StructuredModelUsage
 import com.nexusflow.observability.LogFields
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
@@ -245,9 +245,9 @@ private fun String.toSnakeCase(): String =
 
 private fun StructuredModelCapability.toLogOperation(): String =
     when (this) {
-        StructuredModelCapability.UserMessageUnderstanding -> "understanding"
-        StructuredModelCapability.PlanComposition -> "plan_compose"
-        StructuredModelCapability.PlanExplanation -> "plan_explain"
+        StructuredModelCapability.UnderstandMessage -> "understanding"
+        StructuredModelCapability.CreatePlans -> "plan_compose"
+        StructuredModelCapability.ExplainPlans -> "plan_explain"
     }
 
 private const val AI_COMPONENT = "ai"

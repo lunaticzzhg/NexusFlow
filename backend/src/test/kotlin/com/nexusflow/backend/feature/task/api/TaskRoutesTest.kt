@@ -1,6 +1,6 @@
 package com.nexusflow.backend.feature.task.api
 
-import com.nexusflow.ai.understanding.InvalidStructuredOutputException
+import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
 import com.nexusflow.backend.feature.task.RecordingOpportunityProvider
 import com.nexusflow.backend.core.http.configureHttpPlatform
 import com.nexusflow.backend.core.identity.ActorContext
@@ -14,15 +14,15 @@ import com.nexusflow.backend.feature.task.createTaskServices
 import com.nexusflow.backend.feature.task.locationChange
 import com.nexusflow.backend.feature.task.postgresDataSource
 import com.nexusflow.backend.feature.task.understandingOutcome
-import com.nexusflow.contracts.api.CreateTaskRequest
-import com.nexusflow.contracts.api.KResponse
-import com.nexusflow.contracts.api.PlanningStatus
-import com.nexusflow.contracts.api.RequirementKind
-import com.nexusflow.contracts.api.RequirementStrength
-import com.nexusflow.contracts.api.RequirementValueResponse
-import com.nexusflow.contracts.api.SendTaskMessageRequest
-import com.nexusflow.contracts.api.TaskDetailResponse
-import com.nexusflow.contracts.api.UpdateRequirementRequest
+import com.nexusflow.contracts.appbackend.task.CreateTaskRequest
+import com.nexusflow.contracts.appbackend.common.KResponse
+import com.nexusflow.contracts.appbackend.task.PlanningStatus
+import com.nexusflow.contracts.appbackend.task.RequirementKind
+import com.nexusflow.contracts.appbackend.task.RequirementStrength
+import com.nexusflow.contracts.appbackend.task.RequirementValueResponse
+import com.nexusflow.contracts.appbackend.task.SendTaskMessageRequest
+import com.nexusflow.contracts.appbackend.task.TaskDetailResponse
+import com.nexusflow.contracts.appbackend.task.UpdateRequirementRequest
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.delete
 import io.ktor.client.request.header
@@ -144,7 +144,7 @@ class TaskRoutesTest {
                         understandingOutcome(changes = listOf(activityDomainChange("movie", "movie")))
                     },
                     {
-                        throw InvalidStructuredOutputException("temporary bad output")
+                        throw InvalidCapabilityResultException("temporary bad output")
                     },
                 ),
             )

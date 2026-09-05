@@ -1,15 +1,12 @@
 package com.nexusflow.backend.feature.task
 
-import com.nexusflow.ai.planner.PlanComposer
-import com.nexusflow.ai.planner.PlanExplainer
-import com.nexusflow.ai.planner.StructuredPlanComposer
-import com.nexusflow.ai.planner.StructuredPlanExplainer
-import com.nexusflow.ai.provider.StructuredModelProvider
-import com.nexusflow.ai.provider.deepseek.DeepSeekStructuredModelProvider
-import com.nexusflow.ai.provider.openai.OpenAiStructuredModelProvider
-import com.nexusflow.ai.provider.qwen.QwenStructuredModelProvider
-import com.nexusflow.ai.understanding.StructuredUserMessageUnderstanding
-import com.nexusflow.ai.understanding.UserMessageUnderstanding
+import com.nexusflow.ai.AiTaskCapabilities
+import com.nexusflow.ai.AiTaskCapabilityConfig
+import com.nexusflow.ai.AiTaskCapabilityProvider
+import com.nexusflow.ai.createAiTaskCapabilities
+import com.nexusflow.contracts.backendai.planning.PlanComposer
+import com.nexusflow.contracts.backendai.planning.PlanExplainer
+import com.nexusflow.contracts.backendai.understanding.UserMessageUnderstanding
 import com.nexusflow.backend.core.aicontext.ModelContextAssembler
 import com.nexusflow.backend.core.aicontext.ModelContextCatalog
 import com.nexusflow.backend.core.config.AiProvider
@@ -63,37 +60,23 @@ fun Application.configureTaskDependencies() {
                 }
             }
         }
-        provide<StructuredModelProvider?> {
+        provide<AiTaskCapabilities?> {
             val config = resolve<BackendRuntimeConfig>()
             val ai = config.ai ?: return@provide null
-            when (ai.provider) {
-                AiProvider.OpenAi -> OpenAiStructuredModelProvider(
-                    client = resolve<HttpClient>(),
-                    apiKey = ai.apiKey,
-                    model = ai.model,
-                    baseUrl = ai.baseUrl,
-                    logger = resolve<StructuredLogger>(),
-                )
-                AiProvider.Qwen -> QwenStructuredModelProvider(
-                    client = resolve<HttpClient>(),
+            createAiTaskCapabilities(
+                client = resolve<HttpClient>(),
+                config = AiTaskCapabilityConfig(
+                    provider = ai.provider.toAiCapabilityProvider(),
                     apiKey = ai.apiKey,
                     model = ai.model,
                     baseUrl = ai.baseUrl,
                     enableThinking = ai.enableThinking ?: false,
-                    logger = resolve<StructuredLogger>(),
-                )
-                AiProvider.DeepSeek -> DeepSeekStructuredModelProvider(
-                    client = resolve<HttpClient>(),
-                    apiKey = ai.apiKey,
-                    model = ai.model,
-                    baseUrl = ai.baseUrl,
-                    logger = resolve<StructuredLogger>(),
-                )
-            }
+                ),
+                logger = resolve<StructuredLogger>(),
+            )
         }
         provide<UserMessageUnderstanding?> {
-            val provider = resolve<StructuredModelProvider?>() ?: return@provide null
-            StructuredUserMessageUnderstanding(provider, logger = resolve<StructuredLogger>())
+            resolve<AiTaskCapabilities?>()?.understanding
         }
         provide<ModelContextCatalog> {
             ModelContextCatalog(
@@ -106,12 +89,10 @@ fun Application.configureTaskDependencies() {
             ModelContextAssembler(resolve<ModelContextCatalog>())
         }
         provide<PlanComposer?> {
-            val provider = resolve<StructuredModelProvider?>() ?: return@provide null
-            StructuredPlanComposer(provider, logger = resolve<StructuredLogger>())
+            resolve<AiTaskCapabilities?>()?.planComposer
         }
         provide<PlanExplainer?> {
-            val provider = resolve<StructuredModelProvider?>() ?: return@provide null
-            StructuredPlanExplainer(provider, logger = resolve<StructuredLogger>())
+            resolve<AiTaskCapabilities?>()?.planExplainer
         }
         provide<OpportunityProvider> {
             ControlledOpportunityProvider()
@@ -144,6 +125,13 @@ fun Application.configureTaskDependencies() {
         }
     }
 }
+
+private fun AiProvider.toAiCapabilityProvider(): AiTaskCapabilityProvider =
+    when (this) {
+        AiProvider.OpenAi -> AiTaskCapabilityProvider.OpenAi
+        AiProvider.Qwen -> AiTaskCapabilityProvider.Qwen
+        AiProvider.DeepSeek -> AiTaskCapabilityProvider.DeepSeek
+    }
 
 internal fun StructuredLogger.logTaskUnderstandingFailure(event: TaskUnderstandingFailureEvent) {
     warn(

@@ -1,6 +1,6 @@
 package com.nexusflow.backend.feature.profile.application
 
-import com.nexusflow.ai.provider.StructuredModelCapability
+import com.nexusflow.contracts.backendai.common.StructuredModelCapability
 import com.nexusflow.backend.core.aicontext.ModelContextDefinition
 import com.nexusflow.backend.core.aicontext.ModelContextKey
 import com.nexusflow.backend.core.aicontext.ModelContextLifecycle
@@ -244,8 +244,8 @@ private fun preferenceDefinition(
             maxContentChars = 512,
             schemaVersion = 1,
             allowedCapabilities = setOf(
-                StructuredModelCapability.UserMessageUnderstanding,
-                StructuredModelCapability.PlanComposition,
+                StructuredModelCapability.UnderstandMessage,
+                StructuredModelCapability.CreatePlans,
             ),
         ),
     )

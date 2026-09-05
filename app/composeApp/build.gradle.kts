@@ -25,7 +25,7 @@ kotlin {
     }
     sourceSets {
         commonMain.dependencies {
-            implementation(project(":contracts"))
+            implementation(project(":contracts:app-backend"))
             implementation(project(":observability"))
             implementation(compose.runtime)
             implementation(compose.foundation)
