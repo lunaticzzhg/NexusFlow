@@ -65,8 +65,10 @@ data class TaskDetail(
 
 enum class PlanningState {
     Idle,
-    Planning,
-    Failed,
+    Ready,
+    NoCandidates,
+    NoFeasiblePlan,
+    Unavailable,
 }
 
 @JvmInline
@@ -147,8 +149,11 @@ enum class ActivityModeValue {
 }
 
 data class TaskMessage(
+    val id: String,
     val role: MessageRole,
     val content: String,
+    val clientMessageId: String?,
+    val understoodAt: Instant?,
 )
 
 enum class MessageRole {

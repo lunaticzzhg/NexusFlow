@@ -168,6 +168,11 @@ dependency boundary
 - Context/tenant/task/planning identity:
 
 ## Coordination
+- Primary commit boundary:
+- Normal empty/no-match outcome:
+- Partial success rule:
+- Post-commit downstream failure rule:
+- Retry/idempotency rule:
 - Entry:
 - End-to-end main flow (5-9 semantic nodes):
 - Success terminal:

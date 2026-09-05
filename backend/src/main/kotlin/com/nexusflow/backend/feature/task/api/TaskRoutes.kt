@@ -7,9 +7,11 @@ import com.nexusflow.backend.core.identity.UnauthenticatedException
 import com.nexusflow.backend.feature.task.application.InvalidTaskRequestException
 import com.nexusflow.backend.feature.task.application.InvalidTaskOperationException
 import com.nexusflow.backend.feature.task.application.MissingTaskScopeException
+import com.nexusflow.backend.feature.task.application.PlanningOutcome
 import com.nexusflow.backend.feature.task.application.PlanningService
 import com.nexusflow.backend.feature.task.application.TaskConflictException
 import com.nexusflow.backend.feature.task.application.TaskDependencyUnavailableException
+import com.nexusflow.backend.feature.task.application.TaskMutationResult
 import com.nexusflow.backend.feature.task.application.TaskNotFoundException
 import com.nexusflow.backend.feature.task.application.TaskService
 import com.nexusflow.backend.feature.task.domain.ActivityModeValue
@@ -203,15 +205,41 @@ private fun TaskDetail.toSummaryResponse(): TaskSummaryResponse =
 
 private fun TaskDetail.toResponse(): TaskDetailResponse {
     val currentPlans = plans.filter { it.revision == task.revision }
+    return toResponse(currentPlans, currentPlans.defaultPlanningStatus())
+}
+
+private fun TaskMutationResult.toResponse(): TaskDetailResponse {
+    val currentPlans = detail.plans.filter { it.revision == detail.task.revision }
+    return detail.toResponse(currentPlans, planningOutcome.toResponseStatus(currentPlans))
+}
+
+private fun TaskDetail.toResponse(
+    currentPlans: List<Plan>,
+    planningStatus: PlanningStatus,
+): TaskDetailResponse {
     val currentPlanIds = currentPlans.mapTo(mutableSetOf()) { it.id }
     return TaskDetailResponse(
         task = task.toResponse(currentPlanIds),
         requirements = requirements.map { it.toResponse() },
         messages = messages.map { it.toResponse() },
         plans = currentPlans.map { it.toResponse() },
-        planning = PlanningStatusResponse(PlanningStatus.Idle),
+        planning = PlanningStatusResponse(planningStatus),
     )
 }
+
+private fun PlanningOutcome.toResponseStatus(currentPlans: List<Plan>): PlanningStatus =
+    when (this) {
+        PlanningOutcome.NotAttempted,
+        PlanningOutcome.Superseded,
+        -> currentPlans.defaultPlanningStatus()
+        PlanningOutcome.Ready -> PlanningStatus.Ready
+        PlanningOutcome.NoCandidates -> PlanningStatus.NoCandidates
+        PlanningOutcome.NoFeasiblePlan -> PlanningStatus.NoFeasiblePlan
+        PlanningOutcome.Unavailable -> PlanningStatus.Unavailable
+    }
+
+private fun List<Plan>.defaultPlanningStatus(): PlanningStatus =
+    if (isEmpty()) PlanningStatus.Idle else PlanningStatus.Ready
 
 private fun Task.toResponse(currentPlanIds: Set<com.nexusflow.backend.feature.task.domain.PlanId>): TaskResponse =
     TaskResponse(

@@ -181,12 +181,15 @@ private fun com.nexusflow.contracts.api.RequirementSource.toDomain(): Requiremen
 
 private fun TaskMessageResponse.toDomain(): TaskMessage =
     TaskMessage(
+        id = id,
         role =
             when (role) {
                 com.nexusflow.contracts.api.MessageRole.User -> MessageRole.User
                 com.nexusflow.contracts.api.MessageRole.Assistant -> MessageRole.Assistant
             },
         content = content,
+        clientMessageId = clientMessageId,
+        understoodAt = understoodAt,
     )
 
 internal fun PlanResponse.toDomain(): TaskPlan =
@@ -246,4 +249,8 @@ private fun PlanSourceRefResponse.toDomain(): PlanSourceRef =
 private fun PlanningStatus.toDomain(): PlanningState =
     when (this) {
         PlanningStatus.Idle -> PlanningState.Idle
+        PlanningStatus.Ready -> PlanningState.Ready
+        PlanningStatus.NoCandidates -> PlanningState.NoCandidates
+        PlanningStatus.NoFeasiblePlan -> PlanningState.NoFeasiblePlan
+        PlanningStatus.Unavailable -> PlanningState.Unavailable
     }

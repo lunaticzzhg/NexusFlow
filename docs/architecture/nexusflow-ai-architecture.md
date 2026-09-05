@@ -239,6 +239,8 @@ Kotlin deterministic code 拥有：
 
 当 model output 与 deterministic rule 冲突时，rule 获胜，AI result 被拒绝或降级为不可执行 proposal。
 
+Grounded Plan 必须引用 Backend 提供的 verified candidate / Opportunity snapshot；AI 不得凭空生成 authoritative 地点、价格、时间、库存、来源或可执行 slot 来补齐缺失候选。Candidate set 为空时，Backend 不调用 PlanComposer；candidate absence 是正常业务 outcome，不是 model/provider failure。PlanExplainer 只是非 authoritative enrichment：它可以补充 title、summary、reasons 和 tradeoffs，但不能否定已经通过 Backend deterministic validation 的 Plan；解释失败或引用非法 fact 时应降级为基础 Plan。
+
 ## 8. Coroutine、Lifecycle 与 Retry
 
 AI runtime 必须遵循结构化并发和 cancellation propagation。Timeout、retry、provider unavailable、invalid structured output 和 policy rejection 是不同 outcome category，不能都揉成“模型失败”。

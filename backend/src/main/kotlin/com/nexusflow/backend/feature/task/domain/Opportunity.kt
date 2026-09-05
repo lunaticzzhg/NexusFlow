@@ -4,6 +4,11 @@ import java.time.Instant
 import java.util.Locale
 
 interface OpportunityProvider {
+    /**
+     * Returns an empty list when discovery completed successfully but no current
+     * opportunity matches the request. Provider/network outages must surface as
+     * typed technical failures instead of being encoded as an empty result.
+     */
     fun discover(request: OpportunityRequest): List<Opportunity>
 }
 

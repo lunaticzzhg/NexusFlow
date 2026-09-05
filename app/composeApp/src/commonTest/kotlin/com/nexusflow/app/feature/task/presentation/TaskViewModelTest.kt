@@ -6,11 +6,14 @@ import com.nexusflow.app.core.error.AppException
 import com.nexusflow.app.core.observability.AppTraceManager
 import com.nexusflow.app.feature.task.data.TaskFixtures
 import com.nexusflow.app.feature.task.domain.CreateTaskCommand
+import com.nexusflow.app.feature.task.domain.MessageRole
+import com.nexusflow.app.feature.task.domain.PlanningState
 import com.nexusflow.app.feature.task.domain.RemoveRequirementCommand
 import com.nexusflow.app.feature.task.domain.SelectPlanCommand
 import com.nexusflow.app.feature.task.domain.SendTaskMessageCommand
 import com.nexusflow.app.feature.task.domain.TaskDetail
 import com.nexusflow.app.feature.task.domain.TaskId
+import com.nexusflow.app.feature.task.domain.TaskMessage
 import com.nexusflow.app.feature.task.domain.TaskRepository
 import com.nexusflow.app.feature.task.domain.TaskSummary
 import com.nexusflow.app.feature.task.domain.UpdateRequirementCommand
@@ -39,6 +42,7 @@ import kotlinx.coroutines.test.setMain
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 
 class TaskViewModelTest {
     @Test
@@ -80,6 +84,44 @@ class TaskViewModelTest {
 
             assertEquals(
                 listOf(CreateTaskCommand("create-1", "Plan Saturday", "Asia/Shanghai")),
+                repository.createCommands,
+            )
+            assertEquals(listOf(TaskFixtures.detail.id), effects.map { (it as TaskCreateEffect.OpenTask).taskId })
+        }
+
+    @Test
+    fun `create retry reuses existing creation request id after unconfirmed failure`() =
+        viewModelTest {
+            val repository =
+                RecordingTaskRepository(
+                    createResults =
+                        listOf(
+                            Result.failure(AppException.Unavailable()),
+                            Result.success(TaskFixtures.detail),
+                        ),
+                )
+            var nextId = 1
+            val viewModel =
+                TaskCreateViewModel(
+                    repository = repository,
+                    clientIdFactory = { "create-${nextId++}" },
+                    timeZoneIdProvider = { "Asia/Shanghai" },
+                )
+            val effects = mutableListOf<TaskCreateEffect>()
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.effects.toList(effects) }
+            runCurrent()
+
+            viewModel.onAction(TaskCreateAction.RequestChanged("Plan Saturday"))
+            viewModel.onAction(TaskCreateAction.Submit)
+            advanceUntilIdle()
+            viewModel.onAction(TaskCreateAction.RetrySubmit)
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(
+                    CreateTaskCommand("create-1", "Plan Saturday", "Asia/Shanghai"),
+                    CreateTaskCommand("create-1", "Plan Saturday", "Asia/Shanghai"),
+                ),
                 repository.createCommands,
             )
             assertEquals(listOf(TaskFixtures.detail.id), effects.map { (it as TaskCreateEffect.OpenTask).taskId })
@@ -189,6 +231,130 @@ class TaskViewModelTest {
                 ),
                 traceManager.operations,
             )
+        }
+
+    @Test
+    fun `detail accepts no candidates planning state without marking message failed`() =
+        viewModelTest {
+            val noCandidates = TaskFixtures.detail.copy(plans = emptyList(), planningState = PlanningState.NoCandidates)
+            val repository =
+                RecordingTaskRepository(
+                    detailResults = listOf(Result.success(TaskFixtures.detail)),
+                    sendResults = listOf(Result.success(noCandidates)),
+                )
+            val viewModel =
+                TaskDetailViewModel(
+                    taskId = TaskFixtures.detail.id,
+                    repository = repository,
+                    clientMessageIdFactory = { "message-1" },
+                    timeZoneIdProvider = { "Asia/Shanghai" },
+                )
+
+            viewModel.onAction(TaskDetailAction.Load)
+            advanceUntilIdle()
+            viewModel.onAction(TaskDetailAction.DraftChanged("Keep it nearby"))
+            viewModel.onAction(TaskDetailAction.SendMessage)
+            advanceUntilIdle()
+
+            val content = assertIs<TaskDetailContent.Success>(viewModel.state.value.content)
+            assertEquals(PlanningState.NoCandidates, content.detail.planningState)
+            assertNull(content.failedMessage)
+            assertNull(content.operationFailure)
+            assertEquals(TaskDetailOperation.Idle, content.operation)
+        }
+
+    @Test
+    fun `detail retries server persisted pending message with original client message id`() =
+        viewModelTest {
+            val pendingDetail =
+                TaskFixtures.detail.copy(
+                    messages =
+                        listOf(
+                            TaskMessage(
+                                id = "server-message-1",
+                                role = MessageRole.User,
+                                content = "Keep it nearby",
+                                clientMessageId = "server-client-message-1",
+                                understoodAt = null,
+                            ),
+                        ),
+                    plans = emptyList(),
+                    planningState = PlanningState.Unavailable,
+                )
+            val repository =
+                RecordingTaskRepository(
+                    detailResults = listOf(Result.success(pendingDetail)),
+                    sendResults = listOf(Result.success(TaskFixtures.detail.copy(revision = 2))),
+                )
+            val viewModel =
+                TaskDetailViewModel(
+                    taskId = TaskFixtures.detail.id,
+                    repository = repository,
+                    timeZoneIdProvider = { "Asia/Shanghai" },
+                )
+
+            viewModel.onAction(TaskDetailAction.Load)
+            advanceUntilIdle()
+            viewModel.onAction(TaskDetailAction.RetryPersistedMessage("server-client-message-1"))
+            val retrying = assertIs<TaskDetailContent.Success>(viewModel.state.value.content)
+            assertEquals(TaskDetailOperation.SendingMessage("server-client-message-1"), retrying.operation)
+            assertNull(retrying.pendingMessage)
+            assertNull(retrying.failedMessage)
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(SendTaskMessageCommand(TaskFixtures.detail.id, "server-client-message-1", "Keep it nearby", "Asia/Shanghai")),
+                repository.sendCommands,
+            )
+            val content = assertIs<TaskDetailContent.Success>(viewModel.state.value.content)
+            assertNull(content.failedMessage)
+            assertEquals(TaskDetailOperation.Idle, content.operation)
+        }
+
+    @Test
+    fun `detail persisted pending message retry failure does not become unsent failed message`() =
+        viewModelTest {
+            val pendingDetail =
+                TaskFixtures.detail.copy(
+                    messages =
+                        listOf(
+                            TaskMessage(
+                                id = "server-message-1",
+                                role = MessageRole.User,
+                                content = "Keep it nearby",
+                                clientMessageId = "server-client-message-1",
+                                understoodAt = null,
+                            ),
+                        ),
+                    plans = emptyList(),
+                    planningState = PlanningState.Unavailable,
+                )
+            val repository =
+                RecordingTaskRepository(
+                    detailResults = listOf(Result.success(pendingDetail)),
+                    sendResults = listOf(Result.failure(AppException.Unavailable())),
+                )
+            val viewModel =
+                TaskDetailViewModel(
+                    taskId = TaskFixtures.detail.id,
+                    repository = repository,
+                    timeZoneIdProvider = { "Asia/Shanghai" },
+                )
+
+            viewModel.onAction(TaskDetailAction.Load)
+            advanceUntilIdle()
+            viewModel.onAction(TaskDetailAction.RetryPersistedMessage("server-client-message-1"))
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(SendTaskMessageCommand(TaskFixtures.detail.id, "server-client-message-1", "Keep it nearby", "Asia/Shanghai")),
+                repository.sendCommands,
+            )
+            val content = assertIs<TaskDetailContent.Success>(viewModel.state.value.content)
+            assertNull(content.pendingMessage)
+            assertNull(content.failedMessage)
+            assertNull(content.operationFailure)
+            assertEquals(TaskDetailOperation.Idle, content.operation)
         }
 }
 

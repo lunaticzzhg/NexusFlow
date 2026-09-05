@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nexusflow.app.core.design.AppSpacing
 import com.nexusflow.app.feature.task.domain.PlanId
+import com.nexusflow.app.feature.task.domain.PlanningState
 import com.nexusflow.app.feature.task.domain.TaskDetail
 import com.nexusflow.app.feature.task.domain.TaskMessage
 import kotlinx.coroutines.launch
@@ -54,8 +55,15 @@ internal sealed interface TaskTranscriptItem {
         val message: TaskMessage,
         val index: Int,
     ) : TaskTranscriptItem {
-        override val key: String = "message-$index-${message.role}-${message.content.hashCode()}"
+        override val key: String = "message-${message.id}"
         override val contentType: String = "message-${message.role}"
+    }
+
+    data class PlanningNotice(
+        val state: PlanningState,
+    ) : TaskTranscriptItem {
+        override val key: String = "planning-notice-$state"
+        override val contentType: String = "planning-notice"
     }
 
     data class PendingMessage(
@@ -88,6 +96,7 @@ internal fun TaskTranscript(
     expiredPlanIds: Set<PlanId>,
     onSelectPlan: (PlanId) -> Unit,
     onRetryMessage: () -> Unit,
+    onRetryPersistedMessage: (String) -> Unit,
     onRetryOperation: (TaskDetailRetryTarget) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -138,7 +147,14 @@ internal fun TaskTranscript(
                         )
 
                     is TaskTranscriptItem.Message ->
-                        TaskMessageBubble(item.message)
+                        TaskMessageBubble(
+                            message = item.message,
+                            isProcessingRetry = operation == TaskDetailOperation.SendingMessage(item.message.clientMessageId.orEmpty()),
+                            onRetryPersistedMessage = onRetryPersistedMessage,
+                        )
+
+                    is TaskTranscriptItem.PlanningNotice ->
+                        PlanningNoticeBanner(item.state)
 
                     is TaskTranscriptItem.PendingMessage ->
                         PendingTaskMessageBubble(
@@ -197,11 +213,23 @@ private fun TaskDetail.toTranscriptItems(
         messages.forEachIndexed { index, message ->
             add(TaskTranscriptItem.Message(message = message, index = index))
         }
+        planningState.noticeOrNull()?.let { add(TaskTranscriptItem.PlanningNotice(it)) }
         pendingMessage?.let { add(TaskTranscriptItem.PendingMessage(it)) }
         failedMessage?.let { add(TaskTranscriptItem.FailedMessage(it)) }
         if (plans.isNotEmpty()) {
             add(TaskTranscriptItem.Planning)
         }
+    }
+
+private fun PlanningState.noticeOrNull(): PlanningState? =
+    when (this) {
+        PlanningState.NoCandidates,
+        PlanningState.NoFeasiblePlan,
+        PlanningState.Unavailable,
+        -> this
+        PlanningState.Idle,
+        PlanningState.Ready,
+        -> null
     }
 
 private fun LazyListState.isNearBottom(): Boolean {

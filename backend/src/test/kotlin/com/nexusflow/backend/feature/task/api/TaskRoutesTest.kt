@@ -1,5 +1,7 @@
 package com.nexusflow.backend.feature.task.api
 
+import com.nexusflow.ai.understanding.InvalidStructuredOutputException
+import com.nexusflow.backend.feature.task.RecordingOpportunityProvider
 import com.nexusflow.backend.core.http.configureHttpPlatform
 import com.nexusflow.backend.core.identity.ActorContext
 import com.nexusflow.backend.core.identity.ActorResolver
@@ -14,6 +16,7 @@ import com.nexusflow.backend.feature.task.postgresDataSource
 import com.nexusflow.backend.feature.task.understandingOutcome
 import com.nexusflow.contracts.api.CreateTaskRequest
 import com.nexusflow.contracts.api.KResponse
+import com.nexusflow.contracts.api.PlanningStatus
 import com.nexusflow.contracts.api.RequirementKind
 import com.nexusflow.contracts.api.RequirementStrength
 import com.nexusflow.contracts.api.RequirementValueResponse
@@ -121,6 +124,86 @@ class TaskRoutesTest {
                     setBody("""{"clientRequestId":"removed"}""")
                 }
                 assertEquals(HttpStatusCode.NotFound, removedRouteResponse.status)
+            }
+        } finally {
+            dataSource.close()
+        }
+    }
+
+    @Test
+    fun `planning empty and post commit understanding unavailable are returned as successful detail responses`() {
+        val dataSource = postgresDataSource("Task routes outcomes")
+        try {
+            cleanMigrateAndSeed(dataSource)
+            val emptyProvider = RecordingOpportunityProvider().apply { opportunityFactory = { emptyList() } }
+            val services = createTaskServices(
+                dataSource = dataSource,
+                opportunityProvider = emptyProvider,
+                understanding = ScriptedUnderstanding(
+                    {
+                        understandingOutcome(changes = listOf(activityDomainChange("movie", "movie")))
+                    },
+                    {
+                        throw InvalidStructuredOutputException("temporary bad output")
+                    },
+                ),
+            )
+            testApplication {
+                application {
+                    configureHttpPlatform()
+                    routing { taskRoutes(services.taskService, services.planningService, HeaderActorResolver) }
+                }
+
+                val created = postJson<CreateTaskRequest, TaskDetailResponse>(
+                    "/v1/tasks",
+                    CreateTaskRequest("route-no-candidates", "Find a movie", "Asia/Shanghai"),
+                )
+                assertEquals(PlanningStatus.NoCandidates, created.data.planning.status)
+                assertEquals(emptyList(), created.data.plans)
+
+                val sent = postJson<SendTaskMessageRequest, TaskDetailResponse>(
+                    "/v1/tasks/${created.data.task.id}/messages",
+                    SendTaskMessageRequest("route-pending", "Near Futian", "Asia/Shanghai"),
+                )
+                assertEquals(PlanningStatus.Unavailable, sent.data.planning.status)
+                val pending = sent.data.messages.single { it.clientMessageId == "route-pending" }
+                assertEquals(null, pending.understoodAt)
+            }
+        } finally {
+            dataSource.close()
+        }
+    }
+
+    @Test
+    fun `no feasible plan is returned as successful detail response`() {
+        val dataSource = postgresDataSource("Task routes no feasible")
+        try {
+            cleanMigrateAndSeed(dataSource)
+            val movieProvider = RecordingOpportunityProvider().apply {
+                opportunityFactory = {
+                    listOf(com.nexusflow.backend.feature.task.opportunity(id = "00000000-0000-0000-0000-000000000401"))
+                }
+            }
+            val services = createTaskServices(
+                dataSource = dataSource,
+                opportunityProvider = movieProvider,
+                understanding = ScriptedUnderstanding({
+                    understandingOutcome(changes = listOf(activityDomainChange("sports", "sports")))
+                }),
+            )
+            testApplication {
+                application {
+                    configureHttpPlatform()
+                    routing { taskRoutes(services.taskService, services.planningService, HeaderActorResolver) }
+                }
+
+                val created = postJson<CreateTaskRequest, TaskDetailResponse>(
+                    "/v1/tasks",
+                    CreateTaskRequest("route-no-feasible", "Find sports", "Asia/Shanghai"),
+                )
+
+                assertEquals(PlanningStatus.NoFeasiblePlan, created.data.planning.status)
+                assertEquals(emptyList(), created.data.plans)
             }
         } finally {
             dataSource.close()

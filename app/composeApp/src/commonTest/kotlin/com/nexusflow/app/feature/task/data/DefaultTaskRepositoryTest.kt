@@ -7,6 +7,7 @@ import com.nexusflow.app.core.observability.LogLevel
 import com.nexusflow.app.core.observability.LogTag
 import com.nexusflow.app.feature.task.domain.CreateTaskCommand
 import com.nexusflow.app.feature.task.domain.PlanId
+import com.nexusflow.app.feature.task.domain.PlanningState
 import com.nexusflow.app.feature.task.domain.RequirementKind
 import com.nexusflow.app.feature.task.domain.RequirementStrength
 import com.nexusflow.app.feature.task.domain.RequirementValue
@@ -50,7 +51,7 @@ class DefaultTaskRepositoryTest {
             val api =
                 RecordingTaskApi(
                     listResponses = listOf(KResponse(code = 200, data = listOf(summaryResponse()))),
-                    detailResponses = listOf(KResponse(code = 200, data = detailResponse())),
+                    detailResponses = listOf(KResponse(code = 200, data = detailResponse(planningStatus = PlanningStatus.NoCandidates))),
                 )
             val repository = repository(api)
 
@@ -62,6 +63,10 @@ class DefaultTaskRepositoryTest {
             assertEquals(2, detail.revision)
             assertEquals("Liverpool", (detail.requirements.single().value as RequirementValue.Text).value)
             assertEquals(PlanId("plan-1"), detail.plans.single().id)
+            assertEquals(PlanningState.NoCandidates, detail.planningState)
+            assertEquals("message-1", detail.messages.single().id)
+            assertEquals("client-message-1", detail.messages.single().clientMessageId)
+            assertEquals(null, detail.messages.single().understoodAt)
         }
 
     @Test
@@ -210,7 +215,10 @@ private fun summaryResponse(): TaskSummaryResponse =
         updatedAt = Now,
     )
 
-private fun detailResponse(selectedPlanId: String? = null): TaskDetailResponse =
+private fun detailResponse(
+    selectedPlanId: String? = null,
+    planningStatus: PlanningStatus = PlanningStatus.Idle,
+): TaskDetailResponse =
     TaskDetailResponse(
         task =
             TaskResponse(
@@ -245,7 +253,7 @@ private fun detailResponse(selectedPlanId: String? = null): TaskDetailResponse =
                 ),
             ),
         plans = listOf(planResponse()),
-        planning = PlanningStatusResponse(PlanningStatus.Idle),
+        planning = PlanningStatusResponse(planningStatus),
     )
 
 private fun planResponse(): PlanResponse =

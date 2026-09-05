@@ -98,6 +98,18 @@ data class PlanningStatusResponse(
 enum class PlanningStatus {
     @SerialName("idle")
     Idle,
+
+    @SerialName("ready")
+    Ready,
+
+    @SerialName("no_candidates")
+    NoCandidates,
+
+    @SerialName("no_feasible_plan")
+    NoFeasiblePlan,
+
+    @SerialName("unavailable")
+    Unavailable,
 }
 
 @Serializable

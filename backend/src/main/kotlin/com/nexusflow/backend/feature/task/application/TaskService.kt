@@ -45,6 +45,7 @@ import com.nexusflow.backend.feature.task.domain.CreateTaskPersistenceResult
 import com.nexusflow.backend.feature.task.domain.DeleteRequirementCommand
 import com.nexusflow.backend.feature.task.domain.MessageId
 import com.nexusflow.backend.feature.task.domain.MessageRole
+import com.nexusflow.backend.feature.task.domain.Plan
 import com.nexusflow.backend.feature.task.domain.RecordAiUnderstandingAuditCommand
 import com.nexusflow.backend.feature.task.domain.RecordAiUnderstandingAuditResult
 import com.nexusflow.backend.feature.task.domain.Requirement
@@ -89,7 +90,7 @@ class TaskService(
         clientRequestId: String,
         message: String,
         timeZoneId: String,
-    ): TaskDetail {
+    ): TaskMutationResult {
         actor.requireScope(WRITE_SCOPE)
         val owner = actor.taskOwner()
         val requestId = clientRequestId.requireBounded("clientRequestId", MAX_ID_LENGTH)
@@ -123,7 +124,7 @@ class TaskService(
             CreateTaskPersistenceResult.ConflictingRequest -> throw TaskConflictException()
         }
 
-        return understandAndMaybePlan(actor, owner, created, normalizedTimeZoneId)
+        return understandCommittedAndMaybePlan(actor, owner, created, normalizedTimeZoneId)
     }
 
     suspend fun listTasks(actor: ActorContext): List<TaskDetail> {
@@ -146,7 +147,7 @@ class TaskService(
         clientMessageId: String,
         text: String,
         timeZoneId: String,
-    ): TaskDetail {
+    ): TaskMutationResult {
         actor.requireScope(WRITE_SCOPE)
         val owner = actor.taskOwner()
         val parsedTaskId = taskId.toTaskId()
@@ -177,7 +178,7 @@ class TaskService(
                         taskId = parsedTaskId,
                         pendingUnderstanding = result.detail.hasPendingUserMessage(parsedClientMessageId, trimmedText),
                     )
-                    val detail = continueExistingRequestIfNeeded(
+                    val result = continueExistingRequestIfNeeded(
                         actor = actor,
                         owner = owner,
                         detail = result.detail,
@@ -187,20 +188,20 @@ class TaskService(
                     )
                     logTaskMessageFinished(
                         taskId = parsedTaskId,
-                        detail = detail,
+                        result = result,
                         replayed = true,
                         startedAt = operationStartedAt,
                     )
-                    return detail
+                    return result
                 }
                 AppendUserMessageResult.ConflictingMessage -> throw TaskConflictException()
                 AppendUserMessageResult.TaskNotFound -> throw TaskNotFoundException()
             }
 
-            return understandAndMaybePlan(actor, owner, pending, normalizedTimeZoneId).also { detail ->
+            return understandCommittedAndMaybePlan(actor, owner, pending, normalizedTimeZoneId).also { result ->
                 logTaskMessageFinished(
                     taskId = parsedTaskId,
-                    detail = detail,
+                    result = result,
                     replayed = false,
                     startedAt = operationStartedAt,
                 )
@@ -221,7 +222,7 @@ class TaskService(
         kind: RequirementKind,
         value: RequirementValue,
         strength: RequirementStrength,
-    ): TaskDetail {
+    ): TaskMutationResult {
         actor.requireScope(WRITE_SCOPE)
         val owner = actor.taskOwner()
         val detail = when (
@@ -242,14 +243,14 @@ class TaskService(
             RequirementMutationResult.TaskNotFound,
             -> throw TaskNotFoundException()
         }
-        return planningService.planIfReady(actor, owner, detail)
+        return planningService.planIfReady(actor, owner, detail).toMutationResult()
     }
 
     suspend fun deleteRequirement(
         actor: ActorContext,
         taskId: String,
         requirementId: String,
-    ): TaskDetail {
+    ): TaskMutationResult {
         actor.requireScope(WRITE_SCOPE)
         val owner = actor.taskOwner()
         val detail = when (
@@ -267,7 +268,7 @@ class TaskService(
             RequirementMutationResult.TaskNotFound,
             -> throw TaskNotFoundException()
         }
-        return planningService.planIfReady(actor, owner, detail)
+        return planningService.planIfReady(actor, owner, detail).toMutationResult()
     }
 
     private suspend fun continueExistingRequestIfNeeded(
@@ -277,7 +278,7 @@ class TaskService(
         clientMessageId: String,
         text: String,
         timeZoneId: String,
-    ): TaskDetail {
+    ): TaskMutationResult {
         val pendingMessage = detail.messages.firstOrNull { message ->
             message.role == MessageRole.User &&
                 message.clientMessageId == clientMessageId &&
@@ -285,7 +286,7 @@ class TaskService(
                 message.understoodAt == null
         }
         return if (pendingMessage != null) {
-            understandAndMaybePlan(
+            understandCommittedAndMaybePlan(
                 actor = actor,
                 owner = owner,
                 pending = PendingUnderstanding(detail, pendingMessage, detail.task.revision),
@@ -293,7 +294,7 @@ class TaskService(
                 tolerateStaleReplay = true,
             )
         } else {
-            planningService.planIfReady(actor, owner, detail)
+            planningService.planIfReady(actor, owner, detail).toMutationResult()
         }
     }
 
@@ -337,7 +338,7 @@ class TaskService(
 
     private fun logTaskMessageFinished(
         taskId: TaskId,
-        detail: TaskDetail,
+        result: TaskMutationResult,
         replayed: Boolean,
         startedAt: java.time.Instant,
     ) {
@@ -347,9 +348,10 @@ class TaskService(
             fields =
                 logFields {
                     "task_id" value taskId.value.toString()
-                    "task_revision" value detail.task.revision
+                    "task_revision" value result.detail.task.revision
                     "replayed" value replayed
-                    "planning_triggered" value detail.plans.any { it.revision == detail.task.revision }
+                    "planning_triggered" value (result.planningOutcome != PlanningOutcome.NotAttempted)
+                    "planning_outcome" value result.planningOutcome.logValue
                     "duration_ms" value startedAt.elapsedMs()
                 },
         )
@@ -374,13 +376,43 @@ class TaskService(
         )
     }
 
+    private suspend fun understandCommittedAndMaybePlan(
+        actor: ActorContext,
+        owner: TaskOwner,
+        pending: PendingUnderstanding,
+        timeZoneId: String,
+        tolerateStaleReplay: Boolean = false,
+    ): TaskMutationResult =
+        try {
+            understandAndMaybePlan(
+                actor = actor,
+                owner = owner,
+                pending = pending,
+                timeZoneId = timeZoneId,
+                tolerateStaleReplay = tolerateStaleReplay,
+            )
+        } catch (error: TaskDependencyUnavailableException) {
+            logger?.warn(
+                component = TASK_LOG_COMPONENT,
+                event = "task_message_finished",
+                fields =
+                    logFields {
+                        "task_id" value pending.detail.task.id.value.toString()
+                        "task_revision" value pending.detail.task.revision
+                        "processing_outcome" value "understanding_unavailable"
+                        "planning_outcome" value PlanningOutcome.Unavailable.logValue
+                    },
+            )
+            TaskMutationResult(pending.detail, PlanningOutcome.Unavailable)
+        }
+
     private suspend fun understandAndMaybePlan(
         actor: ActorContext,
         owner: TaskOwner,
         pending: PendingUnderstanding,
         timeZoneId: String,
         tolerateStaleReplay: Boolean = false,
-    ): TaskDetail {
+    ): TaskMutationResult {
         val attemptStartedAt = clock.instant()
         pending.recordAiUnderstandingStarted(attemptStartedAt)
         logAiUnderstandingStarted(pending)
@@ -464,16 +496,19 @@ class TaskService(
             -> throw TaskNotFoundException()
             ApplyUnderstandingResult.StaleTaskRevision -> {
                 if (tolerateStaleReplay) {
-                    return repository.findTaskDetail(owner, pending.detail.task.id) ?: throw TaskNotFoundException()
+                    return TaskMutationResult(
+                        repository.findTaskDetail(owner, pending.detail.task.id) ?: throw TaskNotFoundException(),
+                        PlanningOutcome.Superseded,
+                    )
                 }
                 throw TaskConflictException()
             }
         }
 
-        return if (applied.changedPlanningInputs) {
-            planningService.planIfReady(actor, owner, applied.detail)
+        return if (applied.changedPlanningInputs && !outcome.clarification.needed) {
+            planningService.planIfReady(actor, owner, applied.detail).toMutationResult()
         } else {
-            applied.detail
+            TaskMutationResult(applied.detail, PlanningOutcome.NotAttempted)
         }
     }
 
@@ -1005,6 +1040,16 @@ data class TaskUnderstandingFailureEvent(
     val failureType: String,
 )
 
+data class TaskMutationResult(
+    val detail: TaskDetail,
+    val planningOutcome: PlanningOutcome = PlanningOutcome.NotAttempted,
+) {
+    val task: Task get() = detail.task
+    val requirements: List<Requirement> get() = detail.requirements
+    val messages: List<TaskMessage> get() = detail.messages
+    val plans: List<Plan> get() = detail.plans
+}
+
 sealed class TaskServiceException(message: String) : RuntimeException(message)
 
 class MissingTaskScopeException : TaskServiceException("Missing required task scope")
@@ -1031,6 +1076,12 @@ private const val AI_LOG_COMPONENT = "ai"
 
 private fun Throwable.safeFailureCategory(): String =
     (this::class.simpleName ?: "Throwable").toSnakeCase()
+
+private fun PlanningAttemptResult.toMutationResult(): TaskMutationResult =
+    TaskMutationResult(detail, outcome)
+
+private val PlanningOutcome.logValue: String
+    get() = name.toSnakeCase()
 
 private fun String.toSnakeCase(): String =
     buildString(length + 4) {

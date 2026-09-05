@@ -78,6 +78,10 @@ sealed interface TaskDetailAction {
 
     data object RetryMessage : TaskDetailAction
 
+    data class RetryPersistedMessage(
+        val clientMessageId: String,
+    ) : TaskDetailAction
+
     data class RemoveRequirement(
         val requirementId: RequirementId,
     ) : TaskDetailAction

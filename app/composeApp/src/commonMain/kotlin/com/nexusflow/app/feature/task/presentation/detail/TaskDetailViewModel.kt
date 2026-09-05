@@ -6,6 +6,7 @@ import com.nexusflow.app.core.error.AppException
 import com.nexusflow.app.core.observability.AppTraceManager
 import com.nexusflow.app.core.observability.PassthroughAppTraceManager
 import com.nexusflow.app.feature.task.data.newTaskClientId
+import com.nexusflow.app.feature.task.domain.MessageRole
 import com.nexusflow.app.feature.task.domain.PlanId
 import com.nexusflow.app.feature.task.domain.RemoveRequirementCommand
 import com.nexusflow.app.feature.task.domain.RequirementId
@@ -42,6 +43,7 @@ class TaskDetailViewModel(
             is TaskDetailAction.DraftChanged -> updateDraft(action.text)
             TaskDetailAction.SendMessage -> sendMessage()
             TaskDetailAction.RetryMessage -> retryMessage()
+            is TaskDetailAction.RetryPersistedMessage -> retryPersistedMessage(action.clientMessageId)
             is TaskDetailAction.RemoveRequirement -> removeRequirement(action.requirementId)
             is TaskDetailAction.SelectPlan -> selectPlan(action.planId)
             is TaskDetailAction.RetryOperation -> retryOperation(action.target)
@@ -109,6 +111,22 @@ class TaskDetailViewModel(
         )
     }
 
+    private fun retryPersistedMessage(clientMessageId: String) {
+        val current = _state.value.content as? TaskDetailContent.Success ?: return
+        if (current.operation != TaskDetailOperation.Idle) return
+        val message =
+            current.detail.messages.firstOrNull { message ->
+                message.role == MessageRole.User &&
+                    message.clientMessageId == clientMessageId &&
+                    message.understoodAt == null
+            } ?: return
+        retryPersistedMessage(
+            current = current,
+            clientMessageId = clientMessageId,
+            text = message.content,
+        )
+    }
+
     private fun sendPendingMessage(
         current: TaskDetailContent.Success,
         pending: PendingTaskMessage,
@@ -161,6 +179,59 @@ class TaskDetailViewModel(
                                         reason = TaskDetailFailureReason.MessageSendFailed,
                                         retryTarget = null,
                                     ),
+                            ),
+                        )
+                },
+            )
+        }
+    }
+
+    private fun retryPersistedMessage(
+        current: TaskDetailContent.Success,
+        clientMessageId: String,
+        text: String,
+    ) {
+        _state.value =
+            TaskDetailUiState(
+                current.copy(
+                    operation = TaskDetailOperation.SendingMessage(clientMessageId),
+                    pendingMessage = null,
+                    failedMessage = null,
+                    operationFailure = null,
+                ),
+            )
+        viewModelScope.launch {
+            traceManager.withNewResultTrace(
+                operation = "task_message_processing_retry",
+                trigger = "retry",
+            ) {
+                repository.sendMessage(
+                    SendTaskMessageCommand(
+                        taskId = taskId,
+                        clientMessageId = clientMessageId,
+                        text = text,
+                        timeZoneId = timeZoneIdProvider(),
+                    ),
+                )
+            }.fold(
+                onSuccess = { detail ->
+                    val latest = _state.value.content as? TaskDetailContent.Success
+                    _state.value =
+                        TaskDetailUiState(
+                            detailContent(
+                                detail = detail,
+                                draft = latest?.draft.orEmpty(),
+                            ),
+                        )
+                },
+                onFailure = {
+                    val latest = _state.value.content as? TaskDetailContent.Success ?: current
+                    _state.value =
+                        TaskDetailUiState(
+                            latest.copy(
+                                operation = TaskDetailOperation.Idle,
+                                pendingMessage = null,
+                                failedMessage = null,
                             ),
                         )
                 },

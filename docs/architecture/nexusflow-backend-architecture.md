@@ -250,6 +250,8 @@ Route 负责协议输入输出和已知 application/domain failure 到 HTTP 的�
 
 Application Service 应返回或抛出语义清楚的 application/domain failure。不要在每一层复制 try/catch/error normalization。Transport 错误、provider 错误和 domain rejection 应在边界处逐层转义，避免把 raw exception message 泄漏给用户或日志。
 
+Application Service 必须先标出 primary action 与 primary durable commit boundary。正常业务 terminal（例如 empty/no-match、need-clarification、hard feasibility rejection）不得通过 dependency exception 表达；partial success 应保留已验证的合法结果。Primary durable commit 成功后，后置 AI/provider enrichment 或 planning failure 不得把主动作重新映射为 HTTP 失败，只能作为 response outcome、processing state 或后续可重试状态返回。只有主动作本身无法完成、主动作前依赖不可用、业务冲突、非法请求或未预期 invariant failure，才映射为对应 4xx/5xx。
+
 当前 `AuthRoutes` 展示了最小 Route 责任：接收 request DTO，调用 `AuthService`，把 invalid Google identity、invalid session 和 invalid request 映射为 HTTP error。
 
 ## 10. External Effects、Retry 与 Recovery

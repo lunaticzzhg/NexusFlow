@@ -38,7 +38,7 @@ import com.nexusflow.backend.feature.task.domain.Plan
 import com.nexusflow.backend.feature.task.domain.PlanDirection
 import com.nexusflow.backend.feature.task.domain.PlanDraft
 import com.nexusflow.backend.feature.task.domain.PlanId
-import com.nexusflow.backend.feature.task.domain.PlanValidationResult
+import com.nexusflow.backend.feature.task.domain.PlanValidationFailure
 import com.nexusflow.backend.feature.task.domain.PlanValidator
 import com.nexusflow.backend.feature.task.domain.PlanningContextSnapshot
 import com.nexusflow.backend.feature.task.domain.Requirement
@@ -53,6 +53,7 @@ import com.nexusflow.backend.feature.task.domain.TaskOwner
 import com.nexusflow.backend.feature.task.domain.TaskRepository
 import com.nexusflow.backend.feature.task.domain.TenantId
 import com.nexusflow.backend.feature.task.domain.UserId
+import com.nexusflow.backend.feature.task.domain.isFeasibilityFailure
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
 import kotlinx.coroutines.CancellationException
@@ -89,8 +90,10 @@ class PlanningService(
         actor: ActorContext,
         owner: TaskOwner,
         detail: TaskDetail,
-    ): TaskDetail {
-        if (readinessPolicy.decide(detail) != PlanningDecision.Plan) return detail
+    ): PlanningAttemptResult {
+        if (readinessPolicy.decide(detail) != PlanningDecision.Plan) {
+            return PlanningAttemptResult(detail, PlanningOutcome.NotAttempted)
+        }
         return plan(actor, owner, detail)
     }
 
@@ -124,7 +127,7 @@ class PlanningService(
         actor: ActorContext,
         owner: TaskOwner,
         detail: TaskDetail,
-    ): TaskDetail {
+    ): PlanningAttemptResult {
         val startedAt = clock.instant()
         var stage = "opportunity_discovery"
         var planningFailureLogged = false
@@ -140,13 +143,14 @@ class PlanningService(
             ).filterVerified(now)
             if (opportunities.isEmpty()) {
                 planningFailureLogged = true
-                logPlanningFailed(
+                logPlanningFinished(
                     detail = detail,
                     startedAt = startedAt,
-                    stage = stage,
-                    failureCategory = "no_verified_candidates",
+                    outcome = PlanningOutcome.NoCandidates,
+                    opportunityCount = 0,
+                    planCount = 0,
                 )
-                throw TaskDependencyUnavailableException("Planning candidates are temporarily unavailable")
+                return PlanningAttemptResult(detail, PlanningOutcome.NoCandidates)
             }
 
             stage = "optional_context"
@@ -160,9 +164,22 @@ class PlanningService(
                 referenceTime = now,
             )
             stage = "plan_validation"
-            val materialized = validatePlans(context, drafts)
+            val validation = validatePlans(context, drafts)
+            if (validation.plans.isEmpty()) {
+                val outcome = validation.failures.toPlanningOutcome()
+                planningFailureLogged = true
+                logPlanningFinished(
+                    detail = detail,
+                    startedAt = startedAt,
+                    outcome = outcome,
+                    opportunityCount = opportunities.size,
+                    planCount = 0,
+                    validationFailures = validation.failures,
+                )
+                return PlanningAttemptResult(detail, outcome)
+            }
             stage = "plan_explain"
-            val finalPlans = explainPlans(detail.task.id.value.toString(), materialized, opportunities, now)
+            val finalPlans = explainPlans(detail.task.id.value.toString(), validation.plans, opportunities, now)
 
             stage = "persist"
             val planned = when (
@@ -182,29 +199,39 @@ class PlanningService(
                 PersistPlansResult.StaleTaskRevision -> {
                     logger?.warn(
                         component = PLANNING_LOG_COMPONENT,
-                        event = "planning_persist_conflict",
+                        event = "planning_finished",
                         fields =
                             logFields {
                                 "task_id" value detail.task.id.value.toString()
                                 "task_revision" value detail.task.revision
-                                "failure_category" value "stale_task_revision"
+                                "duration_ms" value Duration.between(startedAt, clock.instant()).toMillis().coerceAtLeast(0)
+                                "outcome" value PlanningOutcome.Superseded.logValue
+                                "stage" value "persist"
                             },
                     )
-                    throw TaskConflictException()
+                    val latest = repository.findTaskDetail(owner, detail.task.id) ?: throw TaskNotFoundException()
+                    return PlanningAttemptResult(latest, PlanningOutcome.Superseded)
                 }
             }
             logPlanningFinished(
                 detail = planned,
                 startedAt = startedAt,
+                outcome = PlanningOutcome.Ready,
                 opportunityCount = opportunities.size,
                 planCount = finalPlans.size,
+                validationFailures = validation.failures,
             )
-            return planned
+            return PlanningAttemptResult(planned, PlanningOutcome.Ready)
         } catch (cause: CancellationException) {
             if (!planningFailureLogged) {
                 logPlanningFailed(detail, startedAt, stage, "cancelled", cause)
             }
             throw cause
+        } catch (cause: TaskDependencyUnavailableException) {
+            if (!planningFailureLogged) {
+                logPlanningUnavailable(detail, startedAt, stage, cause)
+            }
+            return PlanningAttemptResult(detail, PlanningOutcome.Unavailable)
         } catch (cause: Throwable) {
             if (!planningFailureLogged) {
                 logPlanningFailed(detail, startedAt, stage, cause.safeFailureCategory(), cause)
@@ -274,7 +301,7 @@ class PlanningService(
     private fun validatePlans(
         context: PlanningContextSnapshot,
         proposals: List<AiPlanDraft>,
-    ): List<Plan> {
+    ): PlanningValidationDecision {
         val drafts = proposals.map { proposal ->
             PlanDraft(
                 id = PlanId(uuidFactory()),
@@ -282,35 +309,20 @@ class PlanningService(
                 opportunityRefs = proposal.opportunityRefs.map { it.toOpportunityId() },
             )
         }
-        return when (val result = planValidator.validate(context, drafts)) {
-            is PlanValidationResult.Accepted -> {
-                logger?.debug(
-                    component = PLANNING_LOG_COMPONENT,
-                    event = "plan_validation_finished",
-                    fields =
-                        logFields {
-                            "task_id" value context.task.id.value.toString()
-                            "task_revision" value context.task.revision
-                            "plan_count" value result.plans.size
-                        },
-                )
-                result.plans
-            }
-            is PlanValidationResult.Rejected -> {
-                logger?.warn(
-                    component = PLANNING_LOG_COMPONENT,
-                    event = "plan_validation_failed",
-                    fields =
-                        logFields {
-                            "task_id" value context.task.id.value.toString()
-                            "task_revision" value context.task.revision
-                            "failure_count" value result.failures.size
-                            "failure_codes" value result.failures.joinToString(",") { it.code.name.toSnakeCase() }
-                        },
-                )
-                throw TaskDependencyUnavailableException("Planning result is temporarily unavailable")
-            }
-        }
+        val report = planValidator.validate(context, drafts)
+        logger?.debug(
+            component = PLANNING_LOG_COMPONENT,
+            event = "plan_validation_finished",
+            fields =
+                logFields {
+                    "task_id" value context.task.id.value.toString()
+                    "task_revision" value context.task.revision
+                    "plan_count" value report.plans.size
+                    "failure_count" value report.failures.size
+                    "failure_codes" value report.failures.joinToString(",") { it.code.name.toSnakeCase() }
+                },
+        )
+        return PlanningValidationDecision(report.plans, report.failures)
     }
 
     private suspend fun explainPlans(
@@ -319,7 +331,10 @@ class PlanningService(
         opportunities: List<Opportunity>,
         now: Instant,
     ): List<Plan> {
-        val explainer = planExplainer ?: throw TaskDependencyUnavailableException("Planning is temporarily unavailable")
+        val explainer = planExplainer
+            ?: return plans.also {
+                logPlanningDegraded(requestId, plans.firstOrNull()?.revision, "explanation", "dependency_unavailable")
+            }
         val explanationContext = AiPlanExplanationContext(
             planningRequestId = requestId,
             plans = plans.map { it.toAiPlanForExplanation(opportunities) },
@@ -331,30 +346,23 @@ class PlanningService(
         } catch (error: CancellationException) {
             throw error
         } catch (_: StructuredModelException) {
-            throw TaskDependencyUnavailableException("Planning explanation is temporarily unavailable")
+            logPlanningDegraded(requestId, plans.firstOrNull()?.revision, "explanation", "structured_model_exception")
+            return plans
         }
         val factsByPlan = explanationContext.plans.associate { plan ->
             plan.planId to plan.facts.map { it.id }.toSet()
         }
         val narratives = explanation.narratives.associateBy { it.planId }
-        if (narratives.keys != plans.map { it.id.value.toString() }.toSet()) {
-            throw TaskDependencyUnavailableException("Planning explanation is temporarily unavailable")
-        }
         return plans.map { plan ->
             val planId = plan.id.value.toString()
-            val narrative = narratives.getValue(planId)
+            val narrative = narratives[planId]
+                ?: return@map plan.also {
+                    logPlanningDegraded(requestId, plan.revision, "explanation", "missing_narrative")
+                }
             if (narrative.hasInvalidFactRefs(factsByPlan.getValue(planId))) {
-                logger?.warn(
-                    component = PLANNING_LOG_COMPONENT,
-                    event = "plan_explanation_validation_failed",
-                    fields =
-                        logFields {
-                            "task_id" value requestId
-                            "task_revision" value plan.revision
-                            "failure_category" value "invalid_fact_reference"
-                        },
-                )
-                throw TaskDependencyUnavailableException("Planning explanation is temporarily unavailable")
+                return@map plan.also {
+                    logPlanningDegraded(requestId, plan.revision, "explanation", "invalid_fact_reference")
+                }
             }
             plan.copy(
                 title = narrative.title,
@@ -385,8 +393,10 @@ class PlanningService(
     private fun logPlanningFinished(
         detail: TaskDetail,
         startedAt: java.time.Instant,
+        outcome: PlanningOutcome,
         opportunityCount: Int,
         planCount: Int,
+        validationFailures: List<PlanValidationFailure> = emptyList(),
     ) {
         logger?.info(
             component = PLANNING_LOG_COMPONENT,
@@ -396,8 +406,51 @@ class PlanningService(
                     "task_id" value detail.task.id.value.toString()
                     "task_revision" value detail.task.revision
                     "duration_ms" value Duration.between(startedAt, clock.instant()).toMillis().coerceAtLeast(0)
+                    "outcome" value outcome.logValue
                     "opportunity_count" value opportunityCount
                     "plan_count" value planCount
+                    "validation_failure_count" value validationFailures.size
+                    "validation_failure_codes" value validationFailures.joinToString(",") { it.code.name.toSnakeCase() }
+                },
+        )
+    }
+
+    private fun logPlanningUnavailable(
+        detail: TaskDetail,
+        startedAt: java.time.Instant,
+        stage: String,
+        cause: Throwable,
+    ) {
+        logger?.warn(
+            component = PLANNING_LOG_COMPONENT,
+            event = "planning_unavailable",
+            fields =
+                logFields {
+                    "task_id" value detail.task.id.value.toString()
+                    "task_revision" value detail.task.revision
+                    "duration_ms" value Duration.between(startedAt, clock.instant()).toMillis().coerceAtLeast(0)
+                    "stage" value stage
+                    "outcome" value PlanningOutcome.Unavailable.logValue
+                    "failure_category" value cause.safeFailureCategory()
+                },
+        )
+    }
+
+    private fun logPlanningDegraded(
+        requestId: String,
+        taskRevision: Long?,
+        stage: String,
+        failureCategory: String,
+    ) {
+        logger?.warn(
+            component = PLANNING_LOG_COMPONENT,
+            event = "planning_degraded",
+            fields =
+                logFields {
+                    "task_id" value requestId
+                    "task_revision" value taskRevision
+                    "stage" value stage
+                    "failure_category" value failureCategory
                 },
         )
     }
@@ -438,7 +491,12 @@ class PlanningService(
 
     private fun String.toPlanId(): PlanId = PlanId(toUuid("planId"))
 
-    private fun String.toOpportunityId() = OpportunityId(toUuid("opportunityRef"))
+    private fun String.toOpportunityId(): OpportunityId =
+        try {
+            OpportunityId(UUID.fromString(this))
+        } catch (_: IllegalArgumentException) {
+            throw TaskDependencyUnavailableException("Planning result is temporarily unavailable")
+        }
 
     private fun String.toUuid(fieldName: String): UUID =
         try {
@@ -572,6 +630,20 @@ class PlanningService(
         ContractInstant.fromEpochSeconds(epochSecond, nano.toLong())
 }
 
+data class PlanningAttemptResult(
+    val detail: TaskDetail,
+    val outcome: PlanningOutcome,
+)
+
+enum class PlanningOutcome {
+    NotAttempted,
+    Ready,
+    NoCandidates,
+    NoFeasiblePlan,
+    Unavailable,
+    Superseded,
+}
+
 class PlanningReadinessPolicy {
     fun decide(detail: TaskDetail): PlanningDecision =
         if (detail.requirements.isNotEmpty() && detail.plans.none { it.revision == detail.task.revision }) {
@@ -591,11 +663,26 @@ private data class PlanningOptionalContext(
     val diagnostics: StructuredModelRequestDiagnostics = StructuredModelRequestDiagnostics(),
 )
 
+private data class PlanningValidationDecision(
+    val plans: List<Plan>,
+    val failures: List<PlanValidationFailure>,
+)
+
 private const val WRITE_SCOPE = "orbit.tasks.write"
 private const val PLANNING_LOG_COMPONENT = "planning"
 
 private fun Throwable.safeFailureCategory(): String =
     (this::class.simpleName ?: "Throwable").toSnakeCase()
+
+private fun List<PlanValidationFailure>.toPlanningOutcome(): PlanningOutcome =
+    if (isNotEmpty() && all { it.code.isFeasibilityFailure }) {
+        PlanningOutcome.NoFeasiblePlan
+    } else {
+        PlanningOutcome.Unavailable
+    }
+
+private val PlanningOutcome.logValue: String
+    get() = name.toSnakeCase()
 
 private fun String.toSnakeCase(): String =
     buildString(length + 4) {

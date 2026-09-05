@@ -6,7 +6,7 @@ class PlanValidator {
     fun validate(
         context: PlanningContextSnapshot,
         drafts: List<PlanDraft>,
-    ): PlanValidationResult {
+    ): PlanValidationReport {
         val opportunitiesById = context.opportunities.associateBy { it.id }
         val failures = mutableListOf<PlanValidationFailure>()
         val seenSignatures = mutableSetOf<List<String>>()
@@ -21,13 +21,15 @@ class PlanValidator {
             }
         }
 
-        return if (failures.isEmpty() && plans.isNotEmpty()) {
-            PlanValidationResult.Accepted(plans)
-        } else {
-            PlanValidationResult.Rejected(failures.ifEmpty {
-                listOf(PlanValidationFailure(null, PlanValidationFailureCode.EmptyPlanSet))
-            })
-        }
+        return PlanValidationReport(
+            plans = plans,
+            failures =
+                if (plans.isEmpty() && failures.isEmpty()) {
+                    listOf(PlanValidationFailure(null, PlanValidationFailureCode.EmptyPlanSet))
+                } else {
+                    failures
+                },
+        )
     }
 
     private fun validateDraft(
@@ -255,15 +257,10 @@ data class PlanDraft(
     val opportunityRefs: List<OpportunityId>,
 )
 
-sealed interface PlanValidationResult {
-    data class Accepted(
-        val plans: List<Plan>,
-    ) : PlanValidationResult
-
-    data class Rejected(
-        val failures: List<PlanValidationFailure>,
-    ) : PlanValidationResult
-}
+data class PlanValidationReport(
+    val plans: List<Plan>,
+    val failures: List<PlanValidationFailure>,
+)
 
 data class PlanValidationFailure(
     val draftId: PlanId?,
@@ -290,3 +287,29 @@ enum class PlanValidationFailureCode {
     MustTopicRejected,
     DuplicatePlan,
 }
+
+val PlanValidationFailureCode.isFeasibilityFailure: Boolean
+    get() =
+        when (this) {
+            PlanValidationFailureCode.MustTimeWindowRejected,
+            PlanValidationFailureCode.MustBudgetLimitRejected,
+            PlanValidationFailureCode.MustCommuteLimitRejected,
+            PlanValidationFailureCode.MustActivityModeRejected,
+            PlanValidationFailureCode.MustLocationRejected,
+            PlanValidationFailureCode.MustActivityDomainRejected,
+            PlanValidationFailureCode.MustTopicRejected,
+            -> true
+
+            PlanValidationFailureCode.EmptyPlanSet,
+            PlanValidationFailureCode.EmptyOpportunityRefs,
+            PlanValidationFailureCode.UnknownOpportunityRef,
+            PlanValidationFailureCode.MissingSourceRefs,
+            PlanValidationFailureCode.UnavailableOpportunity,
+            PlanValidationFailureCode.EmptyTimeline,
+            PlanValidationFailureCode.InvalidTimelineBounds,
+            PlanValidationFailureCode.TimelineOutOfOrder,
+            PlanValidationFailureCode.MissingValidUntil,
+            PlanValidationFailureCode.ExpiredCandidate,
+            PlanValidationFailureCode.DuplicatePlan,
+            -> false
+        }

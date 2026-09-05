@@ -172,6 +172,25 @@ class ApiSerializationTest {
     }
 
     @Test
+    fun `planning status serializes all task outcome values`() {
+        val statuses =
+            mapOf(
+                PlanningStatus.Idle to "idle",
+                PlanningStatus.Ready to "ready",
+                PlanningStatus.NoCandidates to "no_candidates",
+                PlanningStatus.NoFeasiblePlan to "no_feasible_plan",
+                PlanningStatus.Unavailable to "unavailable",
+            )
+
+        statuses.forEach { (status, wireValue) ->
+            val encoded = json.encodeToString(PlanningStatusResponse(status))
+            val element = json.parseToJsonElement(encoded).jsonObject
+            assertEquals(wireValue, element.getValue("status").jsonPrimitive.content)
+            assertEquals(PlanningStatusResponse(status), json.decodeFromString<PlanningStatusResponse>(encoded))
+        }
+    }
+
+    @Test
     fun `plan response uses task revision and opportunity references`() {
         val response = planResponse()
         val encoded = json.encodeToString(response)

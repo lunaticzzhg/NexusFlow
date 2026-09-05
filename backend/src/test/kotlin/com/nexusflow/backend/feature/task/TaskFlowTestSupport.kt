@@ -11,6 +11,7 @@ import com.nexusflow.ai.planner.PlanModelMetadata
 import com.nexusflow.ai.planner.PlanNarrative
 import com.nexusflow.ai.planner.PlanNarrativePoint
 import com.nexusflow.ai.planner.PlanningContext
+import com.nexusflow.ai.provider.ProviderUnavailableException as AiProviderUnavailableException
 import com.nexusflow.ai.provider.StructuredModelRequestDiagnostics
 import com.nexusflow.ai.understanding.ClarificationProposal
 import com.nexusflow.ai.understanding.ClarificationReasonCategory
@@ -146,16 +147,21 @@ internal class ScriptedUnderstanding(
 
 internal class RecordingPlanComposer : PlanComposer {
     val contexts = mutableListOf<PlanningContext>()
+    var composeFailure: Throwable? = null
+    var draftFactory: (PlanningContext) -> List<AiPlanDraft> = { context ->
+        listOf(
+            AiPlanDraft(
+                direction = AiPlanDirection.BestMatch,
+                opportunityRefs = listOf(context.opportunities.first().id),
+            ),
+        )
+    }
 
     override suspend fun compose(context: PlanningContext): PlanComposition {
         contexts += context
+        composeFailure?.let { throw it }
         return PlanComposition(
-            drafts = listOf(
-                AiPlanDraft(
-                    direction = AiPlanDirection.BestMatch,
-                    opportunityRefs = listOf(context.opportunities.first().id),
-                ),
-            ),
+            drafts = draftFactory(context),
             metadata = PlanModelMetadata(provider = "test", model = "planner", promptVersion = "test", providerRequestId = "plan"),
         )
     }
@@ -163,20 +169,25 @@ internal class RecordingPlanComposer : PlanComposer {
 
 internal class RecordingPlanExplainer : PlanExplainer {
     val contexts = mutableListOf<PlanExplanationContext>()
+    var explainFailure: Throwable? = null
+    var narrativeFactory: (PlanExplanationContext) -> List<PlanNarrative> = { context ->
+        context.plans.map { plan ->
+            val firstFact = plan.facts.first().id
+            PlanNarrative(
+                planId = plan.planId,
+                title = "Grounded ${plan.direction.name}",
+                summary = "Explained from opportunity snapshots.",
+                reasons = listOf(PlanNarrativePoint("Uses a supplied opportunity snapshot.", listOf(firstFact))),
+                tradeoffs = listOf(PlanNarrativePoint("No extra facts were introduced.", listOf(firstFact))),
+            )
+        }
+    }
 
     override suspend fun explain(context: PlanExplanationContext): PlanExplanation {
         contexts += context
+        explainFailure?.let { throw it }
         return PlanExplanation(
-            narratives = context.plans.map { plan ->
-                val firstFact = plan.facts.first().id
-                PlanNarrative(
-                    planId = plan.planId,
-                    title = "Grounded ${plan.direction.name}",
-                    summary = "Explained from opportunity snapshots.",
-                    reasons = listOf(PlanNarrativePoint("Uses a supplied opportunity snapshot.", listOf(firstFact))),
-                    tradeoffs = listOf(PlanNarrativePoint("No extra facts were introduced.", listOf(firstFact))),
-                )
-            },
+            narratives = narrativeFactory(context),
             metadata = PlanModelMetadata(provider = "test", model = "explainer", promptVersion = "test", providerRequestId = "explain"),
         )
     }
@@ -184,13 +195,12 @@ internal class RecordingPlanExplainer : PlanExplainer {
 
 internal class RecordingOpportunityProvider : OpportunityProvider {
     val requests = mutableListOf<OpportunityRequest>()
-
-    override fun discover(request: OpportunityRequest): List<Opportunity> {
-        requests += request
+    var discoverFailure: Throwable? = null
+    var opportunityFactory: (OpportunityRequest) -> List<Opportunity> = { request ->
         val sportsRequired = request.requirements.any { requirement ->
             requirement.value == com.nexusflow.backend.feature.task.domain.RequirementValue.ActivityDomain("sports")
         }
-        return listOf(
+        listOf(
             opportunity(
                 id = "00000000-0000-0000-0000-000000000101",
                 kind = if (sportsRequired) OpportunityKind.Sports else OpportunityKind.Movies,
@@ -202,21 +212,31 @@ internal class RecordingOpportunityProvider : OpportunityProvider {
             ),
         )
     }
+
+    override fun discover(request: OpportunityRequest): List<Opportunity> {
+        requests += request
+        discoverFailure?.let { throw it }
+        return opportunityFactory(request)
+    }
 }
+
+internal fun planningUnavailable(): Throwable = AiProviderUnavailableException()
 
 internal fun understandingOutcome(
     intentPatch: String? = null,
     changes: List<ProposedRequirementChange>,
+    clarificationNeeded: Boolean = false,
+    questionDraft: String? = null,
 ): UnderstandingOutcome =
     UnderstandingOutcome(
         userIntent = UserIntent.PlanRequest,
         intentPatch = intentPatch,
         requirementChanges = changes,
         clarification = ClarificationProposal(
-            needed = false,
-            missingInformation = emptyList(),
-            reasonCategory = ClarificationReasonCategory.None,
-            questionDraft = null,
+            needed = clarificationNeeded,
+            missingInformation = if (clarificationNeeded) listOf("details") else emptyList(),
+            reasonCategory = if (clarificationNeeded) ClarificationReasonCategory.MissingRequiredInformation else ClarificationReasonCategory.None,
+            questionDraft = questionDraft,
         ),
         contextSelection = ContextSelectionProposal(),
         metadata = UnderstandingMetadata(

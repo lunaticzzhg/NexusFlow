@@ -4,7 +4,6 @@ import java.time.Instant
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class PlanValidatorTest {
@@ -26,8 +25,7 @@ class PlanValidatorTest {
             listOf(PlanDraft(planId("00000000-0000-0000-0000-000000000201"), PlanDirection.BestMatch, listOf(opportunity.id))),
         )
 
-        val accepted = assertIs<PlanValidationResult.Accepted>(result)
-        val plan = accepted.plans.single()
+        val plan = result.plans.single()
         assertEquals(task.id, plan.taskId)
         assertEquals(7, plan.revision)
         assertEquals(listOf(opportunity.id), plan.opportunityRefs)
@@ -54,8 +52,8 @@ class PlanValidatorTest {
             ),
         )
 
-        val rejected = assertIs<PlanValidationResult.Rejected>(result)
-        assertTrue(rejected.failures.any { it.code == PlanValidationFailureCode.UnknownOpportunityRef })
+        assertEquals(emptyList(), result.plans)
+        assertTrue(result.failures.any { it.code == PlanValidationFailureCode.UnknownOpportunityRef })
     }
 
     @Test
@@ -72,8 +70,75 @@ class PlanValidatorTest {
             listOf(PlanDraft(planId("00000000-0000-0000-0000-000000000201"), PlanDirection.BestMatch, listOf(opportunity.id))),
         )
 
-        val rejected = assertIs<PlanValidationResult.Rejected>(result)
-        assertTrue(rejected.failures.any { it.code == PlanValidationFailureCode.MustActivityDomainRejected })
+        assertEquals(emptyList(), result.plans)
+        assertTrue(result.failures.any { it.code == PlanValidationFailureCode.MustActivityDomainRejected })
+    }
+
+    @Test
+    fun `partial validation keeps valid plans and reports rejected drafts`() {
+        val secondOpportunity = opportunity(
+            id = opportunityId("00000000-0000-0000-0000-000000000102"),
+            title = "Second Liverpool screening",
+        )
+        val result = PlanValidator().validate(
+            PlanningContextSnapshot(
+                task = task,
+                requirements = listOf(
+                    requirement(RequirementKind.Topic, RequirementValue.Topic("Liverpool"), RequirementStrength.Must),
+                ),
+                opportunities = listOf(opportunity, secondOpportunity),
+                referenceTime = referenceTime,
+            ),
+            listOf(
+                PlanDraft(planId("00000000-0000-0000-0000-000000000201"), PlanDirection.BestMatch, listOf(opportunity.id)),
+                PlanDraft(planId("00000000-0000-0000-0000-000000000202"), PlanDirection.MoreRelaxed, listOf(secondOpportunity.id)),
+                PlanDraft(
+                    planId("00000000-0000-0000-0000-000000000203"),
+                    PlanDirection.NewExperience,
+                    listOf(opportunityId("00000000-0000-0000-0000-000000009999")),
+                ),
+            ),
+        )
+
+        assertEquals(2, result.plans.size)
+        assertTrue(result.failures.any { it.code == PlanValidationFailureCode.UnknownOpportunityRef })
+    }
+
+    @Test
+    fun `all must rejections produce feasibility failures without plans`() {
+        val result = PlanValidator().validate(
+            PlanningContextSnapshot(
+                task = task,
+                requirements = listOf(
+                    requirement(RequirementKind.ActivityDomain, RequirementValue.ActivityDomain("movie"), RequirementStrength.Must),
+                ),
+                opportunities = listOf(opportunity),
+                referenceTime = referenceTime,
+            ),
+            listOf(PlanDraft(planId("00000000-0000-0000-0000-000000000201"), PlanDirection.BestMatch, listOf(opportunity.id))),
+        )
+
+        assertEquals(emptyList(), result.plans)
+        assertEquals(listOf(PlanValidationFailureCode.MustActivityDomainRejected), result.failures.map { it.code }.distinct())
+    }
+
+    @Test
+    fun `duplicate draft does not fail an existing valid plan`() {
+        val result = PlanValidator().validate(
+            PlanningContextSnapshot(
+                task = task,
+                requirements = emptyList(),
+                opportunities = listOf(opportunity),
+                referenceTime = referenceTime,
+            ),
+            listOf(
+                PlanDraft(planId("00000000-0000-0000-0000-000000000201"), PlanDirection.BestMatch, listOf(opportunity.id)),
+                PlanDraft(planId("00000000-0000-0000-0000-000000000202"), PlanDirection.MoreRelaxed, listOf(opportunity.id)),
+            ),
+        )
+
+        assertEquals(1, result.plans.size)
+        assertTrue(result.failures.any { it.code == PlanValidationFailureCode.DuplicatePlan })
     }
 
     private fun requirement(
@@ -93,13 +158,16 @@ class PlanValidatorTest {
             updatedAt = referenceTime,
         )
 
-    private fun opportunity(): Opportunity =
+    private fun opportunity(
+        id: OpportunityId = opportunityId("00000000-0000-0000-0000-000000000101"),
+        title: String = "Liverpool supporters pub screening",
+    ): Opportunity =
         Opportunity(
-            id = opportunityId("00000000-0000-0000-0000-000000000101"),
+            id = id,
             provider = "Controlled Sports Feed",
             externalKey = "controlled://sports/liverpool/pub-screening",
             kind = OpportunityKind.Sports,
-            title = "Liverpool supporters pub screening",
+            title = title,
             facts = OpportunityFacts(
                 summary = "Reserved table for a Liverpool match screening.",
                 startTime = referenceTime.plusSeconds(3_600),

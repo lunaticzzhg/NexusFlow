@@ -89,10 +89,19 @@ object TaskFixtures {
             intent = success.first().intent,
             revision = 1,
             requirements = listOf(timeRequirement),
-            messages = listOf(TaskMessage(MessageRole.User, "Watch Liverpool this weekend")),
+            messages =
+                listOf(
+                    TaskMessage(
+                        id = "message-1",
+                        role = MessageRole.User,
+                        content = "Watch Liverpool this weekend",
+                        clientMessageId = "client-message-1",
+                        understoodAt = Instant.parse("2026-08-28T10:16:00Z"),
+                    ),
+                ),
             plans = currentPlans,
             selectedPlanId = null,
-            planningState = PlanningState.Idle,
+            planningState = PlanningState.Ready,
         )
 }
 

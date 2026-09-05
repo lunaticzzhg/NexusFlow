@@ -875,6 +875,7 @@ LoadingMore / LoadMoreFailure
 - Tokens 不进入 UI state、日志、导航参数或普通 preferences。
 - `core/network` 统一拥有 `HttpClient`、Ktorfit、请求上下文、业务 envelope 失败归一化和认证 Header。
 - Feature RemoteDataSource 返回 `Result<DTO>`；Repository 返回 `Result<Domain>`。
+- 对带 idempotency identity 的写请求，transport failure 只代表客户端未确认结果，不得直接推断服务端没有提交。若协议提供 server-side state、pending processing state 或 replay identity，UI 必须区分 unsent/unconfirmed 与 committed-but-processing/unavailable，并用同一 identity 重试。
 - Deep link 分三层：平台入口接收 raw URI，common decoder 转 typed intent，feature use case 应用业务规则并返回导航目标或安全 fallback。
 
 ### 常见问题

@@ -35,6 +35,7 @@ import com.nexusflow.app.feature.task.domain.ActivityModeValue
 import com.nexusflow.app.feature.task.domain.MessageRole
 import com.nexusflow.app.feature.task.domain.PlanDirection
 import com.nexusflow.app.feature.task.domain.PlanId
+import com.nexusflow.app.feature.task.domain.PlanningState
 import com.nexusflow.app.feature.task.domain.RequirementKind
 import com.nexusflow.app.feature.task.domain.RequirementSource
 import com.nexusflow.app.feature.task.domain.RequirementStrength
@@ -46,6 +47,7 @@ import com.nexusflow.app.feature.task.domain.TaskRequirement
 import nexusflow.app.composeapp.generated.resources.Res
 import nexusflow.app.composeapp.generated.resources.task_detail_empty_requirements
 import nexusflow.app.composeapp.generated.resources.task_detail_message_failed
+import nexusflow.app.composeapp.generated.resources.task_detail_message_processing_pending
 import nexusflow.app.composeapp.generated.resources.task_detail_message_retry
 import nexusflow.app.composeapp.generated.resources.task_detail_operation_requirement_failed
 import nexusflow.app.composeapp.generated.resources.task_detail_operation_selection_conflict
@@ -53,6 +55,9 @@ import nexusflow.app.composeapp.generated.resources.task_detail_operation_select
 import nexusflow.app.composeapp.generated.resources.task_detail_plan_select
 import nexusflow.app.composeapp.generated.resources.task_detail_plan_selected
 import nexusflow.app.composeapp.generated.resources.task_detail_plan_valid_until
+import nexusflow.app.composeapp.generated.resources.task_detail_planning_no_candidates
+import nexusflow.app.composeapp.generated.resources.task_detail_planning_no_feasible_plan
+import nexusflow.app.composeapp.generated.resources.task_detail_planning_unavailable
 import nexusflow.app.composeapp.generated.resources.task_detail_requirements
 import nexusflow.app.composeapp.generated.resources.task_detail_send
 import nexusflow.app.composeapp.generated.resources.task_detail_send_hint
@@ -174,28 +179,77 @@ internal fun OperationFailureBanner(
 }
 
 @Composable
-internal fun TaskMessageBubble(message: TaskMessage) {
+internal fun TaskMessageBubble(
+    message: TaskMessage,
+    isProcessingRetry: Boolean,
+    onRetryPersistedMessage: (String) -> Unit,
+) {
     val isUser = message.role == MessageRole.User
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
     ) {
-        Surface(
-            shape = MaterialTheme.shapes.medium,
-            color =
-                if (isUser) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant
-                },
-            modifier = Modifier.widthIn(max = 520.dp),
+        Column(
+            horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.small),
         ) {
-            Text(
-                text = message.content,
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.padding(AppSpacing.medium),
-            )
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                color =
+                    if (isUser) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    },
+                modifier = Modifier.widthIn(max = 520.dp),
+            ) {
+                Text(
+                    text = message.content,
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(AppSpacing.medium),
+                )
+            }
+            message.clientMessageId?.takeIf { isUser && message.understoodAt == null }?.let { clientMessageId ->
+                Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.small), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = stringResource(Res.string.task_detail_message_processing_pending),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = { onRetryPersistedMessage(clientMessageId) },
+                        enabled = !isProcessingRetry,
+                    ) {
+                        Text(stringResource(Res.string.task_detail_message_retry))
+                    }
+                }
+            }
         }
+    }
+}
+
+@Composable
+internal fun PlanningNoticeBanner(state: PlanningState) {
+    val message =
+        when (state) {
+            PlanningState.NoCandidates -> stringResource(Res.string.task_detail_planning_no_candidates)
+            PlanningState.NoFeasiblePlan -> stringResource(Res.string.task_detail_planning_no_feasible_plan)
+            PlanningState.Unavailable -> stringResource(Res.string.task_detail_planning_unavailable)
+            PlanningState.Idle,
+            PlanningState.Ready,
+            -> return
+        }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(AppSpacing.medium),
+        )
     }
 }
 

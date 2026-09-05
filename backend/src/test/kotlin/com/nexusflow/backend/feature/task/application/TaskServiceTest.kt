@@ -1,6 +1,9 @@
 package com.nexusflow.backend.feature.task.application
 
 import com.nexusflow.ai.understanding.InvalidStructuredOutputException
+import com.nexusflow.ai.planner.PlanDirection as AiPlanDirection
+import com.nexusflow.ai.planner.PlanDraft as AiPlanDraft
+import com.nexusflow.backend.feature.task.RecordingOpportunityProvider
 import com.nexusflow.backend.feature.task.ScriptedUnderstanding
 import com.nexusflow.backend.feature.task.TaskFlowIds
 import com.nexusflow.backend.feature.task.activityDomainChange
@@ -8,6 +11,7 @@ import com.nexusflow.backend.feature.task.cleanMigrateAndSeed
 import com.nexusflow.backend.feature.task.createTaskServices
 import com.nexusflow.backend.feature.task.locationChange
 import com.nexusflow.backend.feature.task.opportunity
+import com.nexusflow.backend.feature.task.planningUnavailable
 import com.nexusflow.backend.feature.task.postgresDataSource
 import com.nexusflow.backend.feature.task.taskActor
 import com.nexusflow.backend.feature.task.understandingOutcome
@@ -35,6 +39,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TaskServiceTest {
@@ -191,9 +196,8 @@ class TaskServiceTest {
                 }),
             )
 
-            assertFailsWith<TaskDependencyUnavailableException> {
-                services.taskService.createTask(taskActor(), "create-invalid-output", "Find a movie", "Asia/Shanghai")
-            }
+            val result = services.taskService.createTask(taskActor(), "create-invalid-output", "Find a movie", "Asia/Shanghai")
+            assertEquals(PlanningOutcome.Unavailable, result.planningOutcome)
 
             val failed = logger.entries.single { it.event == "ai_understanding_failed" }
             assertEquals("invalid_structured_output_exception", failed.fields.values["failure_category"])
@@ -330,6 +334,180 @@ class TaskServiceTest {
         }
 
     @Test
+    fun `no candidates is a successful planning outcome`() =
+        runBlocking {
+            val provider = RecordingOpportunityProvider().apply { opportunityFactory = { emptyList() } }
+            val services = createTaskServices(
+                dataSource = dataSource,
+                opportunityProvider = provider,
+                understanding = ScriptedUnderstanding({
+                    understandingOutcome(changes = listOf(activityDomainChange("movie", "movie")))
+                }),
+            )
+
+            val result = services.taskService.createTask(taskActor(), "create-no-candidates", "Find a movie", "Asia/Shanghai")
+
+            assertEquals(PlanningOutcome.NoCandidates, result.planningOutcome)
+            assertEquals(emptyList(), result.plans)
+            assertEquals(1, provider.requests.size)
+            assertEquals(emptyList(), services.planComposer.contexts)
+        }
+
+    @Test
+    fun `all infeasible drafts return no feasible plan without failing mutation`() =
+        runBlocking {
+            val provider = RecordingOpportunityProvider().apply {
+                opportunityFactory = {
+                    listOf(
+                        opportunity(
+                            id = "00000000-0000-0000-0000-000000000301",
+                            kind = com.nexusflow.backend.feature.task.domain.OpportunityKind.Movies,
+                            topics = "movie,cinema",
+                        ),
+                    )
+                }
+            }
+            val services = createTaskServices(
+                dataSource = dataSource,
+                opportunityProvider = provider,
+                understanding = ScriptedUnderstanding({
+                    understandingOutcome(changes = listOf(activityDomainChange("sports", "sports")))
+                }),
+            )
+
+            val result = services.taskService.createTask(taskActor(), "create-no-feasible", "Find sports", "Asia/Shanghai")
+
+            assertEquals(PlanningOutcome.NoFeasiblePlan, result.planningOutcome)
+            assertEquals(emptyList(), result.plans)
+            assertEquals(1, services.planComposer.contexts.size)
+        }
+
+    @Test
+    fun `partial valid drafts persist valid plans and report ready`() =
+        runBlocking {
+            val provider = RecordingOpportunityProvider().apply {
+                opportunityFactory = {
+                    listOf(
+                        opportunity(id = "00000000-0000-0000-0000-000000000311"),
+                        opportunity(id = "00000000-0000-0000-0000-000000000312", title = "Second movie"),
+                    )
+                }
+            }
+            val services = createTaskServices(
+                dataSource = dataSource,
+                opportunityProvider = provider,
+                understanding = ScriptedUnderstanding({
+                    understandingOutcome(changes = listOf(activityDomainChange("movie", "movie")))
+                }),
+            )
+            services.planComposer.draftFactory = { context ->
+                listOf(
+                    AiPlanDraft(AiPlanDirection.BestMatch, listOf(context.opportunities[0].id)),
+                    AiPlanDraft(AiPlanDirection.MoreRelaxed, listOf("00000000-0000-0000-0000-000000009999")),
+                    AiPlanDraft(AiPlanDirection.NewExperience, listOf(context.opportunities[1].id)),
+                )
+            }
+
+            val result = services.taskService.createTask(taskActor(), "create-partial", "Find a movie", "Asia/Shanghai")
+
+            assertEquals(PlanningOutcome.Ready, result.planningOutcome)
+            assertEquals(2, result.plans.count { it.revision == result.task.revision })
+            assertEquals(2, services.repository.findTaskDetail(result.task.owner, result.task.id)!!.plans.size)
+        }
+
+    @Test
+    fun `explainer unavailable persists base plans`() =
+        runBlocking {
+            val services = createTaskServices(
+                dataSource = dataSource,
+                understanding = ScriptedUnderstanding({
+                    understandingOutcome(changes = listOf(activityDomainChange("movie", "movie")))
+                }),
+            )
+            services.planExplainer.explainFailure = planningUnavailable()
+
+            val result = services.taskService.createTask(taskActor(), "create-explain-fallback", "Find a movie", "Asia/Shanghai")
+
+            assertEquals(PlanningOutcome.Ready, result.planningOutcome)
+            assertTrue(result.plans.single().title.startsWith("Best match:"))
+        }
+
+    @Test
+    fun `clarification needed stops planning for this turn`() =
+        runBlocking {
+            val provider = RecordingOpportunityProvider()
+            val services = createTaskServices(
+                dataSource = dataSource,
+                opportunityProvider = provider,
+                understanding = ScriptedUnderstanding({
+                    understandingOutcome(
+                        changes = listOf(activityDomainChange("movie", "movie")),
+                        clarificationNeeded = true,
+                        questionDraft = "What time works for you?",
+                    )
+                }),
+            )
+
+            val result = services.taskService.createTask(taskActor(), "create-clarify", "Find a movie", "Asia/Shanghai")
+
+            assertEquals(PlanningOutcome.NotAttempted, result.planningOutcome)
+            assertEquals(emptyList(), provider.requests)
+            assertEquals(1, result.messages.count { it.role == MessageRole.Assistant })
+            assertEquals(emptyList(), result.plans)
+        }
+
+    @Test
+    fun `post commit understanding unavailable returns pending detail`() =
+        runBlocking {
+            val services = createTaskServices(
+                dataSource = dataSource,
+                understanding = ScriptedUnderstanding({
+                    throw InvalidStructuredOutputException("temporary bad output")
+                }),
+            )
+
+            val result = services.taskService.createTask(taskActor(), "create-pending", "Find a movie", "Asia/Shanghai")
+
+            assertEquals(PlanningOutcome.Unavailable, result.planningOutcome)
+            val message = result.messages.single { it.role == MessageRole.User }
+            assertEquals("create-pending", message.clientMessageId)
+            assertNull(message.understoodAt)
+            assertEquals(emptyList(), result.requirements)
+        }
+
+    @Test
+    fun `requirement mutation remains successful when replanning is unavailable`() =
+        runBlocking {
+            val services = createTaskServices(
+                dataSource = dataSource,
+                understanding = ScriptedUnderstanding({
+                    understandingOutcome(
+                        changes = listOf(
+                            activityDomainChange("movie", "movie"),
+                            locationChange("Futian", "Futian"),
+                        ),
+                    )
+                }),
+            )
+            val created = services.taskService.createTask(taskActor(), "create-mutation-unavailable", "Find a movie near Futian", "Asia/Shanghai")
+            val location = created.requirements.single { it.kind == RequirementKind.Location }
+            services.planComposer.composeFailure = planningUnavailable()
+
+            val updated = services.taskService.updateRequirement(
+                actor = taskActor(),
+                taskId = created.task.id.value.toString(),
+                requirementId = location.id.value.toString(),
+                kind = RequirementKind.Location,
+                value = RequirementValue.Location("Nanshan"),
+                strength = RequirementStrength.Prefer,
+            )
+
+            assertEquals(PlanningOutcome.Unavailable, updated.planningOutcome)
+            assertEquals(3, updated.task.revision)
+            assertEquals("Nanshan", (updated.requirements.single { it.id == location.id }.value as RequirementValue.Location).text)
+        }
+
+    @Test
     fun `duplicate create and message retries continue pending understanding and planning`() =
         runBlocking {
             val logger = RecordingStructuredLogger()
@@ -341,24 +519,24 @@ class TaskServiceTest {
             )
             val services = createTaskServices(dataSource = dataSource, understanding = understanding, logger = logger)
 
-            assertFailsWith<TaskDependencyUnavailableException> {
-                services.taskService.createTask(taskActor(), "create-retry", "Find a movie", "Asia/Shanghai")
-            }
+            val pendingCreate = services.taskService.createTask(taskActor(), "create-retry", "Find a movie", "Asia/Shanghai")
+            assertEquals(PlanningOutcome.Unavailable, pendingCreate.planningOutcome)
+            assertNull(pendingCreate.messages.single { it.role == MessageRole.User }.understoodAt)
             val createdByRetry = services.taskService.createTask(taskActor(), "create-retry", "Find a movie", "Asia/Shanghai")
 
             assertEquals(1, createdByRetry.messages.count { it.role == MessageRole.User })
             assertEquals(2, createdByRetry.task.revision)
             assertEquals(1, createdByRetry.plans.count { it.revision == createdByRetry.task.revision })
 
-            assertFailsWith<TaskDependencyUnavailableException> {
-                services.taskService.sendMessage(
-                    taskActor(),
-                    createdByRetry.task.id.value.toString(),
-                    "message-retry",
-                    "Near Futian",
-                    "Asia/Shanghai",
-                )
-            }
+            val pendingMessage = services.taskService.sendMessage(
+                taskActor(),
+                createdByRetry.task.id.value.toString(),
+                "message-retry",
+                "Near Futian",
+                "Asia/Shanghai",
+            )
+            assertEquals(PlanningOutcome.Unavailable, pendingMessage.planningOutcome)
+            assertNull(pendingMessage.messages.single { it.clientMessageId == "message-retry" }.understoodAt)
             logger.entries.clear()
             val sentByRetry = services.taskService.sendMessage(
                 taskActor(),
