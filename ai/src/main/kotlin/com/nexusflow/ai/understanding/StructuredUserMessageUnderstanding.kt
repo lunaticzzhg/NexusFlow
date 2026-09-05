@@ -41,15 +41,22 @@ class StructuredUserMessageUnderstanding(
                 return requestOnce(context, attempt)
             } catch (error: RepairableUnderstandingOutputException) {
                 if (attempt == MAX_ATTEMPTS) {
-                    throw InvalidStructuredOutputException(error.message ?: "Invalid structured output", error)
+                    throw InvalidStructuredOutputException(
+                        message = error.message ?: "Invalid structured output",
+                        cause = error,
+                        failureStage = error.stage.logValue,
+                    )
                 }
-                logRetry(nextAttempt = attempt + 1)
+                logRetry(nextAttempt = attempt + 1, failureStage = error.stage.logValue)
                 attempt += 1
             }
         }
     }
 
-    private fun logRetry(nextAttempt: Int) {
+    private fun logRetry(
+        nextAttempt: Int,
+        failureStage: String,
+    ) {
         logger?.warn(
             component = "ai",
             event = "ai_request_retry",
@@ -58,6 +65,7 @@ class StructuredUserMessageUnderstanding(
                     "operation" value "understanding"
                     "next_attempt" value nextAttempt
                     "failure_category" value "invalid_structured_output"
+                    "failure_stage" value failureStage
                 },
         )
     }
@@ -97,6 +105,7 @@ class StructuredUserMessageUnderstanding(
             json.decodeFromString<StructuredUnderstandingPayload>(result.outputText)
         } catch (error: SerializationException) {
             throw RepairableUnderstandingOutputException(
+                UnderstandingOutputFailureStage.JsonDecode,
                 "Understanding response payload was not valid structured output",
                 error,
             )
@@ -135,15 +144,30 @@ class StructuredUserMessageUnderstanding(
         val duplicate = cleanKeys.groupBy { it }.entries.firstOrNull { it.value.size > 1 }?.key
         when {
             cleanKeys.any(String::isBlank) ->
-                throw RepairableUnderstandingOutputException("Context selection contained a blank key")
+                throw RepairableUnderstandingOutputException(
+                    UnderstandingOutputFailureStage.ContextSelectionInvalid,
+                    "Context selection contained a blank key",
+                )
             duplicate != null ->
-                throw RepairableUnderstandingOutputException("Context selection contained a duplicate key")
+                throw RepairableUnderstandingOutputException(
+                    UnderstandingOutputFailureStage.ContextSelectionInvalid,
+                    "Context selection contained a duplicate key",
+                )
             cleanKeys.size > MAX_NEW_CONTEXT_SELECTIONS ->
-                throw RepairableUnderstandingOutputException("Context selection exceeded the per-request limit")
+                throw RepairableUnderstandingOutputException(
+                    UnderstandingOutputFailureStage.ContextSelectionInvalid,
+                    "Context selection exceeded the per-request limit",
+                )
             offeredKeys.isEmpty() && cleanKeys.isNotEmpty() ->
-                throw RepairableUnderstandingOutputException("Context selection must be empty when no definitions are offered")
+                throw RepairableUnderstandingOutputException(
+                    UnderstandingOutputFailureStage.ContextSelectionInvalid,
+                    "Context selection must be empty when no definitions are offered",
+                )
             cleanKeys.any { it !in offeredKeys } ->
-                throw RepairableUnderstandingOutputException("Context selection contained an unoffered key")
+                throw RepairableUnderstandingOutputException(
+                    UnderstandingOutputFailureStage.ContextSelectionInvalid,
+                    "Context selection contained an unoffered key",
+                )
         }
         return ContextSelectionProposal(selectedKeys = cleanKeys)
     }
@@ -151,7 +175,10 @@ class StructuredUserMessageUnderstanding(
     private fun StructuredClarificationPayload.toProposal(): ClarificationProposal {
         val cleanMissingInformation = missingInformation.map { it.trim() }
         if (cleanMissingInformation.any(String::isBlank)) {
-            throw RepairableUnderstandingOutputException("Missing information contained a blank value")
+            throw RepairableUnderstandingOutputException(
+                UnderstandingOutputFailureStage.ClarificationInvalid,
+                "Missing information contained a blank value",
+            )
         }
         return try {
             ClarificationProposal(
@@ -161,14 +188,21 @@ class StructuredUserMessageUnderstanding(
                 questionDraft = questionDraft?.trim()?.takeIf(String::isNotBlank),
             )
         } catch (error: IllegalArgumentException) {
-            throw RepairableUnderstandingOutputException("Clarification proposal was semantically invalid", error)
+            throw RepairableUnderstandingOutputException(
+                UnderstandingOutputFailureStage.ClarificationInvalid,
+                "Clarification proposal was semantically invalid",
+                error,
+            )
         }
     }
 
     private fun StructuredRequirementPayload.toRequirementChange(currentMessage: String): ProposedRequirementChange {
         val cleanEvidence = evidenceText.trim()
         if (cleanEvidence.isBlank() || !currentMessage.contains(cleanEvidence)) {
-            throw RepairableUnderstandingOutputException("Requirement evidence must be present in the current message")
+            throw RepairableUnderstandingOutputException(
+                UnderstandingOutputFailureStage.EvidenceNotSubstring,
+                "Requirement evidence must be present in the current message",
+            )
         }
         val requirementKind = kind.toRequirementKind()
         return ProposedRequirementChange(
@@ -196,7 +230,10 @@ class StructuredUserMessageUnderstanding(
                 val start = startAt?.parseInstant("startAt")
                 val end = endAt?.parseInstant("endAt")
                 if (start != null && end != null && start >= end) {
-                    throw RepairableUnderstandingOutputException("Time window startAt must be before endAt")
+                    throw RepairableUnderstandingOutputException(
+                        UnderstandingOutputFailureStage.InvalidValueField,
+                        "Time window startAt must be before endAt",
+                    )
                 }
                 RequirementValue.TimeWindow(
                     startAt = start,
@@ -215,7 +252,10 @@ class StructuredUserMessageUnderstanding(
                 )
                 RequirementValue.BudgetLimit(
                     wholeUnits = amountWholeUnits?.takeIf { it > 0 }
-                        ?: throw RepairableUnderstandingOutputException("Budget amount must be positive"),
+                        ?: throw RepairableUnderstandingOutputException(
+                            UnderstandingOutputFailureStage.InvalidValueField,
+                            "Budget amount must be positive",
+                        ),
                     currencyCode = currencyCode?.trim()?.takeIf(String::isNotBlank),
                 )
             }
@@ -226,7 +266,10 @@ class StructuredUserMessageUnderstanding(
                 )
                 RequirementValue.CommuteLimit(
                     maxMinutes = maxMinutes?.takeIf { it > 0 }
-                        ?: throw RepairableUnderstandingOutputException("Commute minutes must be positive"),
+                        ?: throw RepairableUnderstandingOutputException(
+                            UnderstandingOutputFailureStage.InvalidValueField,
+                            "Commute minutes must be positive",
+                        ),
                 )
             }
             RequirementKind.CommutePreference -> {
@@ -281,6 +324,7 @@ class StructuredUserMessageUnderstanding(
             .firstOrNull { field -> field !in allowedFields }
             ?.let { field ->
                 throw RepairableUnderstandingOutputException(
+                    UnderstandingOutputFailureStage.UnexpectedValueField,
                     "${field.providerName} is not allowed for ${requirementKind.providerName}",
                 )
             }
@@ -304,7 +348,10 @@ class StructuredUserMessageUnderstanding(
             "plan_request" -> UserIntent.PlanRequest
             "requirement_update" -> UserIntent.RequirementUpdate
             "clarification_response" -> UserIntent.ClarificationResponse
-            else -> throw RepairableUnderstandingOutputException("Unknown user intent")
+            else -> throw RepairableUnderstandingOutputException(
+                UnderstandingOutputFailureStage.UnknownUserIntent,
+                "Unknown user intent",
+            )
         }
 
     private fun String.toRequirementKind(): RequirementKind =
@@ -318,14 +365,20 @@ class StructuredUserMessageUnderstanding(
             "activity_mode" -> RequirementKind.ActivityMode
             "topic" -> RequirementKind.Topic
             "experience_preference" -> RequirementKind.ExperiencePreference
-            else -> throw RepairableUnderstandingOutputException("Unknown requirement kind")
+            else -> throw RepairableUnderstandingOutputException(
+                UnderstandingOutputFailureStage.UnknownRequirementKind,
+                "Unknown requirement kind",
+            )
         }
 
     private fun String.toRequirementStrength(): RequirementStrength =
         when (this) {
             "must" -> RequirementStrength.Must
             "prefer" -> RequirementStrength.Prefer
-            else -> throw RepairableUnderstandingOutputException("Unknown requirement strength")
+            else -> throw RepairableUnderstandingOutputException(
+                UnderstandingOutputFailureStage.UnknownRequirementStrength,
+                "Unknown requirement strength",
+            )
         }
 
     private fun String.toReasonCategory(): ClarificationReasonCategory =
@@ -334,31 +387,47 @@ class StructuredUserMessageUnderstanding(
             "missing_required_information" -> ClarificationReasonCategory.MissingRequiredInformation
             "ambiguous_requirement" -> ClarificationReasonCategory.AmbiguousRequirement
             "unsupported_request" -> ClarificationReasonCategory.UnsupportedRequest
-            else -> throw RepairableUnderstandingOutputException("Unknown clarification reason category")
+            else -> throw RepairableUnderstandingOutputException(
+                UnderstandingOutputFailureStage.UnknownClarificationReasonCategory,
+                "Unknown clarification reason category",
+            )
         }
 
     private fun String?.requireProviderText(fieldName: String): String =
         this?.trim()?.takeIf(String::isNotBlank)
-            ?: throw RepairableUnderstandingOutputException("$fieldName must be nonblank")
+            ?: throw RepairableUnderstandingOutputException(
+                UnderstandingOutputFailureStage.InvalidValueField,
+                "$fieldName must be nonblank",
+            )
 
     private fun String?.requireCommutePreference(): CommutePreferenceValue =
         when (this?.trim()) {
             "prefer_shorter" -> CommutePreferenceValue.PreferShorter
-            else -> throw RepairableUnderstandingOutputException("Unknown commute preference")
+            else -> throw RepairableUnderstandingOutputException(
+                UnderstandingOutputFailureStage.InvalidValueField,
+                "Unknown commute preference",
+            )
         }
 
     private fun String?.requireActivityMode(): ActivityModeValue =
         when (this?.trim()) {
             "at_home" -> ActivityModeValue.AtHome
             "out_of_home" -> ActivityModeValue.OutOfHome
-            else -> throw RepairableUnderstandingOutputException("Unknown activity mode")
+            else -> throw RepairableUnderstandingOutputException(
+                UnderstandingOutputFailureStage.InvalidValueField,
+                "Unknown activity mode",
+            )
         }
 
     private fun String.parseInstant(fieldName: String): ContractInstant =
         try {
             ContractInstant.parse(this)
         } catch (error: IllegalArgumentException) {
-            throw RepairableUnderstandingOutputException("$fieldName must be an ISO instant", error)
+            throw RepairableUnderstandingOutputException(
+                UnderstandingOutputFailureStage.InvalidValueField,
+                "$fieldName must be an ISO instant",
+                error,
+            )
         }
 
     private fun StructuredModelException.toUnderstandingException(): UserMessageUnderstandingException =
@@ -368,7 +437,11 @@ class StructuredUserMessageUnderstanding(
             is ProviderTimeoutModelException -> ProviderTimeoutException(this)
             is ProviderRefusedModelException -> ProviderRefusedException()
             is ProviderUnavailableModelException -> ProviderUnavailableException(this)
-            is ProviderInvalidStructuredOutputException -> InvalidStructuredOutputException(message ?: "Invalid output", this)
+            is ProviderInvalidStructuredOutputException -> InvalidStructuredOutputException(
+                message = message ?: "Invalid output",
+                cause = this,
+                failureStage = UnderstandingOutputFailureStage.ProviderInvalidStructuredOutput.logValue,
+            )
             else -> ProviderUnavailableException(this)
         }
 
@@ -479,5 +552,22 @@ private val RequirementKind.providerName: String
 private const val MAX_ATTEMPTS = 2
 private const val MAX_NEW_CONTEXT_SELECTIONS = 6
 
-private class RepairableUnderstandingOutputException(message: String, cause: Throwable? = null) :
-    RuntimeException(message, cause)
+private enum class UnderstandingOutputFailureStage(val logValue: String) {
+    JsonDecode("json_decode"),
+    ContextSelectionInvalid("context_selection_invalid"),
+    ClarificationInvalid("clarification_invalid"),
+    EvidenceNotSubstring("evidence_not_substring"),
+    UnexpectedValueField("unexpected_value_field"),
+    UnknownUserIntent("unknown_user_intent"),
+    UnknownRequirementKind("unknown_requirement_kind"),
+    UnknownRequirementStrength("unknown_requirement_strength"),
+    UnknownClarificationReasonCategory("unknown_clarification_reason_category"),
+    InvalidValueField("invalid_value_field"),
+    ProviderInvalidStructuredOutput("provider_invalid_structured_output"),
+}
+
+private class RepairableUnderstandingOutputException(
+    val stage: UnderstandingOutputFailureStage,
+    message: String,
+    cause: Throwable? = null,
+) : RuntimeException(message, cause)

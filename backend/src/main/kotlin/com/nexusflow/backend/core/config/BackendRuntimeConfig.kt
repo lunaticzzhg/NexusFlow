@@ -53,8 +53,9 @@ data class BackendRuntimeConfig(
         private fun aiRuntimeConfig(environment: Map<String, String>): AiRuntimeConfig? {
             val providerText = environment["AI_PROVIDER"]?.trim()?.takeIf(String::isNotBlank)
                 ?: return null
+            val provider = providerText.toAiProvider()
             return AiRuntimeConfig(
-                provider = providerText.toAiProvider(),
+                provider = provider,
                 apiKey = required(environment, "AI_API_KEY"),
                 baseUrl = required(environment, "AI_BASE_URL"),
                 model = required(environment, "AI_MODEL"),
@@ -63,9 +64,27 @@ data class BackendRuntimeConfig(
                     ?.toLong()
                     ?.also { require(it > 0) { "AI_REQUEST_TIMEOUT_MS must be positive" } }
                     ?.let(Duration::ofMillis)
-                    ?: Duration.ofSeconds(30),
+                    ?: Duration.ofSeconds(90),
+                enableThinking = aiEnableThinking(provider, environment),
             )
         }
+
+        private fun aiEnableThinking(
+            provider: AiProvider,
+            environment: Map<String, String>,
+        ): Boolean? =
+            environment["AI_ENABLE_THINKING"]
+                ?.takeIf(String::isNotBlank)
+                ?.let { value ->
+                    value.toBooleanStrictOrNull()
+                        ?: error("AI_ENABLE_THINKING must be true or false")
+                }
+                ?: when (provider) {
+                    AiProvider.Qwen -> false
+                    AiProvider.OpenAi,
+                    AiProvider.DeepSeek,
+                    -> null
+                }
 
         private fun String.toAiProvider(): AiProvider =
             when (lowercase()) {
@@ -126,9 +145,11 @@ data class AiRuntimeConfig(
     val baseUrl: String,
     val model: String,
     val requestTimeout: Duration,
+    val enableThinking: Boolean?,
 ) {
     override fun toString(): String =
-        "AiRuntimeConfig(provider=$provider, baseUrl=$baseUrl, model=$model, requestTimeout=$requestTimeout, apiKey=<redacted>)"
+        "AiRuntimeConfig(provider=$provider, baseUrl=$baseUrl, model=$model, requestTimeout=$requestTimeout, " +
+            "enableThinking=$enableThinking, apiKey=<redacted>)"
 }
 
 enum class AiProvider {

@@ -14,6 +14,7 @@ class QwenStructuredModelProvider(
     apiKey: String,
     model: String,
     baseUrl: String,
+    enableThinking: Boolean = false,
     logger: StructuredLogger? = null,
     json: Json = Json {
         ignoreUnknownKeys = true
@@ -27,6 +28,7 @@ class QwenStructuredModelProvider(
         model = model,
         baseUrl = baseUrl,
         mode = OpenAiCompatibleMode.ChatJsonSchema,
+        enableThinking = enableThinking,
         logger = logger,
         json = json,
     )

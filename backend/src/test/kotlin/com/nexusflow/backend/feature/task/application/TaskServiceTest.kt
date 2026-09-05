@@ -177,6 +177,30 @@ class TaskServiceTest {
         }
 
     @Test
+    fun `logs safe invalid output failure stage when understanding fails`() =
+        runBlocking {
+            val logger = RecordingStructuredLogger()
+            val services = createTaskServices(
+                dataSource = dataSource,
+                logger = logger,
+                understanding = ScriptedUnderstanding({
+                    throw InvalidStructuredOutputException(
+                        message = "Requirement evidence must be present in the current message",
+                        failureStage = "evidence_not_substring",
+                    )
+                }),
+            )
+
+            assertFailsWith<TaskDependencyUnavailableException> {
+                services.taskService.createTask(taskActor(), "create-invalid-output", "Find a movie", "Asia/Shanghai")
+            }
+
+            val failed = logger.entries.single { it.event == "ai_understanding_failed" }
+            assertEquals("invalid_structured_output_exception", failed.fields.values["failure_category"])
+            assertEquals("evidence_not_substring", failed.fields.values["failure_stage"])
+        }
+
+    @Test
     fun `requirement update and delete increment revision clear selected plan and replan when ready`() =
         runBlocking {
             val services = createTaskServices(

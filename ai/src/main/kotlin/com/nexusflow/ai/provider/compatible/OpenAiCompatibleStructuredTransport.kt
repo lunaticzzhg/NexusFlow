@@ -44,6 +44,7 @@ internal class OpenAiCompatibleStructuredTransport(
     private val model: String,
     baseUrl: String,
     private val mode: OpenAiCompatibleMode,
+    private val enableThinking: Boolean? = null,
     private val logger: StructuredLogger? = null,
     private val json: Json = Json {
         ignoreUnknownKeys = true
@@ -70,7 +71,7 @@ internal class OpenAiCompatibleStructuredTransport(
             client.post(endpointUrl) {
                 bearerAuth(apiKey)
                 contentType(ContentType.Application.Json)
-                setBody(mode.body(model, request, json))
+                setBody(mode.body(model, request, json, enableThinking))
             }
         } catch (error: CancellationException) {
             throw error
@@ -255,6 +256,7 @@ private fun OpenAiCompatibleMode.body(
     model: String,
     request: StructuredModelRequest,
     json: Json,
+    enableThinking: Boolean?,
 ): Any =
     request.userPayloadText(json).let { userPayload ->
         when (this) {
@@ -285,6 +287,7 @@ private fun OpenAiCompatibleMode.body(
                         strict = request.outputSchema.strict,
                     ),
                 ),
+                enableThinking = enableThinking,
             )
             OpenAiCompatibleMode.ChatJsonObject -> OpenAiChatCompletionRequest(
                 model = model,
@@ -296,6 +299,7 @@ private fun OpenAiCompatibleMode.body(
                     OpenAiChatMessage(role = "user", content = userPayload),
                 ),
                 responseFormat = OpenAiChatResponseFormat(type = "json_object"),
+                enableThinking = enableThinking,
             )
         }
     }
@@ -384,6 +388,8 @@ private data class OpenAiChatCompletionRequest(
     val messages: List<OpenAiChatMessage>,
     @SerialName("response_format")
     val responseFormat: OpenAiChatResponseFormat,
+    @SerialName("enable_thinking")
+    val enableThinking: Boolean? = null,
 )
 
 @Serializable

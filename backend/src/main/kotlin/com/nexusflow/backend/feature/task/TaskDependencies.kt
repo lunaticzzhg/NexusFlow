@@ -79,6 +79,7 @@ fun Application.configureTaskDependencies() {
                     apiKey = ai.apiKey,
                     model = ai.model,
                     baseUrl = ai.baseUrl,
+                    enableThinking = ai.enableThinking ?: false,
                     logger = resolve<StructuredLogger>(),
                 )
                 AiProvider.DeepSeek -> DeepSeekStructuredModelProvider(

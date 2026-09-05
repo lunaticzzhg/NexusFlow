@@ -205,5 +205,8 @@ class ProviderTimeoutException(cause: Throwable? = null) :
 class ProviderRefusedException :
     UserMessageUnderstandingException("Understanding provider refused the request")
 
-class InvalidStructuredOutputException(message: String, cause: Throwable? = null) :
-    UserMessageUnderstandingException(message, cause)
+class InvalidStructuredOutputException(
+    message: String,
+    cause: Throwable? = null,
+    val failureStage: String? = null,
+) : UserMessageUnderstandingException(message, cause)

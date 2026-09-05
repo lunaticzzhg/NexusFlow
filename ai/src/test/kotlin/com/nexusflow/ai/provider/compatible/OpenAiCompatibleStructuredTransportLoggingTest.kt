@@ -16,6 +16,7 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import io.ktor.http.content.TextContent
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
@@ -114,9 +115,34 @@ class OpenAiCompatibleStructuredTransportLoggingTest {
             assertNoSensitiveLogContent(logger)
         }
 
+    @Test
+    fun `chat completion request can disable thinking`() =
+        runBlocking {
+            var requestBody = ""
+            val transport =
+                transport(
+                    logger = RecordingLogger(),
+                    enableThinking = false,
+                    engine =
+                        MockEngine { request ->
+                            requestBody = (request.body as TextContent).text
+                            respond(
+                                content = SUCCESS_BODY,
+                                status = HttpStatusCode.OK,
+                                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                            )
+                        },
+                )
+
+            transport.generate(request())
+
+            assertTrue(requestBody.contains(""""enable_thinking":false"""))
+        }
+
     private fun transport(
         logger: StructuredLogger,
         engine: MockEngine,
+        enableThinking: Boolean? = null,
     ): OpenAiCompatibleStructuredTransport =
         OpenAiCompatibleStructuredTransport(
             client =
@@ -126,10 +152,11 @@ class OpenAiCompatibleStructuredTransportLoggingTest {
                     }
                 },
             provider = "openai",
-            apiKey = "api-key-secret",
+            apiKey = "test",
             model = "test-model",
             baseUrl = "https://api.example/v1",
             mode = OpenAiCompatibleMode.ChatJsonSchema,
+            enableThinking = enableThinking,
             logger = logger,
         )
 

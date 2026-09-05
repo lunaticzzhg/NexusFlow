@@ -43,10 +43,45 @@ class BackendRuntimeConfigTest {
         assertEquals("https://dashscope.aliyuncs.com/compatible-mode/v1", config.ai?.baseUrl)
         assertEquals("qwen3.8-max", config.ai?.model)
         assertEquals(45_000, config.ai?.requestTimeout?.toMillis())
+        assertEquals(false, config.ai?.enableThinking)
         assertFalse(config.ai.toString().contains("test-ai-key"))
         assertEquals(true, config.devLoginEnabled)
         assertEquals("dev@nexusflow.local", config.devLoginEmail)
         assertEquals("devpass", config.devLoginPassword)
+    }
+
+    @Test
+    fun `qwen defaults to longer timeout and disabled thinking`() {
+        val config =
+            BackendRuntimeConfig.fromEnvironment(
+                baseEnvironment() +
+                    mapOf(
+                        "AI_PROVIDER" to "qwen",
+                        "AI_API_KEY" to "test-ai-key",
+                        "AI_BASE_URL" to "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        "AI_MODEL" to "qwen3.8-flash",
+                    ),
+            )
+
+        assertEquals(90_000, config.ai?.requestTimeout?.toMillis())
+        assertEquals(false, config.ai?.enableThinking)
+    }
+
+    @Test
+    fun `AI thinking can be explicitly enabled`() {
+        val config =
+            BackendRuntimeConfig.fromEnvironment(
+                baseEnvironment() +
+                    mapOf(
+                        "AI_PROVIDER" to "qwen",
+                        "AI_API_KEY" to "test-ai-key",
+                        "AI_BASE_URL" to "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        "AI_MODEL" to "qwen3.8-flash",
+                        "AI_ENABLE_THINKING" to "true",
+                    ),
+            )
+
+        assertEquals(true, config.ai?.enableThinking)
     }
 
     @Test
@@ -118,6 +153,22 @@ class BackendRuntimeConfigTest {
                         "AI_BASE_URL" to "https://api.deepseek.com",
                         "AI_MODEL" to "deepseek-v4-flash",
                         "AI_REQUEST_TIMEOUT_MS" to "0",
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `AI thinking setting must be boolean`() {
+        assertFailsWith<IllegalStateException> {
+            BackendRuntimeConfig.fromEnvironment(
+                baseEnvironment() +
+                    mapOf(
+                        "AI_PROVIDER" to "qwen",
+                        "AI_API_KEY" to "test-ai-key",
+                        "AI_BASE_URL" to "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        "AI_MODEL" to "qwen3.8-flash",
+                        "AI_ENABLE_THINKING" to "maybe",
                     ),
             )
         }

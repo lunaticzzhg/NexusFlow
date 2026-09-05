@@ -9,6 +9,7 @@ import com.nexusflow.ai.understanding.ActivityModeValue as AiActivityModeValue
 import com.nexusflow.ai.understanding.ClarificationReasonCategory as AiClarificationReasonCategory
 import com.nexusflow.ai.understanding.CommutePreferenceValue as AiCommutePreferenceValue
 import com.nexusflow.ai.understanding.CurrentRequirement as AiCurrentRequirement
+import com.nexusflow.ai.understanding.InvalidStructuredOutputException as AiInvalidStructuredOutputException
 import com.nexusflow.ai.understanding.ProposedRequirementChange as AiProposedRequirementChange
 import com.nexusflow.ai.understanding.RequirementKind as AiRequirementKind
 import com.nexusflow.ai.understanding.RequirementStrength as AiRequirementStrength
@@ -407,7 +408,13 @@ class TaskService(
             throw error
         } catch (error: UserMessageUnderstandingException) {
             pending.recordAiUnderstandingFailed(error.safeFailureCategory(), attemptStartedAt.elapsedMs())
-            logAiUnderstandingFailed(pending, error.safeFailureCategory().toSnakeCase(), attemptStartedAt.elapsedMs(), error)
+            logAiUnderstandingFailed(
+                pending = pending,
+                failureCategory = error.safeFailureCategory().toSnakeCase(),
+                durationMs = attemptStartedAt.elapsedMs(),
+                cause = error,
+                failureStage = error.safeFailureStage(),
+            )
             throw error.toUnavailable(pending)
         }
         val selectedContextKeys = try {
@@ -510,6 +517,7 @@ class TaskService(
         failureCategory: String,
         durationMs: Long,
         cause: Throwable? = null,
+        failureStage: String? = null,
     ) {
         logger?.error(
             component = AI_LOG_COMPONENT,
@@ -520,6 +528,7 @@ class TaskService(
                     "task_revision" value pending.taskRevision
                     "duration_ms" value durationMs
                     "failure_category" value failureCategory
+                    "failure_stage" value failureStage
                 },
             cause = cause,
         )
@@ -661,6 +670,9 @@ class TaskService(
 
     private fun UserMessageUnderstandingException.safeFailureCategory(): String =
         this::class.simpleName ?: "UserMessageUnderstandingException"
+
+    private fun UserMessageUnderstandingException.safeFailureStage(): String? =
+        (this as? AiInvalidStructuredOutputException)?.failureStage
 
     private suspend fun PendingUnderstanding.understandingModelContext(actor: ActorContext): UnderstandingModelContext {
         val catalog = modelContextCatalog ?: return UnderstandingModelContext()

@@ -13,6 +13,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class StructuredUserMessageUnderstandingLoggingTest {
     @Test
@@ -29,6 +30,22 @@ class StructuredUserMessageUnderstandingLoggingTest {
             assertEquals("understanding", retry.fields["operation"])
             assertEquals("2", retry.fields["next_attempt"])
             assertEquals("invalid_structured_output", retry.fields["failure_category"])
+            assertEquals("json_decode", retry.fields["failure_stage"])
+        }
+
+    @Test
+    fun `carries final invalid output failure stage`() =
+        runBlocking {
+            val logger = RecordingLogger()
+            val provider = ScriptedProvider(invalidEvidencePayload())
+
+            val error = assertFailsWith<InvalidStructuredOutputException> {
+                StructuredUserMessageUnderstanding(provider, logger = logger).understand(context())
+            }
+
+            assertEquals("evidence_not_substring", error.failureStage)
+            val retry = logger.entries.single()
+            assertEquals("evidence_not_substring", retry.fields["failure_stage"])
         }
 
     private fun context(): UnderstandingContext =
@@ -49,6 +66,28 @@ private fun validUnderstandingPayload(): String =
         StructuredUnderstandingPayload(
             userIntent = "plan_request",
             requirementChanges = emptyList(),
+            clarification =
+                StructuredClarificationPayload(
+                    needed = false,
+                    missingInformation = emptyList(),
+                    reasonCategory = "none",
+                ),
+            contextSelection = StructuredContextSelectionPayload(selectedKeys = emptyList()),
+        ),
+    )
+
+private fun invalidEvidencePayload(): String =
+    UnderstandingJson.encodeToString(
+        StructuredUnderstandingPayload(
+            userIntent = "plan_request",
+            requirementChanges = listOf(
+                StructuredRequirementPayload(
+                    kind = "activity_domain",
+                    strength = "must",
+                    evidenceText = "not in message",
+                    textValue = "movie",
+                ),
+            ),
             clarification =
                 StructuredClarificationPayload(
                     needed = false,
