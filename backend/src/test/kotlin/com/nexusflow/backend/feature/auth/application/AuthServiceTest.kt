@@ -1,8 +1,11 @@
 package com.nexusflow.backend.feature.auth.application
 
 import com.nexusflow.backend.core.config.BackendRuntimeConfig
+import com.nexusflow.backend.core.config.ExternalSourcesRuntimeConfig
 import com.nexusflow.backend.core.config.LogFormat
 import com.nexusflow.backend.core.config.LoggingRuntimeConfig
+import com.nexusflow.backend.core.config.OpportunitySourceMode
+import com.nexusflow.backend.core.config.ResponseRunRuntimeConfig
 import com.nexusflow.backend.core.config.RuntimeEnvironment
 import com.nexusflow.backend.feature.auth.domain.AccessTokenIssuer
 import com.nexusflow.backend.feature.auth.domain.AuthPrincipal
@@ -158,6 +161,21 @@ class AuthServiceTest {
             accessLifetime = Duration.ofMinutes(15),
             refreshLifetime = Duration.ofDays(30),
             ai = null,
+            responseRun = ResponseRunRuntimeConfig(
+                workerEnabled = false,
+                pollInterval = Duration.ofSeconds(1),
+                leaseDuration = Duration.ofSeconds(30),
+                heartbeatInterval = Duration.ofSeconds(10),
+                retryBackoff = Duration.ofSeconds(5),
+                maxAttempts = 3,
+                maxDuration = Duration.ofMinutes(30),
+            ),
+            externalSources = ExternalSourcesRuntimeConfig(
+                mode = OpportunitySourceMode.External,
+                requestTimeout = Duration.ofSeconds(8),
+                userAgent = "NexusFlow/0.1",
+                tavily = null,
+            ),
             logging =
                 LoggingRuntimeConfig(
                     environment = RuntimeEnvironment.Local,

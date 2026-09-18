@@ -18,11 +18,13 @@ import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.Sender
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.plugin
+import io.ktor.client.plugins.sse.SSE
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Url
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.util.AttributeKey
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -49,6 +51,7 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.configureAppHttpClient() {
         connectTimeoutMillis = NetworkDefaults.connectTimeout.inWholeMilliseconds
         socketTimeoutMillis = NetworkDefaults.socketTimeout.inWholeMilliseconds
     }
+    install(SSE)
 }
 
 /** Converts non-2xx responses from the configured first-party API into a stable transport error. */
@@ -136,7 +139,8 @@ private suspend fun Sender.executeFirstPartyRequest(
     )
 
     try {
-        val isProtectedRequest = !requestUrl.isPublicAuthEndpoint()
+        val authenticationMode = request.attributes.getOrNull(ApiAuthenticationModeAttribute) ?: ApiAuthenticationMode.Automatic
+        val isProtectedRequest = authenticationMode == ApiAuthenticationMode.Automatic && !requestUrl.isPublicAuthEndpoint()
         val provider = if (isProtectedRequest) sessionProvider() else null
         val firstToken = provider?.currentAccessToken()
         if (firstToken != null) {
@@ -253,3 +257,14 @@ private fun String.isLikelyDynamicPathSegment(): Boolean =
 private const val HTTP_UNAUTHORIZED = 401
 private const val MIN_DYNAMIC_PATH_SEGMENT_LENGTH = 8
 private val HttpLogTag = LogTag.of("http")
+
+internal enum class ApiAuthenticationMode {
+    Automatic,
+    Explicit,
+}
+
+internal val ApiAuthenticationModeAttribute = AttributeKey<ApiAuthenticationMode>("ApiAuthenticationMode")
+
+internal fun HttpRequestBuilder.apiAuthenticationMode(mode: ApiAuthenticationMode) {
+    attributes.put(ApiAuthenticationModeAttribute, mode)
+}

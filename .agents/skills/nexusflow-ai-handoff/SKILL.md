@@ -169,6 +169,8 @@ The bundling script must abort before creating the ZIP if it finds known sensiti
 
 Do not automatically redact and continue. The user or repository owner must decide whether the source should change or the bundle scope should be adjusted.
 
+When a content-level finding comes from test-only fake credential data, fix the source before bundling: use short placeholders, generated nonliteral values, or allowlist assertions that prove only safe fields are emitted. Do not bypass a content-level finding with `--allow-sensitive-path-exclusion`.
+
 ## Prohibited
 
 When using this skill, do not:

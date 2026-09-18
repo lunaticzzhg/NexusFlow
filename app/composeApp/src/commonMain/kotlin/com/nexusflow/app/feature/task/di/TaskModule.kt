@@ -1,5 +1,6 @@
 package com.nexusflow.app.feature.task.di
 
+import com.nexusflow.app.core.observability.AppLogger
 import com.nexusflow.app.feature.task.data.DefaultTaskRepository
 import com.nexusflow.app.feature.task.data.TaskRemoteDataSource
 import com.nexusflow.app.feature.task.data.createTaskApi
@@ -24,5 +25,14 @@ val taskModule =
         }
         viewModel { TaskHomeViewModel(get()) }
         viewModel { TaskCreateViewModel(get()) }
-        viewModel { parameters -> TaskDetailViewModel(taskId = parameters.get(), repository = get(), traceManager = get()) }
+        viewModel {
+                parameters ->
+            TaskDetailViewModel(
+                detailIdentity = parameters.get(),
+                repository = get(),
+                realtimeSseSessionFactory = get(),
+                traceManager = get(),
+                appLogger = get<AppLogger>(),
+            )
+        }
     }

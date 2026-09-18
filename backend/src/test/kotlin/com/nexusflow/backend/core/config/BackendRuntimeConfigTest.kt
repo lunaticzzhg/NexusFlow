@@ -16,9 +16,61 @@ class BackendRuntimeConfigTest {
         assertEquals(com.nexusflow.observability.LogLevel.INFO, config.logging.level)
         assertEquals(LogFormat.Pretty, config.logging.format)
         assertEquals("nexusflow-backend", config.logging.serviceName)
+        assertEquals(OpportunitySourceMode.External, config.externalSources.mode)
+        assertEquals(8_000, config.externalSources.requestTimeout.toMillis())
+        assertEquals("NexusFlow/0.1", config.externalSources.userAgent)
+        assertNull(config.externalSources.tavily)
+        assertEquals("https://musicbrainz.org/ws/2", config.externalSources.musicBrainz.baseUrl)
+        assertEquals("3", config.externalSources.theSportsDb.apiKey)
+        assertNull(config.externalSources.openRouteService)
+        assertEquals("https://overpass-api.de/api", config.externalSources.overpass.baseUrl)
+        assertEquals("https://api.open-meteo.com", config.externalSources.openMeteo.baseUrl)
+        assertNull(config.externalSources.chinaOfficialCinema)
+        assertEquals(false, config.responseRun.workerEnabled)
+        assertEquals(1_000, config.responseRun.pollInterval.toMillis())
+        assertEquals(30_000, config.responseRun.leaseDuration.toMillis())
+        assertEquals(10_000, config.responseRun.heartbeatInterval.toMillis())
+        assertEquals(5_000, config.responseRun.retryBackoff.toMillis())
+        assertEquals(3, config.responseRun.maxAttempts)
+        assertEquals(30 * 60 * 1_000, config.responseRun.maxDuration.toMillis())
         assertEquals(false, config.devLoginEnabled)
         assertNull(config.devLoginEmail)
         assertNull(config.devLoginPassword)
+    }
+
+    @Test
+    fun `response run worker settings are centralized and validated`() {
+        val config = BackendRuntimeConfig.fromEnvironment(
+            baseEnvironment() + mapOf(
+                "RESPONSE_RUN_WORKER_ENABLED" to "true",
+                "RESPONSE_RUN_POLL_INTERVAL_MS" to "250",
+                "RESPONSE_RUN_LEASE_DURATION_MS" to "5000",
+                "RESPONSE_RUN_HEARTBEAT_INTERVAL_MS" to "1000",
+                "RESPONSE_RUN_RETRY_BACKOFF_MS" to "750",
+                "RESPONSE_RUN_MAX_ATTEMPTS" to "4",
+                "RESPONSE_RUN_MAX_DURATION_MS" to "60000",
+            ),
+        )
+
+        assertEquals(true, config.responseRun.workerEnabled)
+        assertEquals(250, config.responseRun.pollInterval.toMillis())
+        assertEquals(5_000, config.responseRun.leaseDuration.toMillis())
+        assertEquals(1_000, config.responseRun.heartbeatInterval.toMillis())
+        assertEquals(750, config.responseRun.retryBackoff.toMillis())
+        assertEquals(4, config.responseRun.maxAttempts)
+        assertEquals(60_000, config.responseRun.maxDuration.toMillis())
+
+        assertFailsWith<IllegalArgumentException> {
+            BackendRuntimeConfig.fromEnvironment(
+                baseEnvironment() + mapOf(
+                    "RESPONSE_RUN_LEASE_DURATION_MS" to "1000",
+                    "RESPONSE_RUN_HEARTBEAT_INTERVAL_MS" to "1000",
+                ),
+            )
+        }
+        assertFailsWith<IllegalArgumentException> {
+            BackendRuntimeConfig.fromEnvironment(baseEnvironment() + mapOf("RESPONSE_RUN_MAX_ATTEMPTS" to "0"))
+        }
     }
 
     @Test
@@ -170,6 +222,77 @@ class BackendRuntimeConfigTest {
                         "AI_MODEL" to "qwen3.8-flash",
                         "AI_ENABLE_THINKING" to "maybe",
                     ),
+            )
+        }
+    }
+
+    @Test
+    fun `external source settings are retained and Tavily secret is redacted`() {
+        val config =
+            BackendRuntimeConfig.fromEnvironment(
+                baseEnvironment() +
+                    mapOf(
+                        "ORBIT_OPPORTUNITY_SOURCE_MODE" to "external",
+                        "EXTERNAL_SOURCE_REQUEST_TIMEOUT_MS" to "2500",
+                        "EXTERNAL_SOURCE_USER_AGENT" to "NexusFlow Test/1.0",
+                        "TAVILY_API_KEY" to "tv-k",
+                        "TICKETMASTER_API_KEY" to "tm-k",
+                        "THESPORTSDB_API_KEY" to "ts-k",
+                        "ORS_API_KEY" to "ors-k",
+                        "ORS_ROUTING_BASE_URL" to "https://ors-route.test",
+                        "ORS_GEOCODE_BASE_URL" to "https://ors-geocode.test",
+                        "OVERPASS_BASE_URL" to "https://overpass.test/api",
+                        "TRAILSPLITS_BASE_URL" to "https://trailsplits.test",
+                        "NOMINATIM_BASE_URL" to "https://nominatim.test",
+                        "OPEN_METEO_BASE_URL" to "https://open-meteo.test",
+                        "MET_NO_BASE_URL" to "https://met-no.test",
+                        "MUSICBRAINZ_BASE_URL" to "https://musicbrainz.test/ws/2",
+                        "THESPORTSDB_BASE_URL" to "https://thesportsdb.test",
+                        "CHINA_OFFICIAL_CINEMA_PAGE_URLS" to "https://cinema-a.test/showtimes, https://cinema-b.test/shenzhen",
+                    ),
+            )
+
+        assertEquals(OpportunitySourceMode.External, config.externalSources.mode)
+        assertEquals(2_500, config.externalSources.requestTimeout.toMillis())
+        assertEquals("NexusFlow Test/1.0", config.externalSources.userAgent)
+        assertEquals("tv-k", config.externalSources.tavily?.apiKey)
+        assertEquals("tm-k", config.externalSources.ticketmaster?.apiKey)
+        assertEquals("ts-k", config.externalSources.theSportsDb.apiKey)
+        assertEquals("ors-k", config.externalSources.openRouteService?.apiKey)
+        assertEquals("https://ors-route.test", config.externalSources.openRouteService?.routingBaseUrl)
+        assertEquals("https://ors-geocode.test", config.externalSources.openRouteService?.geocodeBaseUrl)
+        assertEquals("https://overpass.test/api", config.externalSources.overpass.baseUrl)
+        assertEquals("https://trailsplits.test", config.externalSources.trailSplits.baseUrl)
+        assertEquals("https://nominatim.test", config.externalSources.nominatim.baseUrl)
+        assertEquals("https://open-meteo.test", config.externalSources.openMeteo.baseUrl)
+        assertEquals("https://met-no.test", config.externalSources.metNo.baseUrl)
+        assertEquals("https://musicbrainz.test/ws/2", config.externalSources.musicBrainz.baseUrl)
+        assertEquals("https://thesportsdb.test", config.externalSources.theSportsDb.baseUrl)
+        assertEquals(
+            listOf("https://cinema-a.test/showtimes", "https://cinema-b.test/shenzhen"),
+            config.externalSources.chinaOfficialCinema?.pageUrls,
+        )
+        assertFalse(config.externalSources.tavily.toString().contains("tv-k"))
+        assertFalse(config.externalSources.ticketmaster.toString().contains("tm-k"))
+        assertFalse(config.externalSources.theSportsDb.toString().contains("ts-k"))
+        assertFalse(config.externalSources.openRouteService.toString().contains("ors-k"))
+    }
+
+    @Test
+    fun `external source mode and timeout are validated`() {
+        assertFailsWith<IllegalStateException> {
+            BackendRuntimeConfig.fromEnvironment(
+                baseEnvironment() + mapOf("ORBIT_OPPORTUNITY_SOURCE_MODE" to "mock"),
+            )
+        }
+        assertFailsWith<IllegalStateException> {
+            BackendRuntimeConfig.fromEnvironment(
+                baseEnvironment() + mapOf("ORBIT_OPPORTUNITY_SOURCE_MODE" to "controlled"),
+            )
+        }
+        assertFailsWith<IllegalArgumentException> {
+            BackendRuntimeConfig.fromEnvironment(
+                baseEnvironment() + mapOf("EXTERNAL_SOURCE_REQUEST_TIMEOUT_MS" to "0"),
             )
         }
     }

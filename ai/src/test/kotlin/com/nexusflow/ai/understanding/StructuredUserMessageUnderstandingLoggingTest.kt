@@ -53,21 +53,18 @@ class StructuredUserMessageUnderstandingLoggingTest {
     private fun context(): UnderstandMessageRequest =
         UnderstandMessageRequest(
             aiRequestId = "understand-1",
-            taskId = "task-1",
-            taskRevision = 1,
-            intent = "",
-            requirements = emptyList(),
             currentMessage = "Find a movie",
             referenceTime = Instant.parse("2026-08-29T00:00:00Z"),
             timeZoneId = "Asia/Shanghai",
+            activePlanning = null,
         )
 }
 
 private fun validUnderstandingPayload(): String =
     UnderstandingJson.encodeToString(
         StructuredUnderstandingPayload(
-            userIntent = "plan_request",
-            requirementChanges = emptyList(),
+            turnIntent = "planning",
+            constraintDeltas = emptyList(),
             clarification =
                 StructuredClarificationPayload(
                     needed = false,
@@ -81,13 +78,17 @@ private fun validUnderstandingPayload(): String =
 private fun invalidEvidencePayload(): String =
     UnderstandingJson.encodeToString(
         StructuredUnderstandingPayload(
-            userIntent = "plan_request",
-            requirementChanges = listOf(
-                StructuredRequirementPayload(
+            turnIntent = "planning",
+            constraintDeltas = listOf(
+                StructuredConstraintDeltaPayload(
+                    operation = "upsert",
                     kind = "activity_domain",
-                    strength = "must",
                     evidenceText = "not in message",
-                    textValue = "movie",
+                    value = StructuredRequirementValuePayload(
+                        type = "activity_domain",
+                        textValue = "movie",
+                    ),
+                    strength = "must",
                 ),
             ),
             clarification =

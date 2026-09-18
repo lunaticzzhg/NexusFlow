@@ -148,9 +148,9 @@ class NetworkCallTest {
                     engine = MockEngine { jsonResponse("""{"code":200}""") },
                 )
 
-            client.get("$API_BASE_URL/v1/tasks/80bbf3577b34da6a/messages").bodyAsText()
+            client.get("$API_BASE_URL/v1/conversations/80bbf3577b34da6a/messages").bodyAsText()
 
-            assertEquals("/v1/tasks/{id}/messages", logger.entries.first().fields["http_path"])
+            assertEquals("/v1/conversations/{id}/messages", logger.entries.first().fields["http_path"])
             client.close()
         }
 
@@ -200,6 +200,37 @@ class NetworkCallTest {
             assertEquals(listOf<String?>("Bearer old-token", "Bearer new-token"), seenAuthorization)
             assertEquals(listOf("old-token"), session.refreshRequests)
             assertEquals(emptyList(), session.clearRequests)
+            client.close()
+        }
+
+    @Test
+    fun `explicit first party requests do not inject refresh or replay bearer`() =
+        runBlocking {
+            val session =
+                RecordingFirstPartyApiSession(
+                    currentToken = "access-token",
+                    refreshResult = FirstPartySessionRefresh.TokenAvailable("new-token"),
+                )
+            val seenAuthorization = mutableListOf<String?>()
+            val client =
+                testClient(
+                    session = session,
+                    engine =
+                        MockEngine { request ->
+                            seenAuthorization += request.headers[HttpHeaders.Authorization]
+                            jsonResponse("""{"code":401}""", HttpStatusCode.Unauthorized)
+                        },
+                )
+
+            assertFailsWith<HttpFailureException> {
+                client.get("$API_BASE_URL/v1/conversations/conversation-1/response-runs/run-1/events") {
+                    apiAuthenticationMode(ApiAuthenticationMode.Explicit)
+                    headers.append(HttpHeaders.Authorization, "Bearer explicit-token")
+                }.bodyAsText()
+            }
+            assertEquals(listOf<String?>("Bearer explicit-token"), seenAuthorization)
+            assertEquals(emptyList<String>(), session.refreshRequests)
+            assertEquals(emptyList<String>(), session.clearRequests)
             client.close()
         }
 

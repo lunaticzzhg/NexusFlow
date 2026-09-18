@@ -116,6 +116,29 @@ class OpenAiCompatibleStructuredTransportLoggingTest {
         }
 
     @Test
+    fun `logs conversation decision capability operation`() =
+        runBlocking {
+            val logger = RecordingLogger()
+            val transport =
+                transport(
+                    logger = logger,
+                    engine =
+                        MockEngine {
+                            respond(
+                                content = SUCCESS_BODY,
+                                status = HttpStatusCode.OK,
+                                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                            )
+                        },
+                )
+
+            transport.generate(request(capability = StructuredModelCapability.ConversationDecision))
+
+            assertEquals("conversation_decision", logger.entries.last().fields["operation"])
+            assertNoSensitiveLogContent(logger)
+        }
+
+    @Test
     fun `chat completion request can disable thinking`() =
         runBlocking {
             var requestBody = ""
@@ -160,7 +183,10 @@ class OpenAiCompatibleStructuredTransportLoggingTest {
             logger = logger,
         )
 
-    private fun request(attemptNumber: Int = 1): StructuredModelRequest =
+    private fun request(
+        attemptNumber: Int = 1,
+        capability: StructuredModelCapability = StructuredModelCapability.UnderstandMessage,
+    ): StructuredModelRequest =
         StructuredModelRequest(
             systemPrompt = "system prompt with secret",
             userPayload = JsonObject(mapOf("message" to JsonPrimitive("raw user secret"))),
@@ -169,7 +195,7 @@ class OpenAiCompatibleStructuredTransportLoggingTest {
                 StructuredModelRequestMetadata(
                     requestId = "diagnostic-request-id",
                     promptVersion = "prompt-v1",
-                    capability = StructuredModelCapability.UnderstandMessage,
+                    capability = capability,
                     attemptNumber = attemptNumber,
                     diagnostics =
                         StructuredModelRequestDiagnostics(

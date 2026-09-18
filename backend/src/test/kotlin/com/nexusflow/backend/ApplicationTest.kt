@@ -145,7 +145,7 @@ class ApplicationTest {
         application {
             configureHttpPlatform(logger)
             routing {
-                get("/v1/tasks/12345678/messages") {
+                get("/v1/conversations/12345678/messages") {
                     call.respondText("ok")
                 }
                 get("/boom") {
@@ -155,7 +155,7 @@ class ApplicationTest {
         }
 
         val traceId = "cccccccccccccccccccccccccccccccc"
-        client.get("/v1/tasks/12345678/messages?token=secret") {
+        client.get("/v1/conversations/12345678/messages?token=secret") {
             header(TraceHeaders.TraceId, traceId)
         }
         client.get("/boom?query=secret") {
@@ -184,7 +184,7 @@ class ApplicationTest {
             records.map { it.getValue("event").jsonPrimitive.content },
         )
         assertTrue(records.all { it.getValue("trace_id").jsonPrimitive.content == traceId })
-        assertEquals("/v1/tasks/{id}/messages", records[0].getValue("http_path").jsonPrimitive.content)
+        assertEquals("/v1/conversations/{id}/messages", records[0].getValue("http_path").jsonPrimitive.content)
         assertEquals("500", records[3].getValue("http_status").jsonPrimitive.content)
         assertEquals("IllegalStateException", records[3].getValue("error_type").jsonPrimitive.content)
     }

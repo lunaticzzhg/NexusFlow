@@ -45,8 +45,8 @@ data object AppPreferencesDestination : AppDestination {
 data object TaskCreateDestination
 
 @Serializable
-data class TaskDetailDestination(
-    val taskId: String,
+data class ConversationDetailDestination(
+    val conversationId: String,
 )
 
 val appDestinations: List<AppDestination> =

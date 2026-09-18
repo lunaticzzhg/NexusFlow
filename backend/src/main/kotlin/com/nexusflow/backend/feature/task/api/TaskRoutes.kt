@@ -16,8 +16,6 @@ import com.nexusflow.backend.feature.task.application.TaskNotFoundException
 import com.nexusflow.backend.feature.task.application.TaskService
 import com.nexusflow.backend.feature.task.domain.ActivityModeValue
 import com.nexusflow.backend.feature.task.domain.CommutePreferenceValue
-import com.nexusflow.backend.feature.task.domain.TaskMessage
-import com.nexusflow.backend.feature.task.domain.MessageRole
 import com.nexusflow.backend.feature.task.domain.Plan
 import com.nexusflow.backend.feature.task.domain.PlanDirection
 import com.nexusflow.backend.feature.task.domain.PlanEstimatedCost
@@ -35,8 +33,6 @@ import com.nexusflow.backend.feature.task.domain.Task
 import com.nexusflow.backend.feature.task.domain.TaskDetail
 import com.nexusflow.contracts.appbackend.task.ActivityModeValue as ActivityModeValueResponse
 import com.nexusflow.contracts.appbackend.task.CommutePreferenceValue as CommutePreferenceValueResponse
-import com.nexusflow.contracts.appbackend.task.CreateTaskRequest
-import com.nexusflow.contracts.appbackend.task.MessageRole as MessageRoleResponse
 import com.nexusflow.contracts.appbackend.plan.PlanDirection as PlanDirectionResponse
 import com.nexusflow.contracts.appbackend.plan.PlanEstimatedCostResponse
 import com.nexusflow.contracts.appbackend.plan.PlanResponse
@@ -52,12 +48,11 @@ import com.nexusflow.contracts.appbackend.task.RequirementSource as RequirementS
 import com.nexusflow.contracts.appbackend.task.RequirementStrength as RequirementStrengthResponse
 import com.nexusflow.contracts.appbackend.task.RequirementSummaryResponse
 import com.nexusflow.contracts.appbackend.task.RequirementValueResponse
-import com.nexusflow.contracts.appbackend.task.SendTaskMessageRequest
 import com.nexusflow.contracts.appbackend.task.TaskDetailResponse
-import com.nexusflow.contracts.appbackend.task.TaskMessageResponse
 import com.nexusflow.contracts.appbackend.task.TaskResponse
 import com.nexusflow.contracts.appbackend.task.TaskSummaryResponse
 import com.nexusflow.contracts.appbackend.task.UpdateRequirementRequest
+import com.nexusflow.contracts.appbackend.conversation.ConversationCurrentTaskResponse
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
@@ -77,20 +72,6 @@ fun Route.taskRoutes(
     actorResolver: ActorResolver,
 ) {
     route("/v1/tasks") {
-        post {
-            call.respondTask {
-                val request = call.receive<CreateTaskRequest>()
-                call.respondSuccess(
-                    taskService.createTask(
-                        actor = actorResolver.resolve(call),
-                        clientRequestId = request.clientRequestId,
-                        message = request.message,
-                        timeZoneId = request.timeZoneId,
-                    ).toResponse(),
-                )
-            }
-        }
-
         get {
             call.respondTask {
                 call.respondSuccess(taskService.listTasks(actorResolver.resolve(call)).map { it.toSummaryResponse() })
@@ -103,21 +84,6 @@ fun Route.taskRoutes(
                     taskService.getTask(
                         actor = actorResolver.resolve(call),
                         taskId = call.taskIdParameter(),
-                    ).toResponse(),
-                )
-            }
-        }
-
-        post("/{taskId}/messages") {
-            call.respondTask {
-                val request = call.receive<SendTaskMessageRequest>()
-                call.respondSuccess(
-                    taskService.sendMessage(
-                        actor = actorResolver.resolve(call),
-                        taskId = call.taskIdParameter(),
-                        clientMessageId = request.clientMessageId,
-                        text = request.text,
-                        timeZoneId = request.timeZoneId,
                     ).toResponse(),
                 )
             }
@@ -201,6 +167,7 @@ private fun TaskDetail.toSummaryResponse(): TaskSummaryResponse =
         requirements = requirements.map { it.toSummaryResponse() },
         selectedPlanId = task.selectedPlanId?.value?.toString(),
         updatedAt = task.updatedAt.toContractInstant(),
+        conversationId = task.conversationId?.value?.toString(),
     )
 
 private fun TaskDetail.toResponse(): TaskDetailResponse {
@@ -213,6 +180,16 @@ private fun TaskMutationResult.toResponse(): TaskDetailResponse {
     return detail.toResponse(currentPlans, planningOutcome.toResponseStatus(currentPlans))
 }
 
+internal fun TaskDetail.toConversationCurrentTaskResponse(planningOutcome: PlanningOutcome = PlanningOutcome.NotAttempted): ConversationCurrentTaskResponse {
+    val currentPlans = plans.filter { it.revision == task.revision }
+    return ConversationCurrentTaskResponse(
+        task = task.toResponse(currentPlans.mapTo(mutableSetOf()) { it.id }),
+        requirements = requirements.map { it.toResponse() },
+        plans = currentPlans.map { it.toResponse() },
+        planning = PlanningStatusResponse(planningOutcome.toResponseStatus(currentPlans)),
+    )
+}
+
 private fun TaskDetail.toResponse(
     currentPlans: List<Plan>,
     planningStatus: PlanningStatus,
@@ -221,7 +198,6 @@ private fun TaskDetail.toResponse(
     return TaskDetailResponse(
         task = task.toResponse(currentPlanIds),
         requirements = requirements.map { it.toResponse() },
-        messages = messages.map { it.toResponse() },
         plans = currentPlans.map { it.toResponse() },
         planning = PlanningStatusResponse(planningStatus),
     )
@@ -250,23 +226,6 @@ private fun Task.toResponse(currentPlanIds: Set<com.nexusflow.backend.feature.ta
         createdAt = createdAt.toContractInstant(),
         updatedAt = updatedAt.toContractInstant(),
     )
-
-private fun TaskMessage.toResponse(): TaskMessageResponse =
-    TaskMessageResponse(
-        id = id.value.toString(),
-        role = role.toResponse(),
-        content = content,
-        clientMessageId = clientMessageId,
-        aiRequestId = aiRequestId,
-        understoodAt = understoodAt?.toContractInstant(),
-        createdAt = createdAt.toContractInstant(),
-    )
-
-private fun MessageRole.toResponse(): MessageRoleResponse =
-    when (this) {
-        MessageRole.User -> MessageRoleResponse.User
-        MessageRole.Assistant -> MessageRoleResponse.Assistant
-    }
 
 private fun Requirement.toSummaryResponse(): RequirementSummaryResponse =
     RequirementSummaryResponse(

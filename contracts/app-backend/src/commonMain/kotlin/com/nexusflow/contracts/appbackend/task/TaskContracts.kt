@@ -5,28 +5,6 @@ import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** App asks Backend to create a Task from one user message under a client idempotency key. */
-@Serializable
-data class CreateTaskRequest(
-    @SerialName("clientRequestId")
-    val clientRequestId: String,
-    @SerialName("message")
-    val message: String,
-    @SerialName("timeZoneId")
-    val timeZoneId: String,
-)
-
-/** App sends one new message to an existing Task under a client message idempotency key. */
-@Serializable
-data class SendTaskMessageRequest(
-    @SerialName("clientMessageId")
-    val clientMessageId: String,
-    @SerialName("text")
-    val text: String,
-    @SerialName("timeZoneId")
-    val timeZoneId: String,
-)
-
 /** App asks Backend to replace one editable requirement with a new user-approved value. */
 @Serializable
 data class UpdateRequirementRequest(
@@ -51,6 +29,8 @@ data class TaskSummaryResponse(
     val selectedPlanId: String? = null,
     @SerialName("updatedAt")
     val updatedAt: Instant,
+    @SerialName("conversationId")
+    val conversationId: String? = null,
 )
 
 /**
@@ -65,8 +45,6 @@ data class TaskDetailResponse(
     val task: TaskResponse,
     @SerialName("requirements")
     val requirements: List<RequirementResponse>,
-    @SerialName("messages")
-    val messages: List<TaskMessageResponse>,
     @SerialName("plans")
     val plans: List<PlanResponse>,
     @SerialName("planning")
@@ -122,24 +100,6 @@ enum class PlanningStatus {
     @SerialName("unavailable")
     Unavailable,
 }
-
-@Serializable
-data class TaskMessageResponse(
-    @SerialName("id")
-    val id: String,
-    @SerialName("role")
-    val role: MessageRole,
-    @SerialName("content")
-    val content: String,
-    @SerialName("clientMessageId")
-    val clientMessageId: String? = null,
-    @SerialName("aiRequestId")
-    val aiRequestId: String? = null,
-    @SerialName("understoodAt")
-    val understoodAt: Instant? = null,
-    @SerialName("createdAt")
-    val createdAt: Instant,
-)
 
 @Serializable
 enum class MessageRole {

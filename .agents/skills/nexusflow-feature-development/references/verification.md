@@ -21,6 +21,7 @@ Use the current `settings.gradle.kts` and real source tree as the authority for 
 - Pure wiring with no branch can use compile/dependency resolution as evidence when the relevant build task actually covers it.
 - Third-party library behavior is not retested unless NexusFlow wraps it with product-specific semantics.
 - A skipped verification must name the missing evidence and why it was not run.
+- Tests that exercise credential or sanitizer paths must use bundle-safe placeholder values. Prefer short placeholders such as `k`, `p`, or `t`, or assert an allowlist of emitted fields. Do not add long fake API keys, tokens, passwords, private keys, or secret-like literals just to prove they are absent from output.
 
 ## App/KMP Notes
 

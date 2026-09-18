@@ -2,6 +2,8 @@ package com.nexusflow.app.feature.task.data
 
 import com.nexusflow.app.feature.task.domain.ActivityModeValue
 import com.nexusflow.app.feature.task.domain.CommutePreferenceValue
+import com.nexusflow.app.feature.task.domain.ConversationDetail
+import com.nexusflow.app.feature.task.domain.ConversationId
 import com.nexusflow.app.feature.task.domain.MessageRole
 import com.nexusflow.app.feature.task.domain.PlanDirection
 import com.nexusflow.app.feature.task.domain.PlanEstimatedCost
@@ -17,12 +19,32 @@ import com.nexusflow.app.feature.task.domain.RequirementSource
 import com.nexusflow.app.feature.task.domain.RequirementStrength
 import com.nexusflow.app.feature.task.domain.RequirementSummary
 import com.nexusflow.app.feature.task.domain.RequirementValue
+import com.nexusflow.app.feature.task.domain.ResponseRun
+import com.nexusflow.app.feature.task.domain.ResponseRunActivity
+import com.nexusflow.app.feature.task.domain.ResponseRunActivityKind
+import com.nexusflow.app.feature.task.domain.ResponseRunFailureCategory
+import com.nexusflow.app.feature.task.domain.ResponseRunId
+import com.nexusflow.app.feature.task.domain.ResponseRunSnapshot
+import com.nexusflow.app.feature.task.domain.ResponseRunStage
+import com.nexusflow.app.feature.task.domain.ResponseRunStatus
 import com.nexusflow.app.feature.task.domain.TaskDetail
 import com.nexusflow.app.feature.task.domain.TaskId
 import com.nexusflow.app.feature.task.domain.TaskMessage
 import com.nexusflow.app.feature.task.domain.TaskPlan
 import com.nexusflow.app.feature.task.domain.TaskRequirement
 import com.nexusflow.app.feature.task.domain.TaskSummary
+import com.nexusflow.contracts.appbackend.conversation.ConversationCurrentTaskResponse
+import com.nexusflow.contracts.appbackend.conversation.ConversationDetailResponse
+import com.nexusflow.contracts.appbackend.conversation.ConversationMessageResponse
+import com.nexusflow.contracts.appbackend.conversation.CreateConversationResponse
+import com.nexusflow.contracts.appbackend.conversation.ResponseRunActivityKindResponse
+import com.nexusflow.contracts.appbackend.conversation.ResponseRunActivityResponse
+import com.nexusflow.contracts.appbackend.conversation.ResponseRunFailureCategoryResponse
+import com.nexusflow.contracts.appbackend.conversation.ResponseRunResponse
+import com.nexusflow.contracts.appbackend.conversation.ResponseRunSnapshotResponse
+import com.nexusflow.contracts.appbackend.conversation.ResponseRunStageResponse
+import com.nexusflow.contracts.appbackend.conversation.ResponseRunStatusResponse
+import com.nexusflow.contracts.appbackend.conversation.SendConversationMessageResponse
 import com.nexusflow.contracts.appbackend.plan.PlanEstimatedCostResponse
 import com.nexusflow.contracts.appbackend.plan.PlanResponse
 import com.nexusflow.contracts.appbackend.plan.PlanSourceRefResponse
@@ -33,7 +55,6 @@ import com.nexusflow.contracts.appbackend.task.RequirementResponse
 import com.nexusflow.contracts.appbackend.task.RequirementSummaryResponse
 import com.nexusflow.contracts.appbackend.task.RequirementValueResponse
 import com.nexusflow.contracts.appbackend.task.TaskDetailResponse
-import com.nexusflow.contracts.appbackend.task.TaskMessageResponse
 import com.nexusflow.contracts.appbackend.task.TaskSummaryResponse
 import com.nexusflow.contracts.appbackend.plan.RequirementEvaluationResult as ContractRequirementEvaluationResult
 import com.nexusflow.contracts.appbackend.task.RequirementKind as ContractRequirementKind
@@ -44,6 +65,7 @@ internal fun TaskSummaryResponse.toDomain(): TaskSummary =
         intent = intent,
         requirements = requirements.map { it.toDomain() },
         selectedPlanId = selectedPlanId?.let(::PlanId),
+        conversationId = conversationId?.let(::ConversationId),
     )
 
 internal fun TaskDetailResponse.toDomain(): TaskDetail =
@@ -52,7 +74,60 @@ internal fun TaskDetailResponse.toDomain(): TaskDetail =
         intent = task.intent,
         revision = task.revision,
         requirements = requirements.map { it.toDomain() },
-        messages = messages.map { it.toDomain() },
+        messages = emptyList(),
+        plans = plans.map { it.toDomain() },
+        selectedPlanId = task.selectedPlanId?.let(::PlanId),
+        planningState = planning.status.toDomain(),
+    )
+
+internal fun CreateConversationResponse.toDomain(): ConversationDetail =
+    ConversationDetail(
+        id = ConversationId(conversation.id),
+        messages = conversation.messages.map { it.toDomain() },
+        responseRuns = conversation.responseRuns.map { it.toDomain() },
+        currentTask = currentTask?.toDomain(),
+    )
+
+internal fun ConversationDetailResponse.toDomain(): ConversationDetail =
+    ConversationDetail(
+        id = ConversationId(conversation.id),
+        messages = conversation.messages.map { it.toDomain() },
+        responseRuns = conversation.responseRuns.map { it.toDomain() },
+        currentTask = currentTask?.toDomain(),
+    )
+
+internal fun SendConversationMessageResponse.toDomain(): ConversationDetail =
+    ConversationDetail(
+        id = ConversationId(conversation.id),
+        messages = conversation.messages.map { it.toDomain() },
+        responseRuns = conversation.responseRuns.map { it.toDomain() },
+        currentTask = currentTask?.toDomain(),
+    )
+
+internal fun ResponseRunSnapshotResponse.toDomain(): ResponseRunSnapshot =
+    ResponseRunSnapshot(
+        run = run.toDomain(),
+        conversation =
+            ConversationDetail(
+                id = ConversationId(conversation.id),
+                messages = conversation.messages.map { it.toDomain() },
+                responseRuns = conversation.responseRuns.map { it.toDomain() },
+                currentTask = currentTask?.toDomain(),
+            ),
+        streamAttempt = streamAttempt,
+        lastSeq = lastSeq,
+        partialText = partialText,
+        activities = activities.map { it.toDomain() },
+        realtimeSnapshotAvailable = realtimeSnapshotAvailable,
+    )
+
+private fun ConversationCurrentTaskResponse.toDomain(): TaskDetail =
+    TaskDetail(
+        id = TaskId(task.id),
+        intent = task.intent,
+        revision = task.revision,
+        requirements = requirements.map { it.toDomain() },
+        messages = emptyList(),
         plans = plans.map { it.toDomain() },
         selectedPlanId = task.selectedPlanId?.let(::PlanId),
         planningState = planning.status.toDomain(),
@@ -180,7 +255,7 @@ private fun com.nexusflow.contracts.appbackend.task.RequirementSource.toDomain()
         com.nexusflow.contracts.appbackend.task.RequirementSource.SystemDerived -> RequirementSource.SystemDerived
     }
 
-private fun TaskMessageResponse.toDomain(): TaskMessage =
+private fun ConversationMessageResponse.toDomain(): TaskMessage =
     TaskMessage(
         id = id,
         role =
@@ -190,8 +265,75 @@ private fun TaskMessageResponse.toDomain(): TaskMessage =
             },
         content = content,
         clientMessageId = clientMessageId,
+        turnIndex = turnIndex,
         understoodAt = understoodAt,
     )
+
+internal fun ResponseRunResponse.toDomain(): ResponseRun =
+    ResponseRun(
+        id = ResponseRunId(id),
+        userMessageId = userMessageId,
+        turnIndex = turnIndex,
+        status = status.toDomain(),
+        stage = stage.toDomain(),
+        attempt = attempt,
+        retryable = retryable,
+        assistantMessageId = assistantMessageId,
+        failureCategory = failureCategory?.toDomain(),
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+        completedAt = completedAt,
+    )
+
+private fun ResponseRunStatusResponse.toDomain(): ResponseRunStatus =
+    when (this) {
+        ResponseRunStatusResponse.Queued -> ResponseRunStatus.Queued
+        ResponseRunStatusResponse.Processing -> ResponseRunStatus.Processing
+        ResponseRunStatusResponse.Streaming -> ResponseRunStatus.Streaming
+        ResponseRunStatusResponse.Completed -> ResponseRunStatus.Completed
+        ResponseRunStatusResponse.FailedRetryable -> ResponseRunStatus.FailedRetryable
+        ResponseRunStatusResponse.Failed -> ResponseRunStatus.Failed
+        ResponseRunStatusResponse.TimedOut -> ResponseRunStatus.TimedOut
+        ResponseRunStatusResponse.Cancelled -> ResponseRunStatus.Cancelled
+    }
+
+private fun ResponseRunStageResponse.toDomain(): ResponseRunStage =
+    when (this) {
+        ResponseRunStageResponse.Turn -> ResponseRunStage.Turn
+        ResponseRunStageResponse.Planning -> ResponseRunStage.Planning
+    }
+
+private fun ResponseRunFailureCategoryResponse.toDomain(): ResponseRunFailureCategory =
+    when (this) {
+        ResponseRunFailureCategoryResponse.ProviderTemporary -> ResponseRunFailureCategory.ProviderTemporary
+        ResponseRunFailureCategoryResponse.AiInvalidResult -> ResponseRunFailureCategory.AiInvalidResult
+        ResponseRunFailureCategoryResponse.WorkerLost -> ResponseRunFailureCategory.WorkerLost
+        ResponseRunFailureCategoryResponse.RunTimeout -> ResponseRunFailureCategory.RunTimeout
+        ResponseRunFailureCategoryResponse.InternalInvariant -> ResponseRunFailureCategory.InternalInvariant
+    }
+
+private fun ResponseRunActivityResponse.toDomain(): ResponseRunActivity =
+    ResponseRunActivity(
+        id = id,
+        kind = kind.toDomain(),
+        message = message,
+        startedAt = startedAt,
+        completedAt = completedAt,
+        failed = failed,
+    )
+
+private fun ResponseRunActivityKindResponse.toDomain(): ResponseRunActivityKind =
+    when (this) {
+        ResponseRunActivityKindResponse.Thinking -> ResponseRunActivityKind.Thinking
+        ResponseRunActivityKindResponse.Weather -> ResponseRunActivityKind.Weather
+        ResponseRunActivityKindResponse.PlaceSearch -> ResponseRunActivityKind.PlaceSearch
+        ResponseRunActivityKindResponse.Route -> ResponseRunActivityKind.Route
+        ResponseRunActivityKindResponse.Movie -> ResponseRunActivityKind.Movie
+        ResponseRunActivityKindResponse.Sports -> ResponseRunActivityKind.Sports
+        ResponseRunActivityKindResponse.Music -> ResponseRunActivityKind.Music
+        ResponseRunActivityKindResponse.Web -> ResponseRunActivityKind.Web
+        ResponseRunActivityKindResponse.OtherResearch -> ResponseRunActivityKind.OtherResearch
+    }
 
 internal fun PlanResponse.toDomain(): TaskPlan =
     TaskPlan(

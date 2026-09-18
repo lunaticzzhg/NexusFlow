@@ -14,9 +14,13 @@ import com.nexusflow.contracts.backendai.planning.PlanExplanationFact as AiPlanE
 import com.nexusflow.contracts.backendai.planning.PlanForExplanation as AiPlanForExplanation
 import com.nexusflow.contracts.backendai.planning.PlanNarrative as AiPlanNarrative
 import com.nexusflow.contracts.backendai.planning.PlanProposal as AiPlanProposal
+import com.nexusflow.contracts.backendai.planning.PlanningResearchCapability
+import com.nexusflow.contracts.backendai.planning.PlanningResearchRequest as AiPlanningResearchRequest
 import com.nexusflow.contracts.backendai.planning.CreatePlansRequest as AiCreatePlansRequest
+import com.nexusflow.contracts.backendai.planning.CandidateSourceRef as AiCandidateSourceRef
 import com.nexusflow.contracts.backendai.planning.PlanningRequirement as AiPlanningRequirement
 import com.nexusflow.contracts.backendai.planning.PlanningRequirementStrength as AiPlanningRequirementStrength
+import com.nexusflow.contracts.backendai.conversation.ReadOnlyToolDefinitionPayload
 import com.nexusflow.backend.core.aicontext.ModelContextAllowance
 import com.nexusflow.backend.core.aicontext.ModelContextAssemblyDiagnostics
 import com.nexusflow.backend.core.aicontext.ModelContextAssembler
@@ -26,12 +30,34 @@ import com.nexusflow.backend.core.aicontext.ModelContextLifecycle
 import com.nexusflow.backend.core.aicontext.ModelContextResolveRequest
 import com.nexusflow.backend.core.aicontext.ModelContextTrust
 import com.nexusflow.backend.core.identity.ActorContext
+import com.nexusflow.backend.core.readtool.ReadToolCall
+import com.nexusflow.backend.core.readtool.ReadToolCatalog
+import com.nexusflow.backend.core.readtool.ReadToolEvidence
+import com.nexusflow.backend.core.readtool.ReadToolExecution
+import com.nexusflow.backend.core.readtool.ReadToolExecutionContext
+import com.nexusflow.backend.core.readtool.ReadToolExecutionObserver
+import com.nexusflow.backend.core.readtool.ReadToolFactKind
+import com.nexusflow.backend.core.readtool.ReadToolFactValue
+import com.nexusflow.backend.core.readtool.ReadToolExecutor
+import com.nexusflow.backend.core.readtool.ReadToolKey
+import com.nexusflow.backend.core.readtool.ReadToolOutcome
+import com.nexusflow.backend.core.readtool.ReadToolSourceAuthority
+import com.nexusflow.backend.feature.task.application.readtool.MovieShowtimesKey
+import com.nexusflow.backend.feature.task.application.readtool.MusicEventsKey
+import com.nexusflow.backend.feature.task.application.readtool.OutdoorTrailsKey
+import com.nexusflow.backend.feature.task.application.readtool.SportsEventsKey
+import com.nexusflow.backend.feature.task.application.readtool.SportsFixturesKey
 import com.nexusflow.backend.feature.task.domain.ActivityModeValue
 import com.nexusflow.backend.feature.task.domain.AvailabilityFact
+import com.nexusflow.backend.feature.task.domain.DurationFact
+import com.nexusflow.backend.feature.task.domain.FactValue
+import com.nexusflow.backend.feature.task.domain.LocationFact
+import com.nexusflow.backend.feature.task.domain.MoneyFact
 import com.nexusflow.backend.feature.task.domain.Opportunity
+import com.nexusflow.backend.feature.task.domain.OpportunityFactKey
+import com.nexusflow.backend.feature.task.domain.OpportunityFacts
 import com.nexusflow.backend.feature.task.domain.OpportunityId
-import com.nexusflow.backend.feature.task.domain.OpportunityProvider
-import com.nexusflow.backend.feature.task.domain.OpportunityRequest
+import com.nexusflow.backend.feature.task.domain.OpportunityKind
 import com.nexusflow.backend.feature.task.domain.PersistPlansCommand
 import com.nexusflow.backend.feature.task.domain.PersistPlansResult
 import com.nexusflow.backend.feature.task.domain.Plan
@@ -47,6 +73,8 @@ import com.nexusflow.backend.feature.task.domain.RequirementStrength
 import com.nexusflow.backend.feature.task.domain.RequirementValue
 import com.nexusflow.backend.feature.task.domain.SelectPlanCommand
 import com.nexusflow.backend.feature.task.domain.SelectPlanResult
+import com.nexusflow.backend.feature.task.domain.SourceAuthority
+import com.nexusflow.backend.feature.task.domain.SourceRef
 import com.nexusflow.backend.feature.task.domain.TaskDetail
 import com.nexusflow.backend.feature.task.domain.TaskId
 import com.nexusflow.backend.feature.task.domain.TaskOwner
@@ -63,12 +91,15 @@ import java.time.DateTimeException
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
+import java.nio.charset.StandardCharsets
 import java.util.UUID
 
 class PlanningService(
     private val repository: TaskRepository,
-    private val opportunityProvider: OpportunityProvider,
     private val planValidator: PlanValidator,
+    private val planningResearch: PlanningResearchCapability? = null,
+    private val readToolCatalog: ReadToolCatalog = ReadToolCatalog(emptyList()),
+    private val readToolExecutor: ReadToolExecutor = ReadToolExecutor(readToolCatalog),
     private val planComposer: PlanComposer? = null,
     private val planExplainer: PlanExplainer? = null,
     private val modelContextAssembler: ModelContextAssembler? = null,
@@ -90,11 +121,64 @@ class PlanningService(
         actor: ActorContext,
         owner: TaskOwner,
         detail: TaskDetail,
+        trigger: PlanningTrigger = PlanningTrigger.PlanningInputChanged,
     ): PlanningAttemptResult {
-        if (readinessPolicy.decide(detail) != PlanningDecision.Plan) {
-            return PlanningAttemptResult(detail, PlanningOutcome.NotAttempted)
+        val computation = computeIfReady(actor, detail, trigger)
+        if (computation.outcome != PlanningOutcome.Ready) {
+            return PlanningAttemptResult(detail, computation.outcome)
         }
-        return plan(actor, owner, detail)
+        val planned = when (
+            val persisted = repository.persistPlans(
+                PersistPlansCommand(
+                    owner = owner,
+                    taskId = detail.task.id,
+                    expectedTaskRevision = detail.task.revision,
+                    opportunities = computation.opportunities,
+                    plans = computation.plans,
+                    now = clock.instant(),
+                ),
+            )
+        ) {
+            is PersistPlansResult.Persisted -> persisted.detail
+            PersistPlansResult.TaskNotFound -> throw TaskNotFoundException()
+            PersistPlansResult.StaleTaskRevision -> {
+                logger?.warn(
+                    component = PLANNING_LOG_COMPONENT,
+                    event = "planning_finished",
+                    fields =
+                        logFields {
+                            "task_id" value detail.task.id.value.toString()
+                            "task_revision" value detail.task.revision
+                            "planning_trigger" value trigger.logValue
+                            "outcome" value PlanningOutcome.Superseded.logValue
+                            "stage" value "persist"
+                        },
+                )
+                val latest = repository.findTaskDetail(owner, detail.task.id) ?: throw TaskNotFoundException()
+                return PlanningAttemptResult(latest, PlanningOutcome.Superseded)
+            }
+        }
+        return PlanningAttemptResult(planned, PlanningOutcome.Ready)
+    }
+
+    suspend fun computeIfReady(
+        actor: ActorContext,
+        detail: TaskDetail,
+        trigger: PlanningTrigger = PlanningTrigger.PlanningInputChanged,
+        readToolObserver: ReadToolExecutionObserver? = null,
+    ): PlanningComputationResult {
+        val decision = readinessPolicy.decide(detail, trigger)
+        if (decision != PlanningDecision.Plan) {
+            logPlanningNotAttempted(detail, trigger, decision)
+            return PlanningComputationResult(
+                expectedTaskId = detail.task.id,
+                expectedTaskRevision = detail.task.revision,
+                opportunities = emptyList(),
+                plans = emptyList(),
+                outcome = PlanningOutcome.NotAttempted,
+            )
+        }
+        return compute(actor, detail, trigger, readToolObserver)
     }
 
     suspend fun selectPlan(
@@ -123,38 +207,60 @@ class PlanningService(
         }
     }
 
-    private suspend fun plan(
+    private suspend fun compute(
         actor: ActorContext,
-        owner: TaskOwner,
         detail: TaskDetail,
-    ): PlanningAttemptResult {
+        trigger: PlanningTrigger,
+        readToolObserver: ReadToolExecutionObserver?,
+    ): PlanningComputationResult {
         val startedAt = clock.instant()
         var stage = "opportunity_discovery"
         var planningFailureLogged = false
-        logPlanningStarted(detail)
+        logPlanningStarted(detail, trigger)
         try {
             val now = clock.instant()
-            val opportunities = opportunityProvider.discover(
-                OpportunityRequest(
-                    task = detail.task,
-                    requirements = detail.requirements,
-                    referenceTime = now,
-                ),
-            ).filterVerified(now)
+            stage = "optional_context"
+            val optionalContext = planningOptionalContext(actor, detail)
+            stage = "planning_research"
+            val discovery = discoverOpportunitiesWithPlanningResearch(actor, detail, now, optionalContext, readToolObserver)
+            if (discovery.outcome != null) {
+                planningFailureLogged = true
+                logPlanningFinished(
+                    detail = detail,
+                    startedAt = startedAt,
+                    trigger = trigger,
+                    outcome = discovery.outcome,
+                    opportunityCount = 0,
+                    planCount = 0,
+                )
+                return PlanningComputationResult(
+                    expectedTaskId = detail.task.id,
+                    expectedTaskRevision = detail.task.revision,
+                    opportunities = emptyList(),
+                    plans = emptyList(),
+                    outcome = discovery.outcome,
+                )
+            }
+            val opportunities = discovery.opportunities.filterVerified(now)
             if (opportunities.isEmpty()) {
                 planningFailureLogged = true
                 logPlanningFinished(
                     detail = detail,
                     startedAt = startedAt,
+                    trigger = trigger,
                     outcome = PlanningOutcome.NoCandidates,
                     opportunityCount = 0,
                     planCount = 0,
                 )
-                return PlanningAttemptResult(detail, PlanningOutcome.NoCandidates)
+                return PlanningComputationResult(
+                    expectedTaskId = detail.task.id,
+                    expectedTaskRevision = detail.task.revision,
+                    opportunities = emptyList(),
+                    plans = emptyList(),
+                    outcome = PlanningOutcome.NoCandidates,
+                )
             }
 
-            stage = "optional_context"
-            val optionalContext = planningOptionalContext(actor, detail)
             stage = "plan_compose"
             val drafts = composePlans(detail, opportunities, now, optionalContext)
             val context = PlanningContextSnapshot(
@@ -171,73 +277,159 @@ class PlanningService(
                 logPlanningFinished(
                     detail = detail,
                     startedAt = startedAt,
+                    trigger = trigger,
                     outcome = outcome,
                     opportunityCount = opportunities.size,
                     planCount = 0,
                     validationFailures = validation.failures,
                 )
-                return PlanningAttemptResult(detail, outcome)
+                return PlanningComputationResult(
+                    expectedTaskId = detail.task.id,
+                    expectedTaskRevision = detail.task.revision,
+                    opportunities = opportunities,
+                    plans = emptyList(),
+                    outcome = outcome,
+                )
             }
             stage = "plan_explain"
             val finalPlans = explainPlans(detail.task.id.value.toString(), validation.plans, opportunities, now)
-
-            stage = "persist"
-            val planned = when (
-                val persisted = repository.persistPlans(
-                    PersistPlansCommand(
-                        owner = owner,
-                        taskId = detail.task.id,
-                        expectedTaskRevision = detail.task.revision,
-                        opportunities = opportunities,
-                        plans = finalPlans,
-                        now = clock.instant(),
-                    ),
-                )
-            ) {
-                is PersistPlansResult.Persisted -> persisted.detail
-                PersistPlansResult.TaskNotFound -> throw TaskNotFoundException()
-                PersistPlansResult.StaleTaskRevision -> {
-                    logger?.warn(
-                        component = PLANNING_LOG_COMPONENT,
-                        event = "planning_finished",
-                        fields =
-                            logFields {
-                                "task_id" value detail.task.id.value.toString()
-                                "task_revision" value detail.task.revision
-                                "duration_ms" value Duration.between(startedAt, clock.instant()).toMillis().coerceAtLeast(0)
-                                "outcome" value PlanningOutcome.Superseded.logValue
-                                "stage" value "persist"
-                            },
-                    )
-                    val latest = repository.findTaskDetail(owner, detail.task.id) ?: throw TaskNotFoundException()
-                    return PlanningAttemptResult(latest, PlanningOutcome.Superseded)
-                }
-            }
             logPlanningFinished(
-                detail = planned,
+                detail = detail,
                 startedAt = startedAt,
+                trigger = trigger,
                 outcome = PlanningOutcome.Ready,
                 opportunityCount = opportunities.size,
                 planCount = finalPlans.size,
                 validationFailures = validation.failures,
             )
-            return PlanningAttemptResult(planned, PlanningOutcome.Ready)
+            return PlanningComputationResult(
+                expectedTaskId = detail.task.id,
+                expectedTaskRevision = detail.task.revision,
+                opportunities = opportunities,
+                plans = finalPlans,
+                outcome = PlanningOutcome.Ready,
+            )
         } catch (cause: CancellationException) {
             if (!planningFailureLogged) {
-                logPlanningFailed(detail, startedAt, stage, "cancelled", cause)
+                logPlanningFailed(detail, startedAt, trigger, stage, "cancelled", cause)
             }
             throw cause
         } catch (cause: TaskDependencyUnavailableException) {
             if (!planningFailureLogged) {
-                logPlanningUnavailable(detail, startedAt, stage, cause)
+                logPlanningUnavailable(detail, startedAt, trigger, stage, cause)
             }
-            return PlanningAttemptResult(detail, PlanningOutcome.Unavailable)
+            return PlanningComputationResult(
+                expectedTaskId = detail.task.id,
+                expectedTaskRevision = detail.task.revision,
+                opportunities = emptyList(),
+                plans = emptyList(),
+                outcome = PlanningOutcome.Unavailable,
+            )
         } catch (cause: Throwable) {
             if (!planningFailureLogged) {
-                logPlanningFailed(detail, startedAt, stage, cause.safeFailureCategory(), cause)
+                logPlanningFailed(detail, startedAt, trigger, stage, cause.safeFailureCategory(), cause)
             }
             throw cause
         }
+    }
+
+    private suspend fun discoverOpportunitiesWithPlanningResearch(
+        actor: ActorContext,
+        detail: TaskDetail,
+        now: Instant,
+        optionalContext: PlanningOptionalContext,
+        readToolObserver: ReadToolExecutionObserver?,
+    ): PlanningResearchDiscovery {
+        val research = planningResearch
+            ?: return PlanningResearchDiscovery(outcome = PlanningOutcome.Unavailable)
+        val availableReadTools = readToolCatalog.definitions()
+        if (availableReadTools.isEmpty()) {
+            return PlanningResearchDiscovery(outcome = PlanningOutcome.Unavailable)
+        }
+        logPlanningResearchStarted(detail, availableReadTools.size)
+        val researchResult = try {
+            research.research(
+                AiPlanningResearchRequest(
+                    planningResearchRequestId = "research-${detail.task.id.value}-${detail.task.revision}",
+                    taskId = detail.task.id.value.toString(),
+                    taskRevision = detail.task.revision,
+                    goal = detail.task.intent,
+                    requirements = detail.requirements.map { it.toAiPlanningRequirement() },
+                    optionalContext = optionalContext.blocks.map { it.toAiPayload() },
+                    availableReadTools = availableReadTools.map { definition ->
+                        ReadOnlyToolDefinitionPayload(
+                            toolKey = definition.key.value,
+                            description = definition.description,
+                            argumentHint = definition.argumentHint,
+                        )
+                    },
+                    referenceTime = now.toContractInstant(),
+                    timeZoneId = timeZoneId,
+                    diagnostics = optionalContext.diagnostics,
+                ),
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: AiCapabilityException) {
+            return PlanningResearchDiscovery(outcome = PlanningOutcome.Unavailable)
+        }
+
+        val offeredKeys = availableReadTools.mapTo(linkedSetOf()) { it.key }
+        val calls = researchResult.toolCalls.map { proposal ->
+            val key = proposal.toolKey.trim().takeIf(String::isNotBlank)
+                ?: return PlanningResearchDiscovery(outcome = PlanningOutcome.Unavailable)
+            val readToolKey = ReadToolKey(key)
+            if (readToolKey !in offeredKeys) {
+                return PlanningResearchDiscovery(outcome = PlanningOutcome.Unavailable)
+            }
+            ReadToolCall(readToolKey, proposal.arguments)
+        }
+        if (calls.isEmpty()) {
+            logPlanningResearchFinished(detail, emptyList(), 0)
+            return PlanningResearchDiscovery(outcome = PlanningOutcome.NoCandidates)
+        }
+
+        val executions = try {
+            readToolExecutor.execute(
+                calls = calls,
+                context = ReadToolExecutionContext(
+                    referenceTime = now,
+                    timeZoneId = timeZoneId,
+                    actorTenantId = actor.tenantId,
+                    actorUserId = actor.userId,
+                    conversationId = null,
+                    taskId = detail.task.id.value.toString(),
+                ),
+                observer = readToolObserver,
+            )
+        } catch (_: IllegalArgumentException) {
+            return PlanningResearchDiscovery(outcome = PlanningOutcome.Unavailable)
+        }
+
+        val evidence = executions.flatMap { execution ->
+            when (val outcome = execution.outcome) {
+                is ReadToolOutcome.Success -> outcome.payload.evidence
+                ReadToolOutcome.Empty,
+                is ReadToolOutcome.MissingInput,
+                is ReadToolOutcome.InvalidArguments,
+                is ReadToolOutcome.Unavailable,
+                -> emptyList()
+            }
+        }
+        if (evidence.isEmpty()) {
+            val outcome = executions.withoutEvidencePlanningOutcome()
+            logPlanningResearchFinished(detail, executions, 0)
+            return PlanningResearchDiscovery(outcome = outcome)
+        }
+
+        val opportunities = evidence.mapIndexedNotNull { index, item ->
+            item.toPlanningOpportunityOrNull(
+                index = index,
+                referenceTime = now,
+            )
+        }
+        logPlanningResearchFinished(detail, executions, opportunities.size)
+        return PlanningResearchDiscovery(opportunities = opportunities)
     }
 
     private suspend fun composePlans(
@@ -378,7 +570,10 @@ class PlanningService(
         return referenced.any { it !in allowedFactIds }
     }
 
-    private fun logPlanningStarted(detail: TaskDetail) {
+    private fun logPlanningStarted(
+        detail: TaskDetail,
+        trigger: PlanningTrigger,
+    ) {
         logger?.info(
             component = PLANNING_LOG_COMPONENT,
             event = "planning_started",
@@ -386,6 +581,26 @@ class PlanningService(
                 logFields {
                     "task_id" value detail.task.id.value.toString()
                     "task_revision" value detail.task.revision
+                    "planning_trigger" value trigger.logValue
+                },
+        )
+    }
+
+    private fun logPlanningNotAttempted(
+        detail: TaskDetail,
+        trigger: PlanningTrigger,
+        decision: PlanningDecision,
+    ) {
+        logger?.info(
+            component = PLANNING_LOG_COMPONENT,
+            event = "planning_not_attempted",
+            fields =
+                logFields {
+                    "task_id" value detail.task.id.value.toString()
+                    "task_revision" value detail.task.revision
+                    "planning_trigger" value trigger.logValue
+                    "planning_decision" value decision.logValue
+                    "outcome" value PlanningOutcome.NotAttempted.logValue
                 },
         )
     }
@@ -393,6 +608,7 @@ class PlanningService(
     private fun logPlanningFinished(
         detail: TaskDetail,
         startedAt: java.time.Instant,
+        trigger: PlanningTrigger,
         outcome: PlanningOutcome,
         opportunityCount: Int,
         planCount: Int,
@@ -406,6 +622,7 @@ class PlanningService(
                     "task_id" value detail.task.id.value.toString()
                     "task_revision" value detail.task.revision
                     "duration_ms" value Duration.between(startedAt, clock.instant()).toMillis().coerceAtLeast(0)
+                    "planning_trigger" value trigger.logValue
                     "outcome" value outcome.logValue
                     "opportunity_count" value opportunityCount
                     "plan_count" value planCount
@@ -418,6 +635,7 @@ class PlanningService(
     private fun logPlanningUnavailable(
         detail: TaskDetail,
         startedAt: java.time.Instant,
+        trigger: PlanningTrigger,
         stage: String,
         cause: Throwable,
     ) {
@@ -429,9 +647,11 @@ class PlanningService(
                     "task_id" value detail.task.id.value.toString()
                     "task_revision" value detail.task.revision
                     "duration_ms" value Duration.between(startedAt, clock.instant()).toMillis().coerceAtLeast(0)
+                    "planning_trigger" value trigger.logValue
                     "stage" value stage
                     "outcome" value PlanningOutcome.Unavailable.logValue
                     "failure_category" value cause.safeFailureCategory()
+                    "failure_reason" value (cause.message ?: "unavailable")
                 },
         )
     }
@@ -455,9 +675,48 @@ class PlanningService(
         )
     }
 
+    private fun logPlanningResearchStarted(
+        detail: TaskDetail,
+        availableReadToolCount: Int,
+    ) {
+        logger?.info(
+            component = PLANNING_LOG_COMPONENT,
+            event = "planning_research_started",
+            fields =
+                logFields {
+                    "task_id" value detail.task.id.value.toString()
+                    "task_revision" value detail.task.revision
+                    "available_read_tool_count" value availableReadToolCount
+                },
+        )
+    }
+
+    private fun logPlanningResearchFinished(
+        detail: TaskDetail,
+        executions: List<ReadToolExecution>,
+        opportunityCount: Int,
+    ) {
+        logger?.info(
+            component = PLANNING_LOG_COMPONENT,
+            event = "planning_research_finished",
+            fields =
+                logFields {
+                    "task_id" value detail.task.id.value.toString()
+                    "task_revision" value detail.task.revision
+                    "tool_count" value executions.size
+                    "opportunity_count" value opportunityCount
+                    "source_failure_count" value executions.count { it.outcome is ReadToolOutcome.Unavailable }
+                    "read_tool_outcomes" value executions.joinToString(",") { execution ->
+                        "${execution.call.key.value}:${execution.outcome.logValue()}"
+                    }
+                },
+        )
+    }
+
     private fun logPlanningFailed(
         detail: TaskDetail,
         startedAt: java.time.Instant,
+        trigger: PlanningTrigger,
         stage: String,
         failureCategory: String,
         cause: Throwable? = null,
@@ -470,6 +729,7 @@ class PlanningService(
                     "task_id" value detail.task.id.value.toString()
                     "task_revision" value detail.task.revision
                     "duration_ms" value Duration.between(startedAt, clock.instant()).toMillis().coerceAtLeast(0)
+                    "planning_trigger" value trigger.logValue
                     "stage" value stage
                     "failure_category" value failureCategory
                 },
@@ -574,20 +834,29 @@ class PlanningService(
             domain = kind.name,
             title = title,
             summary = facts.summary,
-            location = facts.location?.displayName.orEmpty(),
+            location = facts.location?.displayName,
             activityMode = when (facts.activityMode) {
                 ActivityModeValue.AtHome -> "at_home"
                 ActivityModeValue.OutOfHome -> "out_of_home"
                 null -> "unknown"
-            },
-            startsAt = facts.startTime?.toContractInstant() ?: observedAt.toContractInstant(),
-            endsAt = facts.endTime?.toContractInstant() ?: observedAt.toContractInstant(),
+            }.takeUnless { facts.activityMode == null },
+            availability = facts.availability?.name,
+            startsAt = facts.startTime?.toContractInstant(),
+            endsAt = facts.endTime?.toContractInstant(),
             estimatedCostWholeUnits = facts.price?.wholeUnits,
             currencyCode = facts.price?.currencyCode,
             commuteMinutes = facts.commute?.minutes,
-            sourceLabel = sources.first().label,
-            sourceUpdatedAt = sources.first().sourceUpdatedAt?.toContractInstant() ?: observedAt.toContractInstant(),
-            validUntil = validUntil?.toContractInstant() ?: observedAt.toContractInstant(),
+            sources = sources.take(MAX_AI_SOURCE_REFS).map { source ->
+                AiCandidateSourceRef(
+                    label = source.label,
+                    uri = source.uri,
+                    sourceUpdatedAt = source.sourceUpdatedAt?.toContractInstant(),
+                    sourceId = source.sourceId,
+                    authority = source.authority.name,
+                    factKeys = source.factKeys.map { it.name }.sorted(),
+                )
+            },
+            validUntil = validUntil?.toContractInstant(),
         )
 
     private fun Plan.toAiPlanForExplanation(opportunities: List<Opportunity>): AiPlanForExplanation {
@@ -598,9 +867,29 @@ class PlanningService(
                 AiPlanExplanationFact("opportunity:${opportunity.id.value}:title", "Opportunity title: ${opportunity.title}"),
                 AiPlanExplanationFact("opportunity:${opportunity.id.value}:time", "Runs from ${opportunity.facts.startTime} to ${opportunity.facts.endTime}"),
                 AiPlanExplanationFact("opportunity:${opportunity.id.value}:location", "Location: ${opportunity.facts.location?.displayName.orEmpty()}"),
-                AiPlanExplanationFact("opportunity:${opportunity.id.value}:cost", "Estimated cost: ${opportunity.facts.price?.wholeUnits ?: 0}"),
-                AiPlanExplanationFact("opportunity:${opportunity.id.value}:commute", "Commute minutes: ${opportunity.facts.commute?.minutes ?: 0}"),
-                AiPlanExplanationFact("opportunity:${opportunity.id.value}:source", "Source: ${opportunity.sources.first().label} updated at ${opportunity.sources.first().sourceUpdatedAt}"),
+                AiPlanExplanationFact(
+                    "opportunity:${opportunity.id.value}:cost",
+                    "Estimated cost: ${opportunity.facts.price?.wholeUnits?.toString() ?: "unknown"}",
+                ),
+                AiPlanExplanationFact(
+                    "opportunity:${opportunity.id.value}:commute",
+                    "Commute minutes: ${opportunity.facts.commute?.minutes?.toString() ?: "unknown"}",
+                ),
+                AiPlanExplanationFact(
+                    "opportunity:${opportunity.id.value}:sources",
+                    "Sources: ${
+                        opportunity.sources
+                            .take(MAX_AI_SOURCE_REFS)
+                            .joinToString("; ") { source ->
+                                listOf(
+                                    source.label,
+                                    source.authority.name,
+                                    source.factKeys.joinToString(",") { it.name },
+                                    source.sourceUpdatedAt?.toString().orEmpty(),
+                                ).filter(String::isNotBlank).joinToString(" ")
+                            }
+                    }",
+                ),
                 AiPlanExplanationFact("opportunity:${opportunity.id.value}:validUntil", "Valid until ${opportunity.validUntil}"),
             )
         }
@@ -630,10 +919,198 @@ class PlanningService(
         ContractInstant.fromEpochSeconds(epochSecond, nano.toLong())
 }
 
+private fun List<ReadToolExecution>.withoutEvidencePlanningOutcome(): PlanningOutcome =
+    when {
+        any { it.outcome is ReadToolOutcome.Unavailable } -> PlanningOutcome.Unavailable
+        isNotEmpty() && all { it.outcome == ReadToolOutcome.Empty } -> PlanningOutcome.NoCandidates
+        any { it.outcome is ReadToolOutcome.MissingInput } -> PlanningOutcome.NoCandidates
+        any { it.outcome is ReadToolOutcome.InvalidArguments } -> PlanningOutcome.Unavailable
+        else -> PlanningOutcome.NoCandidates
+    }
+
+private fun ReadToolOutcome.logValue(): String =
+    when (this) {
+        is ReadToolOutcome.Success -> "success"
+        ReadToolOutcome.Empty -> "empty"
+        is ReadToolOutcome.MissingInput -> "missing_input"
+        is ReadToolOutcome.InvalidArguments -> "invalid_arguments"
+        is ReadToolOutcome.Unavailable -> "unavailable"
+    }
+
+private fun ReadToolEvidence.toPlanningOpportunityOrNull(
+    index: Int,
+    referenceTime: Instant,
+): Opportunity? {
+    val kind = sourceKey.toOpportunityKindOrNull() ?: return null
+    val title = textFact(ReadToolFactKind.TITLE)?.takeIf(String::isNotBlank) ?: return null
+    val start = timestampFact(ReadToolFactKind.START_TIME)
+    val end = timestampFact(ReadToolFactKind.END_TIME)
+    val location = textFact(ReadToolFactKind.LOCATION_NAME)?.let { LocationFact(it, it.lowercase()) }
+    val price = moneyFact(ReadToolFactKind.PRICE)
+    val commute = integerFact(ReadToolFactKind.COMMUTE_MINUTES)?.let { DurationFact(it.toInt()) }
+    val availability = textFact(ReadToolFactKind.AVAILABILITY)?.toAvailabilityFactOrNull()
+    val activityMode = textFact(ReadToolFactKind.ACTIVITY_MODE)?.toActivityModeValueOrNull()
+    val summary = textFact(ReadToolFactKind.SUMMARY)
+    return Opportunity(
+        id = OpportunityId(UUID.nameUUIDFromBytes("planning-research:$sourceId:$index".toByteArray(StandardCharsets.UTF_8))),
+        provider = sourceKey,
+        externalKey = sourceId,
+        kind = kind,
+        title = title.take(MAX_RESEARCH_TITLE_CHARS),
+        facts = OpportunityFacts(
+            summary = summary?.take(MAX_RESEARCH_SUMMARY_CHARS),
+            startTime = start,
+            endTime = end,
+            location = location,
+            activityMode = activityMode,
+            price = price,
+            commute = commute,
+            availability = availability,
+            attributes = planningAttributes(kind, title, summary),
+        ),
+        sources = listOf(
+            SourceRef(
+                label = sourceKey,
+                uri = sourceUrl,
+                sourceUpdatedAt = sourceUpdatedAt,
+                sourceId = sourceId,
+                authority = authority.toPlanningSourceAuthority(),
+                factKeys = sourceKey.toOpportunityFactKeys(),
+            ),
+        ),
+        observedAt = referenceTime,
+        validUntil = listOfNotNull(start, referenceTime.plus(Duration.ofHours(6)))
+            .filter { it.isAfter(referenceTime) }
+            .minOrNull(),
+    )
+}
+
+private fun String.toOpportunityKindOrNull(): OpportunityKind? =
+    when (this) {
+        MovieShowtimesKey.value,
+        -> OpportunityKind.Movies
+        OutdoorTrailsKey.value,
+        -> OpportunityKind.Outdoor
+        SportsFixturesKey.value,
+        SportsEventsKey.value,
+        -> OpportunityKind.Sports
+        MusicEventsKey.value,
+        -> OpportunityKind.LiveEvents
+        else -> null
+    }
+
+private fun String.toOpportunityFactKeys(): Set<OpportunityFactKey> =
+    when (this) {
+        MovieShowtimesKey.value -> setOf(OpportunityFactKey.MovieShowtime, OpportunityFactKey.Availability)
+        MusicEventsKey.value,
+        SportsEventsKey.value,
+        -> setOf(OpportunityFactKey.LiveEventMetadata, OpportunityFactKey.Availability)
+        SportsFixturesKey.value -> setOf(OpportunityFactKey.FixtureStatus, OpportunityFactKey.StartTime)
+        OutdoorTrailsKey.value -> setOf(
+            OpportunityFactKey.TrailMetadata,
+            OpportunityFactKey.Location,
+            OpportunityFactKey.Route,
+            OpportunityFactKey.Weather,
+        )
+        else -> setOf(OpportunityFactKey.Summary)
+    }
+
+private fun ReadToolEvidence.planningAttributes(
+    kind: OpportunityKind,
+    title: String,
+    summary: String?,
+): Map<String, FactValue> {
+    val topicTags = (
+        listOfNotNull(kind.name, title, sourceKey, summary) +
+            listOfNotNull(
+                textFact(ReadToolFactKind.HOME_TEAM),
+                textFact(ReadToolFactKind.AWAY_TEAM),
+                textFact(ReadToolFactKind.COMPETITION),
+                textFact(ReadToolFactKind.ARTISTS),
+            )
+    )
+        .flatMap { it.split(',', '/', '|') }
+        .map { it.planningTopicToken() }
+        .filter(String::isNotBlank)
+        .distinct()
+    val attributes = mutableMapOf<String, FactValue>()
+    if (topicTags.isNotEmpty()) {
+        attributes["topics"] = FactValue.Text(topicTags.joinToString(","))
+    }
+    integerFact(ReadToolFactKind.DISTANCE_METERS)?.let { attributes["distanceMeters"] = FactValue.Number(it) }
+    integerFact(ReadToolFactKind.ELEVATION_GAIN_METERS)?.let { attributes["elevationGainMeters"] = FactValue.Number(it) }
+    return attributes
+}
+
+private fun ReadToolEvidence.textFact(kind: ReadToolFactKind): String? =
+    facts.firstOrNull { it.kind == kind }?.value?.let { value ->
+        when (value) {
+            is ReadToolFactValue.Text -> value.value
+            else -> null
+        }
+    }
+
+private fun ReadToolEvidence.integerFact(kind: ReadToolFactKind): Long? =
+    facts.firstOrNull { it.kind == kind }?.value?.let { value ->
+        when (value) {
+            is ReadToolFactValue.Integer -> value.value
+            else -> null
+        }
+    }
+
+private fun ReadToolEvidence.timestampFact(kind: ReadToolFactKind): Instant? =
+    facts.firstOrNull { it.kind == kind }?.value?.let { value ->
+        when (value) {
+            is ReadToolFactValue.Timestamp -> value.value
+            else -> null
+        }
+    }
+
+private fun ReadToolEvidence.moneyFact(kind: ReadToolFactKind): MoneyFact? =
+    facts.firstOrNull { it.kind == kind }?.value?.let { value ->
+        when (value) {
+            is ReadToolFactValue.Money -> MoneyFact(value.wholeUnits, value.currencyCode)
+            else -> null
+        }
+    }
+
+private fun String.toAvailabilityFactOrNull(): AvailabilityFact? =
+    AvailabilityFact.entries.firstOrNull { it.name.equals(this, ignoreCase = true) }
+
+private fun String.toActivityModeValueOrNull(): ActivityModeValue? =
+    ActivityModeValue.entries.firstOrNull { it.name.equals(this, ignoreCase = true) }
+
+private fun String.planningTopicToken(): String =
+    trim()
+        .lowercase()
+        .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+        .trim()
+
+private fun ReadToolSourceAuthority.toPlanningSourceAuthority(): SourceAuthority =
+    when (this) {
+        ReadToolSourceAuthority.StructuredPrimary -> SourceAuthority.StructuredPrimary
+        ReadToolSourceAuthority.StructuredSecondary -> SourceAuthority.StructuredSecondary
+        ReadToolSourceAuthority.OfficialWeb -> SourceAuthority.OfficialWeb
+        ReadToolSourceAuthority.GeneralWeb -> SourceAuthority.GeneralWeb
+    }
+
 data class PlanningAttemptResult(
     val detail: TaskDetail,
     val outcome: PlanningOutcome,
 )
+
+data class PlanningComputationResult(
+    val expectedTaskId: TaskId,
+    val expectedTaskRevision: Long,
+    val opportunities: List<Opportunity>,
+    val plans: List<Plan>,
+    val outcome: PlanningOutcome,
+)
+
+enum class PlanningTrigger {
+    PlanningInputChanged,
+    ExplicitUserRequest,
+}
 
 enum class PlanningOutcome {
     NotAttempted,
@@ -645,16 +1122,27 @@ enum class PlanningOutcome {
 }
 
 class PlanningReadinessPolicy {
-    fun decide(detail: TaskDetail): PlanningDecision =
-        if (detail.requirements.isNotEmpty() && detail.plans.none { it.revision == detail.task.revision }) {
+    fun decide(
+        detail: TaskDetail,
+        trigger: PlanningTrigger = PlanningTrigger.PlanningInputChanged,
+    ): PlanningDecision {
+        if (detail.requirements.isEmpty()) {
+            return PlanningDecision.MissingPlanningInputs
+        }
+        if (trigger == PlanningTrigger.ExplicitUserRequest) {
+            return PlanningDecision.Plan
+        }
+        return if (detail.plans.none { it.revision == detail.task.revision }) {
             PlanningDecision.Plan
         } else {
             PlanningDecision.KeepCurrentPlans
         }
+    }
 }
 
 enum class PlanningDecision {
     KeepCurrentPlans,
+    MissingPlanningInputs,
     Plan,
 }
 
@@ -668,8 +1156,16 @@ private data class PlanningValidationDecision(
     val failures: List<PlanValidationFailure>,
 )
 
+private data class PlanningResearchDiscovery(
+    val opportunities: List<Opportunity> = emptyList(),
+    val outcome: PlanningOutcome? = null,
+)
+
 private const val WRITE_SCOPE = "orbit.tasks.write"
 private const val PLANNING_LOG_COMPONENT = "planning"
+private const val MAX_AI_SOURCE_REFS = 5
+private const val MAX_RESEARCH_TITLE_CHARS = 120
+private const val MAX_RESEARCH_SUMMARY_CHARS = 700
 
 private fun Throwable.safeFailureCategory(): String =
     (this::class.simpleName ?: "Throwable").toSnakeCase()
@@ -682,6 +1178,12 @@ private fun List<PlanValidationFailure>.toPlanningOutcome(): PlanningOutcome =
     }
 
 private val PlanningOutcome.logValue: String
+    get() = name.toSnakeCase()
+
+private val PlanningTrigger.logValue: String
+    get() = name.toSnakeCase()
+
+private val PlanningDecision.logValue: String
     get() = name.toSnakeCase()
 
 private fun String.toSnakeCase(): String =

@@ -1,19 +1,12 @@
 package com.nexusflow.backend.feature.task.infrastructure
 
 import com.nexusflow.backend.feature.task.domain.ActivityModeValue
-import com.nexusflow.backend.feature.task.domain.AiInvocationDiagnostics
-import com.nexusflow.backend.feature.task.domain.AiModelTokenUsage
-import com.nexusflow.backend.feature.task.domain.AiUnderstandingAuditEventType
-import com.nexusflow.backend.feature.task.domain.AppendUserMessageCommand
-import com.nexusflow.backend.feature.task.domain.AppendUserMessageResult
-import com.nexusflow.backend.feature.task.domain.ApplyUnderstandingCommand
+import com.nexusflow.backend.feature.task.domain.ApplyConversationUnderstandingCommand
 import com.nexusflow.backend.feature.task.domain.ApplyUnderstandingResult
-import com.nexusflow.backend.feature.task.domain.AssistantMessageWrite
 import com.nexusflow.backend.feature.task.domain.AvailabilityFact
 import com.nexusflow.backend.feature.task.domain.CommutePreferenceValue
-import com.nexusflow.backend.feature.task.domain.TaskMessage
-import com.nexusflow.backend.feature.task.domain.CreateTaskPersistenceCommand
-import com.nexusflow.backend.feature.task.domain.CreateTaskPersistenceResult
+import com.nexusflow.backend.feature.task.domain.CreateLinkedTaskPersistenceCommand
+import com.nexusflow.backend.feature.task.domain.CreateLinkedTaskPersistenceResult
 import com.nexusflow.backend.feature.task.domain.DeleteRequirementCommand
 import com.nexusflow.backend.feature.task.domain.DurationFact
 import com.nexusflow.backend.feature.task.domain.FactValue
@@ -33,8 +26,6 @@ import com.nexusflow.backend.feature.task.domain.PlanEstimatedCost
 import com.nexusflow.backend.feature.task.domain.PlanId
 import com.nexusflow.backend.feature.task.domain.PlanSourceRef
 import com.nexusflow.backend.feature.task.domain.PlanTimelineItem
-import com.nexusflow.backend.feature.task.domain.RecordAiUnderstandingAuditCommand
-import com.nexusflow.backend.feature.task.domain.RecordAiUnderstandingAuditResult
 import com.nexusflow.backend.feature.task.domain.Requirement
 import com.nexusflow.backend.feature.task.domain.RequirementEvaluation
 import com.nexusflow.backend.feature.task.domain.RequirementEvaluationResult
@@ -57,6 +48,23 @@ import com.nexusflow.backend.feature.task.domain.TaskRepository
 import com.nexusflow.backend.feature.task.domain.TenantId
 import com.nexusflow.backend.feature.task.domain.UpdateRequirementCommand
 import com.nexusflow.backend.feature.task.domain.UserId
+import com.nexusflow.backend.feature.conversation.domain.ConversationId
+import com.nexusflow.backend.feature.conversation.domain.Conversation
+import com.nexusflow.backend.feature.conversation.domain.ConversationDetail
+import com.nexusflow.backend.feature.conversation.domain.ConversationMessage
+import com.nexusflow.backend.feature.conversation.domain.ConsumePlanningResultCommand
+import com.nexusflow.backend.feature.conversation.domain.ConsumePlanningUnderstandingCommand
+import com.nexusflow.backend.feature.conversation.domain.ConsumeResponseRunIgnoreReason
+import com.nexusflow.backend.feature.conversation.domain.ConsumeResponseRunResult
+import com.nexusflow.backend.feature.conversation.domain.PlanningResponseRunRepository
+import com.nexusflow.backend.feature.conversation.domain.ResponseRun
+import com.nexusflow.backend.feature.conversation.domain.ResponseRunFailureCategory
+import com.nexusflow.backend.feature.conversation.domain.ResponseRunId
+import com.nexusflow.backend.feature.conversation.domain.ResponseRunResult
+import com.nexusflow.backend.feature.conversation.domain.ResponseRunResultPayload
+import com.nexusflow.backend.feature.conversation.domain.ResponseRunResultType
+import com.nexusflow.backend.feature.conversation.domain.ResponseRunStage
+import com.nexusflow.backend.feature.conversation.domain.ResponseRunStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
@@ -78,15 +86,20 @@ class JdbcTaskRepository(
         ignoreUnknownKeys = true
         explicitNulls = false
     },
-) : TaskRepository {
-    override suspend fun createTask(command: CreateTaskPersistenceCommand): CreateTaskPersistenceResult =
+) : TaskRepository, PlanningResponseRunRepository {
+    override suspend fun createLinkedTask(command: CreateLinkedTaskPersistenceCommand): CreateLinkedTaskPersistenceResult =
         blocking {
             inTransaction { connection ->
+                connection.findTaskByConversation(command.owner, command.conversationId)?.let { existing ->
+                    return@inTransaction CreateLinkedTaskPersistenceResult.Existing(
+                        connection.loadTaskDetail(command.owner, existing.id)!!,
+                    )
+                }
                 connection.findTaskByCreationRequest(command.owner, command.creationRequestId)?.let { existing ->
-                    return@inTransaction if (existing.intent == command.message.trim()) {
-                        CreateTaskPersistenceResult.Existing(connection.loadTaskDetail(command.owner, existing.id)!!)
+                    return@inTransaction if (existing.intent == command.intent.trim()) {
+                        CreateLinkedTaskPersistenceResult.Existing(connection.loadTaskDetail(command.owner, existing.id)!!)
                     } else {
-                        CreateTaskPersistenceResult.ConflictingRequest
+                        CreateLinkedTaskPersistenceResult.ConflictingRequest
                     }
                 }
 
@@ -94,27 +107,17 @@ class JdbcTaskRepository(
                     id = command.taskId,
                     owner = command.owner,
                     creationRequestId = command.creationRequestId,
-                    intent = command.message.trim(),
+                    intent = command.intent.trim(),
                     revision = INITIAL_TASK_REVISION,
                     selectedPlanId = null,
                     createdAt = command.now,
                     updatedAt = command.now,
                     archivedAt = null,
+                    conversationId = command.conversationId,
                 )
-                connection.insertTask(task)
-                val message = TaskMessage(
-                    id = command.firstMessageId,
-                    taskId = command.taskId,
-                    role = MessageRole.User,
-                    content = command.message,
-                    clientMessageId = command.creationRequestId,
-                    aiRequestId = command.aiRequestId,
-                    understoodAt = null,
-                    createdAt = command.now,
-                )
-                connection.insertMessage(message)
+                connection.insertTask(task, command.conversationId)
                 connection.insertAuditEvent(command.taskId, "TaskCreated", command.creationRequestId, null, "{}", command.now)
-                CreateTaskPersistenceResult.Created(connection.loadTaskDetail(command.owner, command.taskId)!!, message, task.revision)
+                CreateLinkedTaskPersistenceResult.Created(connection.loadTaskDetail(command.owner, command.taskId)!!)
             }
         }
 
@@ -151,6 +154,18 @@ class JdbcTaskRepository(
             }
         }
 
+    override suspend fun findCurrentTaskForConversation(
+        owner: TaskOwner,
+        conversationId: ConversationId,
+    ): TaskDetail? =
+        blocking {
+            dataSource.connection.use { connection ->
+                connection.findTaskByConversation(owner, conversationId)?.let { task ->
+                    connection.loadTaskDetail(owner, task.id)
+                }
+            }
+        }
+
     override suspend fun listTaskContextKeys(
         owner: TaskOwner,
         taskId: TaskId,
@@ -162,67 +177,34 @@ class JdbcTaskRepository(
             }
         }
 
-    override suspend fun appendUserMessage(command: AppendUserMessageCommand): AppendUserMessageResult =
-        blocking {
-            inTransaction { connection ->
-                val task = connection.lockTask(command.owner, command.taskId) ?: return@inTransaction AppendUserMessageResult.TaskNotFound
-                connection.findMessageByClientId(command.taskId, command.clientMessageId)?.let { existing ->
-                    return@inTransaction if (existing.content == command.text) {
-                        AppendUserMessageResult.Existing(connection.loadTaskDetail(command.owner, command.taskId)!!)
-                    } else {
-                        AppendUserMessageResult.ConflictingMessage
-                    }
-                }
-                val message = TaskMessage(
-                    id = command.messageId,
-                    taskId = command.taskId,
-                    role = MessageRole.User,
-                    content = command.text,
-                    clientMessageId = command.clientMessageId,
-                    aiRequestId = command.aiRequestId,
-                    understoodAt = null,
-                    createdAt = command.now,
-                )
-                connection.insertMessage(message)
-                connection.touchTask(command.taskId, command.now)
-                connection.insertAuditEvent(command.taskId, "MessageSent", command.clientMessageId, command.aiRequestId, "{}", command.now)
-                AppendUserMessageResult.Appended(connection.loadTaskDetail(command.owner, command.taskId)!!, message, task.revision)
-            }
-        }
-
-    override suspend fun recordAiUnderstandingAudit(command: RecordAiUnderstandingAuditCommand): RecordAiUnderstandingAuditResult =
-        blocking {
-            inTransaction { connection ->
-                connection.findTask(command.owner, command.taskId)
-                    ?: return@inTransaction RecordAiUnderstandingAuditResult.TaskNotFound
-                connection.insertAuditEvent(
-                    taskId = command.taskId,
-                    eventType = command.eventType.auditEventName(),
-                    requestId = null,
-                    aiRequestId = command.aiRequestId,
-                    metadataJson = json.encodeToString(AiUnderstandingAuditDocument.from(command)),
-                    occurredAt = command.now,
-                )
-                RecordAiUnderstandingAuditResult.Recorded
-            }
-        }
-
-    override suspend fun applyUnderstanding(command: ApplyUnderstandingCommand): ApplyUnderstandingResult =
+    override suspend fun applyConversationUnderstanding(command: ApplyConversationUnderstandingCommand): ApplyUnderstandingResult =
         blocking {
             inTransaction { connection ->
                 val task = connection.lockTask(command.owner, command.taskId) ?: return@inTransaction ApplyUnderstandingResult.TaskNotFound
                 if (task.revision != command.expectedTaskRevision) {
                     return@inTransaction ApplyUnderstandingResult.StaleTaskRevision
                 }
-                val message = connection.findMessage(command.taskId, command.messageId)
-                    ?: return@inTransaction ApplyUnderstandingResult.MessageNotFound
 
+                val removedRequirementCount = command.removedRequirementKinds.distinct().sumOf { kind ->
+                    val deleted = connection.deleteRequirementByKind(command.taskId, kind)
+                    if (deleted > 0) {
+                        connection.insertAuditEvent(
+                            command.taskId,
+                            "RequirementRemoved",
+                            null,
+                            command.aiRequestId,
+                            """{"kind":"${kind.name}"}""",
+                            command.now,
+                        )
+                    }
+                    deleted
+                }
                 command.requirements.forEach { requirement ->
-                    connection.upsertRequirement(command.taskId, message.id, requirement, command.now)
+                    connection.upsertRequirementFromConversation(command.taskId, command.conversationMessageId, requirement, command.now)
                     connection.insertAuditEvent(
                         command.taskId,
                         "RequirementConfirmed",
-                        message.clientMessageId,
+                        null,
                         command.aiRequestId,
                         """{"kind":"${requirement.kind.name}"}""",
                         command.now,
@@ -233,14 +215,10 @@ class JdbcTaskRepository(
                     contextKeys = command.selectedTaskContextKeys,
                     selectedAt = command.now,
                 )
-                command.assistantMessage?.let { assistant ->
-                    connection.insertAssistantMessage(command.taskId, command.aiRequestId, assistant, command.now)
-                }
-                connection.markMessageUnderstood(message.id, command.aiRequestId, command.now)
-
                 val intentPatch = command.intentPatch?.trim()?.takeIf(String::isNotBlank)
                 val intentChanged = intentPatch != null && intentPatch != task.intent
-                val changedPlanningInputs = intentChanged || command.requirements.isNotEmpty() || newSelectionCount > 0
+                val changedPlanningInputs =
+                    intentChanged || command.requirements.isNotEmpty() || removedRequirementCount > 0 || newSelectionCount > 0
                 if (changedPlanningInputs) {
                     connection.updateTaskAfterPlanningInputChange(
                         taskId = command.taskId,
@@ -340,6 +318,20 @@ class JdbcTaskRepository(
             }
         }
 
+    override suspend fun consumePlanningUnderstanding(command: ConsumePlanningUnderstandingCommand): ConsumeResponseRunResult =
+        blocking {
+            inTransaction { connection ->
+                connection.consumePlanningUnderstandingAtomically(command)
+            }
+        }
+
+    override suspend fun consumePlanningResult(command: ConsumePlanningResultCommand): ConsumeResponseRunResult =
+        blocking {
+            inTransaction { connection ->
+                connection.consumePlanningResultAtomically(command)
+            }
+        }
+
     override suspend fun selectCurrentPlan(command: SelectPlanCommand): SelectPlanResult =
         blocking {
             inTransaction { connection ->
@@ -379,6 +371,266 @@ class JdbcTaskRepository(
         }
     }
 
+    private fun Connection.consumePlanningUnderstandingAtomically(
+        command: ConsumePlanningUnderstandingCommand,
+    ): ConsumeResponseRunResult {
+        val result = lockResponseRunResult(command.result.runId, command.result.attempt)
+            ?: return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.ResultMissing)
+        if (result.consumedAt != null) return ConsumeResponseRunResult.AlreadyConsumed()
+        if (result.resultType != ResponseRunResultType.PlanningUnderstanding) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.ResultTypeMismatch)
+        }
+        val run = lockResponseRun(command.result.runId)
+            ?: return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.RunMissing)
+        if (run.attempt != result.attempt) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.AttemptMismatch)
+        }
+        if (!run.status.isConsumable()) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.RunNotConsumable)
+        }
+        if (run.stage != ResponseRunStage.Turn) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.PlanningPreconditionMismatch)
+        }
+        val payload = command.payload
+        if (payload.conversationId != run.conversationId.value.toString()) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.PayloadConversationMismatch)
+        }
+        if (payload.userMessageId != run.userMessageId.value.toString()) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.PayloadUserMessageMismatch)
+        }
+        val conversation = findConversationById(run.conversationId)
+            ?: error("conversation missing after failed planning run consumption")
+        val userMessage = findConversationMessage(run.conversationId, run.userMessageId)
+            ?: return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.UserMessageMissing)
+        if (userMessage.role != MessageRole.User) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.UserMessageRoleMismatch)
+        }
+        if (userMessage.aiRequestId != payload.aiRequestId) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.AiRequestMismatch)
+        }
+        val task = resolvePlanningTaskForUnderstanding(
+            owner = conversation.owner,
+            conversationId = run.conversationId,
+            payload = payload,
+            newTaskId = command.newTaskId,
+            now = command.now,
+        ) ?: return failPlanningRunFromResult(
+            run = run,
+            result = result,
+            now = command.now,
+            failureCategory = ResponseRunFailureCategory.AiInvalidResult,
+        )
+        val expectedRevision = payload.expectedTaskRevision ?: task.revision
+        val lockedTask = lockTask(conversation.owner, task.id) ?: return failPlanningRunFromResult(
+            run = run,
+            result = result,
+            now = command.now,
+            failureCategory = ResponseRunFailureCategory.AiInvalidResult,
+        )
+        if (lockedTask.revision != expectedRevision) {
+            return failPlanningRunFromResult(
+                run = run,
+                result = result,
+                now = command.now,
+                failureCategory = ResponseRunFailureCategory.AiInvalidResult,
+            )
+        }
+
+        val removedRequirementCount = command.removedRequirementKinds.distinct().sumOf { kind ->
+            val deleted = deleteRequirementByKind(lockedTask.id, kind)
+            if (deleted > 0) {
+                insertAuditEvent(
+                    lockedTask.id,
+                    "RequirementRemoved",
+                    null,
+                    payload.aiRequestId,
+                    """{"kind":"${kind.name}"}""",
+                    command.now,
+                )
+            }
+            deleted
+        }
+        command.requirements.forEach { requirement ->
+            upsertRequirementFromConversation(lockedTask.id, userMessage.id, requirement, command.now)
+            insertAuditEvent(
+                lockedTask.id,
+                "RequirementConfirmed",
+                null,
+                payload.aiRequestId,
+                """{"kind":"${requirement.kind.name}"}""",
+                command.now,
+            )
+        }
+        val newSelectionCount = insertTaskContextSelections(
+            taskId = lockedTask.id,
+            contextKeys = payload.selectedTaskContextKeys,
+            selectedAt = command.now,
+        )
+        val intentPatch = payload.intentPatch?.trim()?.takeIf(String::isNotBlank)
+        val intentChanged = intentPatch != null && intentPatch != lockedTask.intent
+        val changedPlanningInputs =
+            intentChanged || command.requirements.isNotEmpty() || removedRequirementCount > 0 || newSelectionCount > 0
+        if (changedPlanningInputs) {
+            updateTaskAfterPlanningInputChange(
+                taskId = lockedTask.id,
+                intent = intentPatch ?: lockedTask.intent,
+                revision = lockedTask.revision + 1,
+                now = command.now,
+            )
+        } else {
+            touchTask(lockedTask.id, command.now)
+        }
+        val applied = loadTaskDetail(conversation.owner, lockedTask.id)
+            ?: error("task detail missing after planning understanding durable mutation")
+        if (!preparePlanningStageFromResult(run.id, run.attempt, applied.task.id, applied.task.revision, command.now)) {
+            error("response run was not queueable after planning understanding precondition passed")
+        }
+        markMessageUnderstood(run.userMessageId, payload.aiRequestId, command.now)
+        markResponseRunResultConsumed(result.runId, result.attempt, command.now)
+        return ConsumeResponseRunResult.Consumed(
+            loadConversationDetail(conversation.owner, run.conversationId)
+                ?: error("conversation detail missing after planning understanding consumption"),
+        )
+    }
+
+    private fun Connection.consumePlanningResultAtomically(command: ConsumePlanningResultCommand): ConsumeResponseRunResult {
+        val result = lockResponseRunResult(command.result.runId, command.result.attempt)
+            ?: return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.ResultMissing)
+        if (result.consumedAt != null) return ConsumeResponseRunResult.AlreadyConsumed()
+        if (result.resultType != ResponseRunResultType.PlanningResult) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.ResultTypeMismatch)
+        }
+        val run = lockResponseRun(command.result.runId)
+            ?: return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.RunMissing)
+        if (run.attempt != result.attempt) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.AttemptMismatch)
+        }
+        if (!run.status.isConsumable()) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.RunNotConsumable)
+        }
+        if (run.stage != ResponseRunStage.Planning) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.PlanningPreconditionMismatch)
+        }
+        val payload = command.payload
+        if (run.expectedTaskId?.value?.toString() != payload.taskId) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.PlanningPreconditionMismatch)
+        }
+        if (run.expectedTaskRevision != payload.expectedTaskRevision) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.TaskRevisionMismatch)
+        }
+        if (payload.conversationId != run.conversationId.value.toString()) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.PayloadConversationMismatch)
+        }
+        if (payload.userMessageId != run.userMessageId.value.toString()) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.PayloadUserMessageMismatch)
+        }
+        val conversation = findConversationById(run.conversationId)
+            ?: return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.ConversationMissing)
+        if (payload.outcome == "Ready") {
+            val taskId = TaskId(UUID.fromString(payload.taskId))
+            val task = lockTask(conversation.owner, taskId)
+            if (task == null || task.revision != payload.expectedTaskRevision) {
+                completePlanningRunFromResult(run.id, run.attempt, command.now, null)
+                markResponseRunResultConsumed(result.runId, result.attempt, command.now)
+                return ConsumeResponseRunResult.Consumed(
+                    loadConversationDetail(conversation.owner, run.conversationId)
+                        ?: error("conversation detail missing after stale planning result completion"),
+                )
+            }
+            persistPlansInCurrentTransaction(
+                owner = conversation.owner,
+                taskId = taskId,
+                expectedTaskRevision = payload.expectedTaskRevision,
+                opportunities = command.opportunities,
+                plans = command.plans,
+                now = command.now,
+            )
+        }
+        if (!completePlanningRunFromResult(run.id, run.attempt, command.now, command.failureCategory)) {
+            error("response run was not completable after planning result precondition passed")
+        }
+        markResponseRunResultConsumed(result.runId, result.attempt, command.now)
+        return ConsumeResponseRunResult.Consumed(
+            loadConversationDetail(conversation.owner, run.conversationId)
+                ?: error("conversation detail missing after planning result consumption"),
+        )
+    }
+
+    private fun Connection.resolvePlanningTaskForUnderstanding(
+        owner: TaskOwner,
+        conversationId: ConversationId,
+        payload: ResponseRunResultPayload.PlanningUnderstanding,
+        newTaskId: TaskId,
+        now: Instant,
+    ): Task? {
+        payload.taskId?.let { taskId ->
+            return lockTask(owner, TaskId(UUID.fromString(taskId)))
+        }
+        findTaskByConversation(owner, conversationId)?.let { return it }
+        findTaskByCreationRequest(owner, payload.taskCreationRequestId)?.let { existing ->
+            return if (existing.intent == payload.intent.trim()) existing else null
+        }
+        val task = Task(
+            id = newTaskId,
+            owner = owner,
+            creationRequestId = payload.taskCreationRequestId,
+            intent = payload.intent.trim(),
+            revision = INITIAL_TASK_REVISION,
+            selectedPlanId = null,
+            createdAt = now,
+            updatedAt = now,
+            archivedAt = null,
+            conversationId = conversationId,
+        )
+        insertTask(task, conversationId)
+        insertAuditEvent(newTaskId, "TaskCreated", payload.taskCreationRequestId, null, "{}", now)
+        return task
+    }
+
+    private fun Connection.persistPlansInCurrentTransaction(
+        owner: TaskOwner,
+        taskId: TaskId,
+        expectedTaskRevision: Long,
+        opportunities: List<Opportunity>,
+        plans: List<Plan>,
+        now: Instant,
+    ) {
+        val task = lockTask(owner, taskId) ?: error("Task disappeared while persisting planning response")
+        if (task.revision != expectedTaskRevision) throw StaleRevisionWriteException()
+        if (plans.any { it.taskId != taskId || it.revision != expectedTaskRevision }) {
+            error("Plans must belong to the task and current revision")
+        }
+        if (plans.isEmpty() || plans.any { it.validUntil == null }) {
+            error("Planning result must contain current plans with validUntil")
+        }
+        val opportunityIds = opportunities.mapTo(mutableSetOf()) { it.id }
+        if (plans.flatMap { it.opportunityRefs }.any { it !in opportunityIds }) {
+            error("Plans must reference persisted opportunity snapshots")
+        }
+
+        opportunities.forEach { upsertOpportunity(it) }
+        plans.forEach { plan ->
+            insertPlan(plan)
+            replacePlanOpportunityRefs(plan)
+            replacePlanRequirementEvaluations(plan)
+        }
+        clearSelectedPlan(taskId, now)
+        insertAuditEvent(
+            taskId,
+            "PlansCreated",
+            null,
+            null,
+            json.encodeToString(
+                PlanningAuditDocument(
+                    revision = expectedTaskRevision,
+                    planIds = plans.map { it.id.value.toString() },
+                    opportunityIds = opportunities.map { it.id.value.toString() },
+                ),
+            ),
+            now,
+        )
+    }
+
     private fun Connection.insertTask(task: Task) {
         prepareStatement(
             """
@@ -402,62 +654,49 @@ class JdbcTaskRepository(
         }
     }
 
-    private fun Connection.insertMessage(message: TaskMessage) {
+    private fun Connection.insertTask(
+        task: Task,
+        conversationId: ConversationId,
+    ) {
         prepareStatement(
             """
-            INSERT INTO task_messages (
-                id, task_id, client_message_id, role, content, ai_request_id, understood_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (
+                id, tenant_id, owner_user_id, creation_request_id, intent, revision,
+                selected_plan_id, created_at, updated_at, archived_at, conversation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent(),
         ).use { statement ->
-            statement.setObject(1, message.id.value)
-            statement.setObject(2, message.taskId.value)
-            statement.setString(3, message.clientMessageId)
-            statement.setString(4, message.role.name)
-            statement.setString(5, message.content)
-            statement.setString(6, message.aiRequestId)
-            statement.setInstant(7, message.understoodAt)
-            statement.setInstant(8, message.createdAt)
+            statement.setObject(1, task.id.value)
+            statement.setObject(2, task.owner.tenantId.value)
+            statement.setObject(3, task.owner.userId.value)
+            statement.setString(4, task.creationRequestId)
+            statement.setString(5, task.intent)
+            statement.setLong(6, task.revision)
+            statement.setObject(7, task.selectedPlanId?.value)
+            statement.setInstant(8, task.createdAt)
+            statement.setInstant(9, task.updatedAt)
+            statement.setInstant(10, task.archivedAt)
+            statement.setObject(11, conversationId.value)
             statement.executeUpdate()
         }
     }
 
-    private fun Connection.insertAssistantMessage(
+    private fun Connection.upsertRequirementFromConversation(
         taskId: TaskId,
-        aiRequestId: String,
-        assistant: AssistantMessageWrite,
-        now: Instant,
-    ) {
-        insertMessage(
-            TaskMessage(
-                id = assistant.id,
-                taskId = taskId,
-                role = MessageRole.Assistant,
-                content = assistant.text,
-                clientMessageId = null,
-                aiRequestId = aiRequestId,
-                understoodAt = now,
-                createdAt = now,
-            ),
-        )
-    }
-
-    private fun Connection.upsertRequirement(
-        taskId: TaskId,
-        messageId: MessageId,
+        conversationMessageId: MessageId,
         requirement: RequirementWrite,
         now: Instant,
     ) {
         prepareStatement(
             """
             INSERT INTO task_requirements (
-                id, task_id, kind, value_json, strength, source, evidence_message_id, created_at, updated_at
+                id, task_id, kind, value_json, strength, source, conversation_evidence_message_id, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (task_id, kind) DO UPDATE SET
                 value_json = EXCLUDED.value_json,
                 strength = EXCLUDED.strength,
                 source = EXCLUDED.source,
-                evidence_message_id = EXCLUDED.evidence_message_id,
+                conversation_evidence_message_id = EXCLUDED.conversation_evidence_message_id,
                 updated_at = EXCLUDED.updated_at
             """.trimIndent(),
         ).use { statement ->
@@ -467,7 +706,7 @@ class JdbcTaskRepository(
             statement.setJson(4, json.encodeToString(RequirementValueDocument.from(requirement.value)))
             statement.setString(5, requirement.strength.name)
             statement.setString(6, requirement.source.name)
-            statement.setObject(7, messageId.value)
+            statement.setObject(7, conversationMessageId.value)
             statement.setInstant(8, now)
             statement.setInstant(9, now)
             statement.executeUpdate()
@@ -478,7 +717,7 @@ class JdbcTaskRepository(
         prepareStatement(
             """
             UPDATE task_requirements
-            SET kind = ?, value_json = ?, strength = ?, source = ?, evidence_message_id = NULL, updated_at = ?
+            SET kind = ?, value_json = ?, strength = ?, source = ?, conversation_evidence_message_id = NULL, updated_at = ?
             WHERE task_id = ? AND id = ?
             """.trimIndent(),
         ).use { statement ->
@@ -611,19 +850,6 @@ class JdbcTaskRepository(
         return inserted
     }
 
-    private fun Connection.markMessageUnderstood(
-        messageId: MessageId,
-        aiRequestId: String,
-        now: Instant,
-    ) {
-        prepareStatement("UPDATE task_messages SET ai_request_id = ?, understood_at = ? WHERE id = ?").use { statement ->
-            statement.setString(1, aiRequestId)
-            statement.setInstant(2, now)
-            statement.setObject(3, messageId.value)
-            statement.executeUpdate()
-        }
-    }
-
     private fun Connection.touchTask(
         taskId: TaskId,
         now: Instant,
@@ -691,6 +917,16 @@ class JdbcTaskRepository(
         }
     }
 
+    private fun Connection.deleteRequirementByKind(
+        taskId: TaskId,
+        kind: RequirementKind,
+    ): Int =
+        prepareStatement("DELETE FROM task_requirements WHERE task_id = ? AND kind = ?").use { statement ->
+            statement.setObject(1, taskId.value)
+            statement.setString(2, kind.name)
+            statement.executeUpdate()
+        }
+
     private fun Connection.requirementBelongsToTask(
         taskId: TaskId,
         requirementId: RequirementId,
@@ -733,13 +969,30 @@ class JdbcTaskRepository(
         prepareStatement(
             """
             SELECT id, tenant_id, owner_user_id, creation_request_id, intent, revision,
-                   selected_plan_id, created_at, updated_at, archived_at
+                   selected_plan_id, created_at, updated_at, archived_at, conversation_id
             FROM tasks
             WHERE tenant_id = ? AND owner_user_id = ? AND creation_request_id = ?
             """.trimIndent(),
         ).use { statement ->
             statement.setOwner(owner)
             statement.setString(3, creationRequestId)
+            statement.executeQuery().use { result -> if (result.next()) result.task() else null }
+        }
+
+    private fun Connection.findTaskByConversation(
+        owner: TaskOwner,
+        conversationId: ConversationId,
+    ): Task? =
+        prepareStatement(
+            """
+            SELECT id, tenant_id, owner_user_id, creation_request_id, intent, revision,
+                   selected_plan_id, created_at, updated_at, archived_at, conversation_id
+            FROM tasks
+            WHERE tenant_id = ? AND owner_user_id = ? AND conversation_id = ? AND archived_at IS NULL
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setOwner(owner)
+            statement.setObject(3, conversationId.value)
             statement.executeQuery().use { result -> if (result.next()) result.task() else null }
         }
 
@@ -750,7 +1003,7 @@ class JdbcTaskRepository(
         prepareStatement(
             """
             SELECT id, tenant_id, owner_user_id, creation_request_id, intent, revision,
-                   selected_plan_id, created_at, updated_at, archived_at
+                   selected_plan_id, created_at, updated_at, archived_at, conversation_id
             FROM tasks
             WHERE tenant_id = ? AND owner_user_id = ? AND id = ?
             FOR UPDATE
@@ -768,11 +1021,273 @@ class JdbcTaskRepository(
         val task = findTask(owner, taskId) ?: return null
         return TaskDetail(
             task = task,
-            messages = loadMessages(taskId),
             requirements = loadRequirements(taskId),
             plans = loadPlans(taskId),
             selectedContextKeys = loadTaskContextKeys(taskId),
         )
+    }
+
+    private fun Connection.loadConversationDetail(
+        owner: TaskOwner,
+        conversationId: ConversationId,
+    ): ConversationDetail? {
+        val conversation = findConversation(owner, conversationId) ?: return null
+        return ConversationDetail(
+            conversation = conversation,
+            messages = loadConversationMessages(conversationId),
+            responseRuns = loadResponseRuns(conversationId),
+        )
+    }
+
+    private fun Connection.findConversation(
+        owner: TaskOwner,
+        conversationId: ConversationId,
+    ): Conversation? =
+        prepareStatement(
+            """
+            SELECT id, tenant_id, owner_user_id, creation_request_id, next_turn_index, created_at, updated_at, archived_at
+            FROM conversations
+            WHERE tenant_id = ? AND owner_user_id = ? AND id = ?
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setOwner(owner)
+            statement.setObject(3, conversationId.value)
+            statement.executeQuery().use { result -> if (result.next()) result.conversation() else null }
+        }
+
+    private fun Connection.findConversationById(conversationId: ConversationId): Conversation? =
+        prepareStatement(
+            """
+            SELECT id, tenant_id, owner_user_id, creation_request_id, next_turn_index, created_at, updated_at, archived_at
+            FROM conversations
+            WHERE id = ?
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setObject(1, conversationId.value)
+            statement.executeQuery().use { result -> if (result.next()) result.conversation() else null }
+        }
+
+    private fun Connection.findConversationMessage(
+        conversationId: ConversationId,
+        messageId: MessageId,
+    ): ConversationMessage? =
+        prepareStatement(
+            """
+            SELECT id, conversation_id, role, content, client_message_id, ai_request_id, turn_index, understood_at, created_at
+            FROM conversation_messages
+            WHERE conversation_id = ? AND id = ?
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setObject(1, conversationId.value)
+            statement.setObject(2, messageId.value)
+            statement.executeQuery().use { result -> if (result.next()) result.conversationMessage() else null }
+        }
+
+    private fun Connection.loadConversationMessages(conversationId: ConversationId): List<ConversationMessage> =
+        prepareStatement(
+            """
+            SELECT id, conversation_id, role, content, client_message_id, ai_request_id, turn_index, understood_at, created_at
+            FROM conversation_messages
+            WHERE conversation_id = ?
+            ORDER BY turn_index ASC, CASE role WHEN 'User' THEN 0 ELSE 1 END ASC, created_at ASC, id ASC
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setObject(1, conversationId.value)
+            statement.executeQuery().use { result ->
+                buildList {
+                    while (result.next()) add(result.conversationMessage())
+                }
+            }
+        }
+
+    private fun Connection.loadResponseRuns(conversationId: ConversationId): List<ResponseRun> =
+        prepareStatement(
+            """
+            SELECT id, conversation_id, user_message_id, turn_index, status, stage, attempt,
+                   available_at, lease_owner, lease_expires_at, deadline_at, expected_task_id,
+                   expected_task_revision, assistant_message_id, failure_category, origin_trace_id, created_at,
+                   started_at, updated_at, completed_at
+            FROM response_runs
+            WHERE conversation_id = ?
+            ORDER BY turn_index ASC, created_at ASC, id ASC
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setObject(1, conversationId.value)
+            statement.executeQuery().use { result ->
+                buildList {
+                    while (result.next()) add(result.responseRun())
+                }
+            }
+        }
+
+    private fun Connection.lockResponseRun(responseRunId: ResponseRunId): ResponseRun? =
+        prepareStatement(
+            """
+            SELECT id, conversation_id, user_message_id, turn_index, status, stage, attempt,
+                   available_at, lease_owner, lease_expires_at, deadline_at, expected_task_id,
+                   expected_task_revision, assistant_message_id, failure_category, origin_trace_id, created_at,
+                   started_at, updated_at, completed_at
+            FROM response_runs
+            WHERE id = ?
+            FOR UPDATE
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setObject(1, responseRunId.value)
+            statement.executeQuery().use { result -> if (result.next()) result.responseRun() else null }
+        }
+
+    private fun Connection.lockResponseRunResult(
+        responseRunId: ResponseRunId,
+        attempt: Int,
+    ): ResponseRunResult? =
+        prepareStatement(
+            """
+            SELECT run_id, attempt, result_type, payload::text AS payload, created_at, consumed_at
+            FROM response_run_results
+            WHERE run_id = ? AND attempt = ?
+            FOR UPDATE
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setObject(1, responseRunId.value)
+            statement.setInt(2, attempt)
+            statement.executeQuery().use { result -> if (result.next()) result.responseRunResult() else null }
+        }
+
+    private fun Connection.failPlanningRunFromResult(
+        run: ResponseRun,
+        result: ResponseRunResult,
+        now: Instant,
+        failureCategory: ResponseRunFailureCategory,
+    ): ConsumeResponseRunResult {
+        if (!completeRunFromResult(run.id, run.attempt, run.stage, now, failureCategory)) {
+            error("response run was not failable after planning precondition passed")
+        }
+        markResponseRunResultConsumed(result.runId, result.attempt, now)
+        val conversation = findConversationById(run.conversationId)
+            ?: return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.ConversationMissing)
+        return ConsumeResponseRunResult.Consumed(
+            loadConversationDetail(conversation.owner, run.conversationId)
+                ?: error("conversation detail missing after failed planning run consumption"),
+        )
+    }
+
+    private fun Connection.preparePlanningStageFromResult(
+        runId: ResponseRunId,
+        attempt: Int,
+        expectedTaskId: TaskId,
+        expectedTaskRevision: Long,
+        now: Instant,
+    ): Boolean =
+        prepareStatement(
+            """
+            UPDATE response_runs
+            SET status = ?,
+                stage = ?,
+                available_at = ?,
+                lease_owner = NULL,
+                lease_expires_at = NULL,
+                expected_task_id = ?,
+                expected_task_revision = ?,
+                failure_category = NULL,
+                updated_at = ?
+            WHERE id = ?
+              AND attempt = ?
+              AND status IN (?, ?)
+              AND stage = ?
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setString(1, ResponseRunStatus.Queued.toDatabaseValue())
+            statement.setString(2, ResponseRunStage.Planning.toDatabaseValue())
+            statement.setInstant(3, now)
+            statement.setObject(4, expectedTaskId.value)
+            statement.setLong(5, expectedTaskRevision)
+            statement.setInstant(6, now)
+            statement.setObject(7, runId.value)
+            statement.setInt(8, attempt)
+            statement.setString(9, ResponseRunStatus.Processing.toDatabaseValue())
+            statement.setString(10, ResponseRunStatus.Streaming.toDatabaseValue())
+            statement.setString(11, ResponseRunStage.Turn.toDatabaseValue())
+            statement.executeUpdate() == 1
+        }
+
+    private fun Connection.completePlanningRunFromResult(
+        runId: ResponseRunId,
+        attempt: Int,
+        now: Instant,
+        failureCategory: ResponseRunFailureCategory?,
+    ): Boolean =
+        completeRunFromResult(
+            runId = runId,
+            attempt = attempt,
+            expectedStage = ResponseRunStage.Planning,
+            now = now,
+            failureCategory = failureCategory,
+        )
+
+    private fun Connection.completeRunFromResult(
+        runId: ResponseRunId,
+        attempt: Int,
+        expectedStage: ResponseRunStage,
+        now: Instant,
+        failureCategory: ResponseRunFailureCategory?,
+    ): Boolean =
+        prepareStatement(
+            """
+            UPDATE response_runs
+            SET status = ?,
+                lease_owner = NULL,
+                lease_expires_at = NULL,
+                failure_category = ?,
+                updated_at = ?,
+                completed_at = ?
+            WHERE id = ?
+              AND attempt = ?
+              AND status IN (?, ?)
+              AND stage = ?
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setString(1, if (failureCategory == null) ResponseRunStatus.Completed.toDatabaseValue() else ResponseRunStatus.Failed.toDatabaseValue())
+            statement.setString(2, failureCategory?.toDatabaseValue())
+            statement.setInstant(3, now)
+            statement.setInstant(4, now)
+            statement.setObject(5, runId.value)
+            statement.setInt(6, attempt)
+            statement.setString(7, ResponseRunStatus.Processing.toDatabaseValue())
+            statement.setString(8, ResponseRunStatus.Streaming.toDatabaseValue())
+            statement.setString(9, expectedStage.toDatabaseValue())
+            statement.executeUpdate() == 1
+        }
+
+    private fun Connection.markResponseRunResultConsumed(
+        runId: ResponseRunId,
+        attempt: Int,
+        now: Instant,
+    ) {
+        prepareStatement(
+            """
+            UPDATE response_run_results
+            SET consumed_at = ?
+            WHERE run_id = ? AND attempt = ? AND consumed_at IS NULL
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setInstant(1, now)
+            statement.setObject(2, runId.value)
+            statement.setInt(3, attempt)
+            statement.executeUpdate()
+        }
+    }
+
+    private fun Connection.markMessageUnderstood(
+        messageId: MessageId,
+        aiRequestId: String,
+        now: Instant,
+    ) {
+        prepareStatement("UPDATE conversation_messages SET ai_request_id = ?, understood_at = ? WHERE id = ?").use { statement ->
+            statement.setString(1, aiRequestId)
+            statement.setInstant(2, now)
+            statement.setObject(3, messageId.value)
+            statement.executeUpdate()
+        }
     }
 
     private fun Connection.findTask(
@@ -782,7 +1297,7 @@ class JdbcTaskRepository(
         prepareStatement(
             """
             SELECT id, tenant_id, owner_user_id, creation_request_id, intent, revision,
-                   selected_plan_id, created_at, updated_at, archived_at
+                   selected_plan_id, created_at, updated_at, archived_at, conversation_id
             FROM tasks
             WHERE tenant_id = ? AND owner_user_id = ? AND id = ?
             """.trimIndent(),
@@ -790,55 +1305,6 @@ class JdbcTaskRepository(
             statement.setOwner(owner)
             statement.setObject(3, taskId.value)
             statement.executeQuery().use { result -> if (result.next()) result.task() else null }
-        }
-
-    private fun Connection.findMessageByClientId(
-        taskId: TaskId,
-        clientMessageId: String,
-    ): TaskMessage? =
-        prepareStatement(
-            """
-            SELECT id, task_id, client_message_id, role, content, ai_request_id, understood_at, created_at
-            FROM task_messages
-            WHERE task_id = ? AND client_message_id = ?
-            """.trimIndent(),
-        ).use { statement ->
-            statement.setObject(1, taskId.value)
-            statement.setString(2, clientMessageId)
-            statement.executeQuery().use { result -> if (result.next()) result.message() else null }
-        }
-
-    private fun Connection.findMessage(
-        taskId: TaskId,
-        messageId: MessageId,
-    ): TaskMessage? =
-        prepareStatement(
-            """
-            SELECT id, task_id, client_message_id, role, content, ai_request_id, understood_at, created_at
-            FROM task_messages
-            WHERE task_id = ? AND id = ?
-            """.trimIndent(),
-        ).use { statement ->
-            statement.setObject(1, taskId.value)
-            statement.setObject(2, messageId.value)
-            statement.executeQuery().use { result -> if (result.next()) result.message() else null }
-        }
-
-    private fun Connection.loadMessages(taskId: TaskId): List<TaskMessage> =
-        prepareStatement(
-            """
-            SELECT id, task_id, client_message_id, role, content, ai_request_id, understood_at, created_at
-            FROM task_messages
-            WHERE task_id = ?
-            ORDER BY created_at ASC, id ASC
-            """.trimIndent(),
-        ).use { statement ->
-            statement.setObject(1, taskId.value)
-            statement.executeQuery().use { result ->
-                buildList {
-                    while (result.next()) add(result.message())
-                }
-            }
         }
 
     private fun Connection.loadTaskContextKeys(taskId: TaskId): List<String> =
@@ -861,7 +1327,9 @@ class JdbcTaskRepository(
     private fun Connection.loadRequirements(taskId: TaskId): List<Requirement> =
         prepareStatement(
             """
-            SELECT id, task_id, kind, value_json, strength, source, evidence_message_id, created_at, updated_at
+            SELECT id, task_id, kind, value_json, strength, source,
+                   conversation_evidence_message_id AS evidence_message_id,
+                   created_at, updated_at
             FROM task_requirements
             WHERE task_id = ?
             ORDER BY created_at ASC, id ASC
@@ -921,19 +1389,73 @@ class JdbcTaskRepository(
             createdAt = getTimestamp("created_at").toInstant(),
             updatedAt = getTimestamp("updated_at").toInstant(),
             archivedAt = getTimestamp("archived_at")?.toInstant(),
+            conversationId = getObject("conversation_id", UUID::class.java)?.let(::ConversationId),
         )
 
-    private fun ResultSet.message(): TaskMessage =
-        TaskMessage(
+    private fun ResultSet.conversation(): Conversation =
+        Conversation(
+            id = ConversationId(getObject("id", UUID::class.java)),
+            owner = TaskOwner(TenantId(getObject("tenant_id", UUID::class.java)), UserId(getObject("owner_user_id", UUID::class.java))),
+            creationRequestId = getString("creation_request_id"),
+            nextTurnIndex = getLong("next_turn_index"),
+            createdAt = getTimestamp("created_at").toInstant(),
+            updatedAt = getTimestamp("updated_at").toInstant(),
+            archivedAt = getTimestamp("archived_at")?.toInstant(),
+        )
+
+    private fun ResultSet.conversationMessage(): ConversationMessage =
+        ConversationMessage(
             id = MessageId(getObject("id", UUID::class.java)),
-            taskId = TaskId(getObject("task_id", UUID::class.java)),
+            conversationId = ConversationId(getObject("conversation_id", UUID::class.java)),
             role = MessageRole.valueOf(getString("role")),
             content = getString("content"),
             clientMessageId = getString("client_message_id"),
             aiRequestId = getString("ai_request_id"),
+            turnIndex = getLong("turn_index"),
             understoodAt = getTimestamp("understood_at")?.toInstant(),
             createdAt = getTimestamp("created_at").toInstant(),
         )
+
+    private fun ResultSet.responseRun(): ResponseRun =
+        ResponseRun(
+            id = ResponseRunId(getObject("id", UUID::class.java)),
+            conversationId = ConversationId(getObject("conversation_id", UUID::class.java)),
+            userMessageId = MessageId(getObject("user_message_id", UUID::class.java)),
+            turnIndex = getLong("turn_index"),
+            status = getString("status").toResponseRunStatus(),
+            stage = getString("stage").toResponseRunStage(),
+            attempt = getInt("attempt"),
+            availableAt = getTimestamp("available_at").toInstant(),
+            leaseOwner = getString("lease_owner"),
+            leaseExpiresAt = getTimestamp("lease_expires_at")?.toInstant(),
+            deadlineAt = getTimestamp("deadline_at").toInstant(),
+            expectedTaskId = getObject("expected_task_id", UUID::class.java)?.let(::TaskId),
+            expectedTaskRevision = getNullableLong("expected_task_revision"),
+            assistantMessageId = getObject("assistant_message_id", UUID::class.java)?.let(::MessageId),
+            failureCategory = getString("failure_category")?.toResponseRunFailureCategory(),
+            originTraceId = getString("origin_trace_id"),
+            createdAt = getTimestamp("created_at").toInstant(),
+            startedAt = getTimestamp("started_at")?.toInstant(),
+            updatedAt = getTimestamp("updated_at").toInstant(),
+            completedAt = getTimestamp("completed_at")?.toInstant(),
+        )
+
+    private fun ResultSet.responseRunResult(): ResponseRunResult {
+        val resultType = getString("result_type").toResponseRunResultType()
+        return ResponseRunResult(
+            runId = ResponseRunId(getObject("run_id", UUID::class.java)),
+            attempt = getInt("attempt"),
+            resultType = resultType,
+            payload = json.decodeFromString(ResponseRunResultPayload.serializer(), getString("payload")),
+            createdAt = getTimestamp("created_at").toInstant(),
+            consumedAt = getTimestamp("consumed_at")?.toInstant(),
+        )
+    }
+
+    private fun ResultSet.getNullableLong(columnLabel: String): Long? {
+        val value = getLong(columnLabel)
+        return if (wasNull()) null else value
+    }
 
     private fun ResultSet.requirement(): Requirement =
         Requirement(
@@ -1067,101 +1589,84 @@ class JdbcTaskRepository(
         }
     }
 
-    @Serializable
-    private data class AiUnderstandingAuditDocument(
-        @SerialName("capability")
-        val capability: String,
-        @SerialName("taskRevision")
-        val taskRevision: Long,
-        @SerialName("provider")
-        val provider: String? = null,
-        @SerialName("model")
-        val model: String? = null,
-        @SerialName("promptVersion")
-        val promptVersion: String? = null,
-        @SerialName("providerRequestId")
-        val providerRequestId: String? = null,
-        @SerialName("attemptCount")
-        val attemptCount: Int? = null,
-        @SerialName("usage")
-        val usage: AiModelTokenUsageDocument? = null,
-        @SerialName("diagnostics")
-        val diagnostics: AiInvocationDiagnosticsDocument = AiInvocationDiagnosticsDocument(),
-        @SerialName("outcome")
-        val outcome: String,
-        @SerialName("latencyMs")
-        val latencyMs: Long? = null,
-        @SerialName("failureCategory")
-        val failureCategory: String? = null,
-    ) {
-        companion object {
-            fun from(command: RecordAiUnderstandingAuditCommand): AiUnderstandingAuditDocument =
-                AiUnderstandingAuditDocument(
-                    capability = "UnderstandUserMessage",
-                    taskRevision = command.taskRevision,
-                    provider = command.provider,
-                    model = command.model,
-                    promptVersion = command.promptVersion,
-                    providerRequestId = command.providerRequestId,
-                    attemptCount = command.attemptCount,
-                    usage = command.usage?.let { usage ->
-                        AiModelTokenUsageDocument(
-                            inputTokens = usage.inputTokens,
-                            outputTokens = usage.outputTokens,
-                            totalTokens = usage.totalTokens,
-                        )
-                    },
-                    diagnostics = AiInvocationDiagnosticsDocument.from(command.diagnostics),
-                    outcome = command.outcome,
-                    latencyMs = command.latencyMs,
-                    failureCategory = command.failureCategory,
-                )
+    private fun ResponseRunStatus.toDatabaseValue(): String =
+        when (this) {
+            ResponseRunStatus.Queued -> "QUEUED"
+            ResponseRunStatus.Processing -> "PROCESSING"
+            ResponseRunStatus.Streaming -> "STREAMING"
+            ResponseRunStatus.Completed -> "COMPLETED"
+            ResponseRunStatus.FailedRetryable -> "FAILED_RETRYABLE"
+            ResponseRunStatus.Failed -> "FAILED"
+            ResponseRunStatus.TimedOut -> "TIMED_OUT"
+            ResponseRunStatus.Cancelled -> "CANCELLED"
         }
-    }
 
-    @Serializable
-    private data class AiModelTokenUsageDocument(
-        @SerialName("inputTokens")
-        val inputTokens: Int? = null,
-        @SerialName("outputTokens")
-        val outputTokens: Int? = null,
-        @SerialName("totalTokens")
-        val totalTokens: Int? = null,
-    )
-
-    @Serializable
-    private data class AiInvocationDiagnosticsDocument(
-        @SerialName("availableContextDefinitionCount")
-        val availableContextDefinitionCount: Int = 0,
-        @SerialName("selectedContextKeyCount")
-        val selectedContextKeyCount: Int = 0,
-        @SerialName("resolvedContextBlockCount")
-        val resolvedContextBlockCount: Int = 0,
-        @SerialName("includedContextBlockCount")
-        val includedContextBlockCount: Int = 0,
-        @SerialName("omittedContextBlockCount")
-        val omittedContextBlockCount: Int = 0,
-        @SerialName("optionalContextSerializedChars")
-        val optionalContextSerializedChars: Int = 0,
-        @SerialName("contextDefinitionsSerializedChars")
-        val contextDefinitionsSerializedChars: Int = 0,
-        @SerialName("fullUserPayloadSerializedChars")
-        val fullUserPayloadSerializedChars: Int = 0,
-    ) {
-        companion object {
-            fun from(diagnostics: AiInvocationDiagnostics): AiInvocationDiagnosticsDocument =
-                AiInvocationDiagnosticsDocument(
-                    availableContextDefinitionCount = diagnostics.availableContextDefinitionCount,
-                    selectedContextKeyCount = diagnostics.selectedContextKeyCount,
-                    resolvedContextBlockCount = diagnostics.resolvedContextBlockCount,
-                    includedContextBlockCount = diagnostics.includedContextBlockCount,
-                    omittedContextBlockCount = diagnostics.omittedContextBlockCount,
-                    optionalContextSerializedChars = diagnostics.optionalContextSerializedChars,
-                    contextDefinitionsSerializedChars = diagnostics.contextDefinitionsSerializedChars,
-                    fullUserPayloadSerializedChars = diagnostics.fullUserPayloadSerializedChars,
-                )
+    private fun String.toResponseRunStatus(): ResponseRunStatus =
+        when (this) {
+            "QUEUED" -> ResponseRunStatus.Queued
+            "PROCESSING" -> ResponseRunStatus.Processing
+            "STREAMING" -> ResponseRunStatus.Streaming
+            "COMPLETED" -> ResponseRunStatus.Completed
+            "FAILED_RETRYABLE" -> ResponseRunStatus.FailedRetryable
+            "FAILED" -> ResponseRunStatus.Failed
+            "TIMED_OUT" -> ResponseRunStatus.TimedOut
+            "CANCELLED" -> ResponseRunStatus.Cancelled
+            else -> error("Unknown response run status: $this")
         }
-    }
+
+    private fun ResponseRunStatus.isConsumable(): Boolean =
+        when (this) {
+            ResponseRunStatus.Processing,
+            ResponseRunStatus.Streaming,
+            -> true
+            ResponseRunStatus.Queued,
+            ResponseRunStatus.Completed,
+            ResponseRunStatus.FailedRetryable,
+            ResponseRunStatus.Failed,
+            ResponseRunStatus.TimedOut,
+            ResponseRunStatus.Cancelled,
+            -> false
+        }
+
+    private fun ResponseRunStage.toDatabaseValue(): String =
+        when (this) {
+            ResponseRunStage.Turn -> "TURN"
+            ResponseRunStage.Planning -> "PLANNING"
+        }
+
+    private fun String.toResponseRunStage(): ResponseRunStage =
+        when (this) {
+            "TURN" -> ResponseRunStage.Turn
+            "PLANNING" -> ResponseRunStage.Planning
+            else -> error("Unknown response run stage: $this")
+        }
+
+    private fun ResponseRunFailureCategory.toDatabaseValue(): String =
+        when (this) {
+            ResponseRunFailureCategory.ProviderTemporary -> "PROVIDER_TEMPORARY"
+            ResponseRunFailureCategory.AiInvalidResult -> "AI_INVALID_RESULT"
+            ResponseRunFailureCategory.WorkerLost -> "WORKER_LOST"
+            ResponseRunFailureCategory.RunTimeout -> "RUN_TIMEOUT"
+            ResponseRunFailureCategory.InternalInvariant -> "INTERNAL_INVARIANT"
+        }
+
+    private fun String.toResponseRunFailureCategory(): ResponseRunFailureCategory =
+        when (this) {
+            "PROVIDER_TEMPORARY" -> ResponseRunFailureCategory.ProviderTemporary
+            "AI_INVALID_RESULT" -> ResponseRunFailureCategory.AiInvalidResult
+            "WORKER_LOST" -> ResponseRunFailureCategory.WorkerLost
+            "RUN_TIMEOUT" -> ResponseRunFailureCategory.RunTimeout
+            "INTERNAL_INVARIANT" -> ResponseRunFailureCategory.InternalInvariant
+            else -> error("Unknown response run failure category: $this")
+        }
+
+    private fun String.toResponseRunResultType(): ResponseRunResultType =
+        when (this) {
+            "CONVERSATION_ANSWER" -> ResponseRunResultType.ConversationAnswer
+            "PLANNING_UNDERSTANDING" -> ResponseRunResultType.PlanningUnderstanding
+            "PLANNING_RESULT" -> ResponseRunResultType.PlanningResult
+            else -> error("Unknown response run result type: $this")
+        }
 
     @Serializable
     private data class PlanningAuditDocument(
@@ -1363,12 +1868,25 @@ class JdbcTaskRepository(
         val uri: String?,
         @SerialName("sourceUpdatedAt")
         val sourceUpdatedAt: String? = null,
+        @SerialName("sourceId")
+        val sourceId: String? = null,
+        @SerialName("sourceAuthority")
+        val sourceAuthority: String? = null,
+        @SerialName("factKeys")
+        val factKeys: List<String> = emptyList(),
     ) {
         fun toDomain(): PlanSourceRef = PlanSourceRef(label, uri, sourceUpdatedAt?.let(Instant::parse))
 
         companion object {
             fun from(sourceRef: SourceRef): SourceRefDocument =
-                SourceRefDocument(sourceRef.label, sourceRef.uri, sourceRef.sourceUpdatedAt?.toString())
+                SourceRefDocument(
+                    label = sourceRef.label,
+                    uri = sourceRef.uri,
+                    sourceUpdatedAt = sourceRef.sourceUpdatedAt?.toString(),
+                    sourceId = sourceRef.sourceId,
+                    sourceAuthority = sourceRef.authority.name,
+                    factKeys = sourceRef.factKeys.map { it.name }.sorted(),
+                )
         }
     }
 
@@ -1405,13 +1923,6 @@ class JdbcTaskRepository(
             fun from(cost: PlanEstimatedCost): PlanEstimatedCostDocument = PlanEstimatedCostDocument(cost.wholeUnits, cost.currencyCode)
         }
     }
-
-    private fun AiUnderstandingAuditEventType.auditEventName(): String =
-        when (this) {
-            AiUnderstandingAuditEventType.Started -> "AiUnderstandingStarted"
-            AiUnderstandingAuditEventType.Succeeded -> "AiUnderstandingSucceeded"
-            AiUnderstandingAuditEventType.Failed -> "AiUnderstandingFailed"
-        }
 
     private companion object {
         const val INITIAL_TASK_REVISION = 1L

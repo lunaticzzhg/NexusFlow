@@ -29,6 +29,7 @@ import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
+import io.ktor.server.sse.SSE
 import io.ktor.util.AttributeKey
 import kotlinx.serialization.json.Json
 import org.slf4j.MDC
@@ -84,6 +85,8 @@ internal fun Application.configureHttpPlatform(logger: StructuredLogger) {
             call.respondError(HttpStatusCode.InternalServerError, "An unexpected error occurred")
         }
     }
+
+    install(SSE)
 }
 
 private class BackendHttpLoggingConfig {

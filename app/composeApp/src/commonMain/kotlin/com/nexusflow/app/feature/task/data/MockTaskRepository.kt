@@ -1,11 +1,18 @@
 package com.nexusflow.app.feature.task.data
 
-import com.nexusflow.app.feature.task.domain.CreateTaskCommand
+import com.nexusflow.app.feature.task.domain.ConversationDetail
+import com.nexusflow.app.feature.task.domain.ConversationId
+import com.nexusflow.app.feature.task.domain.CreateConversationCommand
+import com.nexusflow.app.feature.task.domain.MessageRole
 import com.nexusflow.app.feature.task.domain.RemoveRequirementCommand
+import com.nexusflow.app.feature.task.domain.ResponseRun
+import com.nexusflow.app.feature.task.domain.ResponseRunId
+import com.nexusflow.app.feature.task.domain.ResponseRunSnapshot
 import com.nexusflow.app.feature.task.domain.SelectPlanCommand
-import com.nexusflow.app.feature.task.domain.SendTaskMessageCommand
+import com.nexusflow.app.feature.task.domain.SendConversationMessageCommand
 import com.nexusflow.app.feature.task.domain.TaskDetail
 import com.nexusflow.app.feature.task.domain.TaskId
+import com.nexusflow.app.feature.task.domain.TaskMessage
 import com.nexusflow.app.feature.task.domain.TaskRepository
 import com.nexusflow.app.feature.task.domain.TaskSummary
 import com.nexusflow.app.feature.task.domain.UpdateRequirementCommand
@@ -14,6 +21,11 @@ class MockTaskRepository(
     private val summaryFixture: TaskSummaryFixture = TaskSummaryFixture.Success,
     private val createFailure: Throwable? = null,
 ) : TaskRepository {
+    private val conversations =
+        mutableMapOf(
+            TaskFixtures.conversation.id to TaskFixtures.conversation,
+        )
+
     override suspend fun loadTaskSummaries(): Result<List<TaskSummary>> =
         when (summaryFixture) {
             TaskSummaryFixture.Success -> Result.success(TaskFixtures.success)
@@ -21,10 +33,43 @@ class MockTaskRepository(
             TaskSummaryFixture.Failure -> Result.failure(MockTaskRepositoryException)
         }
 
-    override suspend fun createTask(command: CreateTaskCommand): Result<TaskDetail> {
+    override suspend fun createConversation(command: CreateConversationCommand): Result<ConversationDetail> {
         createFailure?.let { return Result.failure(it) }
-        return Result.success(TaskFixtures.detail.copy(id = TaskId("task-created-demo"), intent = command.requestText))
+        val created =
+            TaskFixtures.conversation.copy(
+                id = ConversationId("conversation-created-demo"),
+                messages =
+                    TaskFixtures.conversation.messages.map { message ->
+                        message.copy(content = command.requestText)
+                    },
+                currentTask = TaskFixtures.conversation.currentTask?.copy(intent = command.requestText),
+            )
+        conversations[created.id] = created
+        return Result.success(created)
     }
+
+    override suspend fun sendConversationMessage(command: SendConversationMessageCommand): Result<ConversationDetail> {
+        val detail = conversations[command.conversationId] ?: return Result.failure(MockTaskRepositoryException)
+        val updated =
+            detail.copy(
+                messages =
+                    detail.messages +
+                        TaskMessage(
+                            id = "message-${detail.messages.size + 1}",
+                            role = MessageRole.User,
+                            content = command.text,
+                            clientMessageId = command.clientMessageId,
+                            understoodAt = null,
+                        ),
+            )
+        conversations[updated.id] = updated
+        return Result.success(updated)
+    }
+
+    override suspend fun loadConversationDetail(conversationId: ConversationId): Result<ConversationDetail> =
+        conversations[conversationId]
+            ?.let(Result.Companion::success)
+            ?: Result.failure(MockTaskRepositoryException)
 
     override suspend fun loadTaskDetail(taskId: TaskId): Result<TaskDetail> =
         TaskFixtures.detail
@@ -32,7 +77,20 @@ class MockTaskRepository(
             ?.let(Result.Companion::success)
             ?: Result.failure(MockTaskRepositoryException)
 
-    override suspend fun sendMessage(command: SendTaskMessageCommand): Result<TaskDetail> = loadTaskDetail(command.taskId)
+    override suspend fun loadResponseRunSnapshot(
+        conversationId: ConversationId,
+        responseRunId: ResponseRunId,
+    ): Result<ResponseRunSnapshot> = Result.failure(MockTaskRepositoryException)
+
+    override suspend fun cancelResponseRun(
+        conversationId: ConversationId,
+        responseRunId: ResponseRunId,
+    ): Result<ResponseRun> = Result.failure(MockTaskRepositoryException)
+
+    override suspend fun retryResponseRun(
+        conversationId: ConversationId,
+        responseRunId: ResponseRunId,
+    ): Result<ResponseRun> = Result.failure(MockTaskRepositoryException)
 
     override suspend fun updateRequirement(command: UpdateRequirementCommand): Result<TaskDetail> = loadTaskDetail(command.taskId)
 

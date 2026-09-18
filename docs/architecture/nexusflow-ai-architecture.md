@@ -1,6 +1,6 @@
 # NexusFlow AI 架构主规范
 
-当前实现状态：`:ai` Gradle module 已包含 structured model provider boundary、用户消息理解、第一版计划生成/解释 capability，以及 V2 LLM Context Framework 的 AI-facing payload contract。它不是 agent runtime、tool router、RAG、memory、provider fallback router 或 side-effect executor；任何文档或计划都不能被解读为当前存在这些 runtime。
+当前实现状态：`:ai` Gradle module 已包含 structured model provider boundary、用户消息理解、第一版计划生成/解释 capability，以及 V2 LLM Context Framework 的 AI-facing payload contract。它不是 agent runtime、通用 tool router、RAG、memory、provider fallback router、生产级 MCP runtime 或 side-effect executor；任何文档或计划都不能被解读为当前存在这些 runtime。
 
 本规范是 NexusFlow AI/planning 边界的长期 authority。它冻结的是 Backend/AI 信任边界、ownership 和 Kotlin-first 默认方向；内部 Planner architecture 在真实源码出现前保持 `UNPROVEN`。
 
@@ -10,7 +10,9 @@
 Boundary / ownership rules: PROVEN
 Current structured Understanding / Planning capabilities: PRESENT
 LLM Context Framework V2 boundary: PRESENT
-Agent runtime / RAG / memory / tool router: UNPROVEN until real source exists
+Bounded read-only tool orchestration: TARGET BOUNDARY, present only where real Backend source exists
+Generic agent runtime / arbitrary tool loop / production MCP runtime: NON-GOAL until re-evaluated
+RAG / memory / provider fallback routing: UNPROVEN until real source exists
 ```
 
 ## 0. 范围、权威与当前状态
@@ -28,7 +30,7 @@ Agent runtime / RAG / memory / tool router: UNPROVEN until real source exists
 - `backend/src/main/kotlin/com/nexusflow/backend/core/aicontext/`：Backend-owned model context catalog, resolver, assembler, budget and external projection boundary。
 - `docs/v0.1/requirements.md` 与 `docs/v0.1/app-module-technical-plan.md`：Backend authoritative state、read-only planning context、Kotlin Planner、structured proposal、Backend validation/approval/persistence/execution。
 
-这些需求、技术计划和当前源码是边界证据，不是实现许可。不得据此补出 RAG、memory、agent loop、tool router、vector store、model registry、retry framework、provider fallback router 或独立 AI service。
+这些需求、技术计划和当前源码是边界证据，不是实现许可。不得据此补出 RAG、memory、agent loop、通用 tool router、vector store、model registry、retry framework、provider fallback router、生产级 MCP runtime 或独立 AI service。
 
 ## 1. Kotlin/JVM-first Default
 
@@ -58,11 +60,11 @@ Backend authoritative state
 -> permission / approval / idempotency / persistence / side effect
 ```
 
-Backend 将 durable truth 投影为只读 planning context。AI 解释、生成候选、给出理由和风险标签。Backend 校验权限、审批、幂等、状态合法性、持久化和副作用执行。
+Backend 将 durable truth 投影为只读 context。AI 理解用户消息、回答普通问题、提出受限 research 请求、生成候选计划、给出理由和风险标签。Backend 校验权限、审批、幂等、状态合法性、provenance、revision freshness、持久化和副作用执行。
 
 ## 3. Ownership
 
-AI 只拥有 proposal / reasoning，不拥有 authoritative business state。
+AI 只拥有 proposal / reasoning / answering，不拥有 authoritative business state。
 
 AI 不得：
 
@@ -71,14 +73,18 @@ AI 不得：
 - 持有 calendar、notification、provider credential 或用户 secret；
 - 批准 action；
 - 生成 authoritative action idempotency key；
+- 写入或推进 Conversation / Task revision；
+- 决定 durable provenance；
 - 推进 task authoritative state；
 - 把 model output 当作 permission、approval 或 state-machine legality 的事实。
 
 `RequestedAction` 是 proposal，不是 executable Backend command。只有 Backend 在权限、审批版本、幂等、policy、schema 和当前 task state 校验通过后，才能创建 durable command 或执行副作用。
 
+Conversation answer 是 assistant message candidate，不是 durable fact authority。Direct Answer 可以由模型基于自身能力回答；依赖实时、地域、外部或最新事实的问题必须经 Backend 管控的 bounded read-only research 取得 typed evidence 后再 grounded answering，不得 fallback 到模型旧知识伪装最新事实。
+
 ## 4. PlanningContext
 
-`PlanningContext` 由 Backend 构造，是 typed、immutable、最小必要的 planning facts snapshot。它只能包含当前 planning 需要的 intent、requirements、真实 Opportunity snapshot、只读插件结果摘要、busy-time projection、task identity/revision 等事实。
+`PlanningContext` 由 Backend 构造，是 typed、immutable、最小必要的 planning facts snapshot。它只能包含当前 planning 需要的 goal、requirements、真实 Opportunity snapshot、只读 research 结果摘要、busy-time projection、task identity/revision 等事实。
 
 AI 不应独立访问 Backend business repository、用户 credential、secret storage 或任意 plugin 来重建 authority。若未来引入 async planning，context 必须包含足够的 identity/revision，使 Backend 可以判断 Planner result 是否仍适用于当前 task、approval 或 user/tenant scope。
 
@@ -167,13 +173,30 @@ MCP/API transport
 
 Malformed, scope-mismatched, unsafe or unparseable external source data fails closed. External free text remains data, never instruction, and must be stripped/bounded before exposure.
 
-### 4.6 Context Budget 与 Observability
+### 4.6 Bounded Read-only Tool Orchestration
+
+Bounded read-only tool orchestration is the target boundary for Conversation external fact research and Planning research. AI may propose a bounded read-only research call only from definitions supplied by Backend for the current request. Backend owns validation of the tool key, argument shape, actor/task/conversation scope, maximum call count, provenance, source execution, typed decoding, empty/missing-input/unavailable outcomes, persistence, and audit.
+
+The legal flow is:
+
+```text
+AI proposes bounded read-only research
+-> Backend validates offered tool key and arguments
+-> Backend executes allowed read-only source/tool
+-> source-specific typed decode/project/filter/distill
+-> Backend evidence or Opportunity projection with provenance
+-> AI answers or plans over that bounded evidence
+```
+
+This boundary is not a generic Agent Runtime, arbitrary tool loop, production MCP runtime, side-effect executor, provider-owned tool call, or permission grant. AI never receives credentials and never directly connects to MCP/API transports. Existing HTTP sources may be adapted behind the same read-only boundary; real MCP transport may be added only against an actual connector contract and must preserve source-owned projection before model exposure.
+
+### 4.7 Context Budget 与 Observability
 
 Context is budgeted structurally and by serialized size, not by provider-specific tokenizers in the first version. Optional blocks and definitions have finite counts and serialized-char limits; lower-priority optional blocks can be omitted deterministically. Core context is not silently trimmed by optional context budget.
 
 Each AI invocation may carry safe diagnostics such as capability, prompt version, available definition count, selected/resolved/included/omitted context counts, serialized optional/definition/full payload chars, and provider-reported token usage. Diagnostics are local-only metadata/audit evidence. They must not become model input and must not include full prompts, raw payloads, resolved preference values, provider response text, external free text, credentials, tokens or secrets.
 
-### 4.7 Token-saving Rules
+### 4.8 Token-saving Rules
 
 The default model-visible payload follows these rules:
 
@@ -220,6 +243,9 @@ MUST requirements 必须由 deterministic code 执行，不能交给 prompt inst
 模型适合：
 
 - 解释自然语言请求；
+- 直接回答不依赖实时或外部事实的普通问题；
+- 在 Backend 提供的只读 evidence 上回答依赖外部事实的问题；
+- 提出 bounded read-only research request；
 - 生成候选计划；
 - 排序建议；
 - 总结理由；
@@ -235,6 +261,7 @@ Kotlin deterministic code 拥有：
 - schema legality；
 - state-machine transition；
 - side-effect command creation；
+- durable provenance and revision advancement；
 - security/privacy enforcement。
 
 当 model output 与 deterministic rule 冲突时，rule 获胜，AI result 被拒绝或降级为不可执行 proposal。
@@ -303,11 +330,13 @@ AI quality verification 与 deterministic correctness 分开：
 - provider/model routing；
 - caching framework；
 - separate deployment/runtime；
-- tool router；
+- generic tool router；
+- arbitrary tool loop；
+- production MCP runtime；
 - AI-owned business repository；
 - AI-owned side-effect execution。
 
-这些能力只有在真实产品需求、source owner、lifecycle、security 和 verification evidence 存在后重新评估。
+这些能力只有在真实产品需求、source owner、lifecycle、security 和 verification evidence 存在后重新评估。Bounded read-only research 不批准任何写入、审批、credential access、durable revision change、provenance ownership 或 side effect。
 
 ## 13. Human Traceability、Simplicity 与 ROI
 
@@ -321,13 +350,14 @@ Architecture -> Coordination -> Local Reasoning -> Human Debug Simulation
 
 - Backend authoritative state 在哪里；
 - PlanningContext 由谁构造、包含什么、排除什么；
-- Planner 只拥有 proposal/reasoning 的边界在哪里；
+- Planner / answer capability 只拥有 proposal/reasoning/answering 的边界在哪里；
+- read-only research request 由谁提出、由谁验证、由谁执行；
 - deterministic guardrails 在哪里执行；
 - Backend 如何拒绝 unauthorized、invalid、duplicate 或 stale proposal；
 - side effect 在哪里经过 approval/idempotency/persistence；
 - model/provider raw data 在哪里被隔离。
 
-任何关于内部 Planner class shape、RAG、memory、provider registry、fallback router 的结论，在当前 snapshot 都必须标为 `UNPROVEN`。不要用想象中的类名把 M0 understanding adapter 扩展成完整 Planner runtime。
+任何关于内部 Planner class shape、RAG、memory、provider registry、fallback router、通用 agent runtime、任意 tool loop 或生产级 MCP runtime 的结论，在当前 snapshot 都必须标为 `UNPROVEN` 或 `NON-GOAL`。不要用想象中的类名把 M0 understanding adapter 扩展成完整 Planner runtime。
 
 ## 14. Re-evaluation Triggers
 

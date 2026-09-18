@@ -5,6 +5,7 @@ import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.ai.provider.StructuredModelResult
 import com.nexusflow.ai.provider.StructuredModelResultMetadata
 import com.nexusflow.contracts.backendai.planning.CandidateOpportunity
+import com.nexusflow.contracts.backendai.planning.CandidateSourceRef
 import com.nexusflow.contracts.backendai.planning.PlanDirection
 import com.nexusflow.contracts.backendai.planning.ExplainPlansRequest
 import com.nexusflow.contracts.backendai.planning.PlanExplanationFact
@@ -72,8 +73,16 @@ class StructuredAiRetryLoggingTest {
                         estimatedCostWholeUnits = 100,
                         currencyCode = "CNY",
                         commuteMinutes = 15,
-                        sourceLabel = "test",
-                        sourceUpdatedAt = Now,
+                        sources = listOf(
+                            CandidateSourceRef(
+                                label = "test",
+                                uri = null,
+                                sourceUpdatedAt = Now,
+                                sourceId = "test",
+                                authority = "StructuredPrimary",
+                                factKeys = listOf("Title"),
+                            ),
+                        ),
                         validUntil = Later,
                     ),
                 ),

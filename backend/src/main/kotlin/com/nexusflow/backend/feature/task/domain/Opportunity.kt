@@ -9,7 +9,7 @@ interface OpportunityProvider {
      * opportunity matches the request. Provider/network outages must surface as
      * typed technical failures instead of being encoded as an empty result.
      */
-    fun discover(request: OpportunityRequest): List<Opportunity>
+    suspend fun discover(request: OpportunityRequest): List<Opportunity>
 }
 
 data class OpportunityRequest(
@@ -33,6 +33,8 @@ data class Opportunity(
 enum class OpportunityKind {
     Sports,
     Movies,
+    LiveEvents,
+    Outdoor,
 }
 
 data class OpportunityFacts(
@@ -77,7 +79,37 @@ data class SourceRef(
     val label: String,
     val uri: String?,
     val sourceUpdatedAt: Instant?,
+    val sourceId: String = label.normalizedPlanningToken().ifBlank { "unknown" },
+    val authority: SourceAuthority = SourceAuthority.StructuredPrimary,
+    val factKeys: Set<OpportunityFactKey> = emptySet(),
 )
+
+enum class SourceAuthority {
+    StructuredPrimary,
+    StructuredSecondary,
+    OfficialWeb,
+    GeneralWeb,
+}
+
+enum class OpportunityFactKey {
+    Title,
+    Summary,
+    StartTime,
+    EndTime,
+    Location,
+    ActivityMode,
+    Price,
+    Commute,
+    Availability,
+    MovieMetadata,
+    MovieShowtime,
+    FixtureStatus,
+    LiveEventMetadata,
+    TrailMetadata,
+    PlaceLookup,
+    Route,
+    Weather,
+}
 
 internal fun String.normalizedPlanningToken(): String =
     trim()
@@ -92,4 +124,28 @@ private fun OpportunityKind.planningDomainTokens(): Set<String> =
     when (this) {
         OpportunityKind.Sports -> setOf("sports", "sport", "football", "soccer", "match")
         OpportunityKind.Movies -> setOf("movies", "movie", "cinema", "film")
+        OpportunityKind.LiveEvents -> setOf(
+            "concert",
+            "concerts",
+            "music",
+            "live music",
+            "event",
+            "events",
+            "festival",
+            "festivals",
+            "gig",
+            "gigs",
+        )
+        OpportunityKind.Outdoor -> setOf(
+            "outdoor",
+            "outdoors",
+            "hiking",
+            "hike",
+            "trail",
+            "trails",
+            "mountain",
+            "mountains",
+            "climbing",
+            "climb",
+        )
     }

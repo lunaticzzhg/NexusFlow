@@ -1,6 +1,7 @@
 package com.nexusflow.ai.understanding
 
 import com.nexusflow.ai.planner.CandidateOpportunityPayload
+import com.nexusflow.ai.planner.CandidateSourceRefPayload
 import com.nexusflow.ai.planner.PlanCompositionPayload
 import com.nexusflow.ai.planner.PlanDraftPayload
 import com.nexusflow.ai.planner.PlanningCoreContextPayload
@@ -18,17 +19,21 @@ class StructuredPayloadModelsTest {
     private val json = Json { encodeDefaults = false }
 
     @Test
-    fun `understanding output carries requirement changes and intent patch`() {
+    fun `understanding output carries constraint deltas and planning goal patch`() {
         val payload = StructuredUnderstandingPayload(
-            userIntent = "requirement_update",
-            intentPatch = "Watch Liverpool this weekend",
-            requirementChanges =
+            turnIntent = "planning",
+            planningGoalPatch = "Watch Liverpool this weekend",
+            constraintDeltas =
                 listOf(
-                    StructuredRequirementPayload(
+                    StructuredConstraintDeltaPayload(
+                        operation = "upsert",
                         kind = "topic",
-                        strength = "must",
                         evidenceText = "Liverpool",
-                        textValue = "Liverpool",
+                        value = StructuredRequirementValuePayload(
+                            type = "topic",
+                            textValue = "Liverpool",
+                        ),
+                        strength = "must",
                     ),
                 ),
             clarification =
@@ -43,9 +48,39 @@ class StructuredPayloadModelsTest {
         val encoded = json.encodeToString(payload)
         val element = json.parseToJsonElement(encoded).jsonObject
 
-        assertEquals("requirement_update", element.getValue("userIntent").jsonPrimitive.content)
-        assertEquals("Watch Liverpool this weekend", element.getValue("intentPatch").jsonPrimitive.content)
-        assertEquals("requirementChanges", element.keys.first { it == "requirementChanges" })
+        assertEquals("planning", element.getValue("turnIntent").jsonPrimitive.content)
+        assertEquals("Watch Liverpool this weekend", element.getValue("planningGoalPatch").jsonPrimitive.content)
+        assertEquals("constraintDeltas", element.keys.first { it == "constraintDeltas" })
+    }
+
+    @Test
+    fun `understanding output carries nullable remove delta value`() {
+        val payload = StructuredUnderstandingPayload(
+            turnIntent = "planning",
+            constraintDeltas = listOf(
+                StructuredConstraintDeltaPayload(
+                    operation = "remove",
+                    kind = "budget_limit",
+                    evidenceText = "no budget limit",
+                    value = null,
+                    strength = null,
+                ),
+            ),
+            clarification =
+                StructuredClarificationPayload(
+                    needed = false,
+                    missingInformation = emptyList(),
+                    reasonCategory = "none",
+                ),
+            contextSelection = StructuredContextSelectionPayload(selectedKeys = emptyList()),
+        )
+
+        val element = json.parseToJsonElement(json.encodeToString(payload)).jsonObject
+        val delta = (element.getValue("constraintDeltas") as JsonArray).first().jsonObject
+
+        assertEquals("planning", element.getValue("turnIntent").jsonPrimitive.content)
+        assertEquals("remove", delta.getValue("operation").jsonPrimitive.content)
+        assertEquals("budget_limit", delta.getValue("kind").jsonPrimitive.content)
     }
 
     @Test
@@ -67,8 +102,16 @@ class StructuredPayloadModelsTest {
                         estimatedCostWholeUnits = 180,
                         currencyCode = "CNY",
                         commuteMinutes = 18,
-                        sourceLabel = "Controlled Sports Feed",
-                        sourceUpdatedAt = Instant.parse("2026-08-29T10:00:00Z"),
+                        sources = listOf(
+                            CandidateSourceRefPayload(
+                                label = "Controlled Sports Feed",
+                                uri = "controlled://sports",
+                                sourceUpdatedAt = Instant.parse("2026-08-29T10:00:00Z"),
+                                sourceId = "controlled-sports-feed",
+                                authority = "StructuredPrimary",
+                                factKeys = listOf("Title", "StartTime", "Location"),
+                            ),
+                        ),
                         validUntil = Instant.parse("2026-08-30T10:00:00Z"),
                     ),
                 ),

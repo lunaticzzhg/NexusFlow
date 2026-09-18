@@ -5,6 +5,8 @@ import com.nexusflow.contracts.backendai.common.SelectableContextDefinitionPaylo
 import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
 import com.nexusflow.contracts.backendai.common.StructuredModelUsage
 import kotlinx.datetime.Instant
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -12,38 +14,45 @@ fun interface UserMessageUnderstanding {
     suspend fun understand(request: UnderstandMessageRequest): UnderstandMessageResult
 }
 
-const val UNDERSTAND_USER_MESSAGE_PROMPT_VERSION = "understand-user-message-v1"
+const val UNDERSTAND_USER_MESSAGE_PROMPT_VERSION = "understand-user-message-v2"
 
 /**
- * Backend asks the AI layer to interpret one committed user message in the current Task state.
+ * Backend asks the AI layer to interpret one committed user message in a Conversation.
  *
- * The AI may only propose intent, requirement, clarification, and context-selection changes; Backend owns validation
- * and mutation of authoritative Task state.
+ * Backend may include active Planning context when the Conversation is currently attached to a Task. The AI may only
+ * propose turn intent, planning goal, constraint, clarification, and context-selection changes; Backend owns validation
+ * and mutation of authoritative Planning state.
  */
 @Serializable
 data class UnderstandMessageRequest(
     @SerialName("aiRequestId")
     val aiRequestId: String,
-    @SerialName("taskId")
-    val taskId: String,
-    @SerialName("taskRevision")
-    val taskRevision: Long,
-    @SerialName("intent")
-    val intent: String,
-    @SerialName("requirements")
-    val requirements: List<CurrentRequirement>,
     @SerialName("currentMessage")
     val currentMessage: String,
     @SerialName("referenceTime")
     val referenceTime: Instant,
     @SerialName("timeZoneId")
     val timeZoneId: String,
+    @SerialName("activePlanning")
+    val activePlanning: ActivePlanningContextPayload?,
     @SerialName("optionalContext")
     val optionalContext: List<ModelContextBlockPayload> = emptyList(),
     @SerialName("availableContextDefinitions")
     val availableContextDefinitions: List<SelectableContextDefinitionPayload> = emptyList(),
     @SerialName("diagnostics")
     val diagnostics: StructuredModelRequestDiagnostics = StructuredModelRequestDiagnostics(),
+)
+
+@Serializable
+data class ActivePlanningContextPayload(
+    @SerialName("taskId")
+    val taskId: String,
+    @SerialName("taskRevision")
+    val taskRevision: Long,
+    @SerialName("goal")
+    val goal: String,
+    @SerialName("requirements")
+    val requirements: List<CurrentRequirement>,
 )
 
 @Serializable
@@ -59,16 +68,16 @@ data class CurrentRequirement(
 /**
  * AI returns proposed interpretation results for one message.
  *
- * Backend must validate these proposals before applying any intent, requirement, or context-selection change.
+ * Backend must validate these proposals before applying any planning or context-selection change.
  */
 @Serializable
 data class UnderstandMessageResult(
-    @SerialName("userIntent")
-    val userIntent: UserIntent,
-    @SerialName("intentPatch")
-    val intentPatch: String?,
-    @SerialName("requirementChanges")
-    val requirementChanges: List<RequirementChangeProposal>,
+    @SerialName("turnIntent")
+    val turnIntent: TurnIntent,
+    @SerialName("planningGoalPatch")
+    val planningGoalPatch: String?,
+    @SerialName("constraintDeltas")
+    val constraintDeltas: List<ConstraintDeltaProposal>,
     @SerialName("clarification")
     val clarification: ClarificationProposal,
     @SerialName("contextSelection")
@@ -76,40 +85,16 @@ data class UnderstandMessageResult(
     @SerialName("metadata")
     val metadata: UnderstandingMetadata,
 ) {
-    constructor(
-        userIntent: UserIntent,
-        requirementChanges: List<RequirementChangeProposal>,
-        missingInformation: List<String>,
-        clarificationNeeded: Boolean,
-        assistantMessageDraft: String?,
-        metadata: UnderstandingMetadata,
-        contextSelection: ContextSelectionProposal = ContextSelectionProposal(),
-    ) : this(
-        userIntent = userIntent,
-        intentPatch = null,
-        requirementChanges = requirementChanges,
-        clarification = ClarificationProposal(
-            needed = clarificationNeeded,
-            missingInformation = missingInformation,
-            reasonCategory = if (clarificationNeeded) {
-                ClarificationReasonCategory.MissingRequiredInformation
-            } else {
-                ClarificationReasonCategory.None
-            },
-            questionDraft = assistantMessageDraft,
-        ),
-        contextSelection = contextSelection,
-        metadata = metadata,
-    )
-
-    val missingInformation: List<String>
-        get() = clarification.missingInformation
-
-    val clarificationNeeded: Boolean
-        get() = clarification.needed
-
-    val assistantMessageDraft: String?
-        get() = clarification.questionDraft
+    init {
+        if (turnIntent == TurnIntent.Conversation) {
+            require(planningGoalPatch == null) {
+                "planningGoalPatch must be null for conversation turns"
+            }
+            require(constraintDeltas.isEmpty()) {
+                "constraintDeltas must be empty for conversation turns"
+            }
+        }
+    }
 }
 
 @Serializable
@@ -149,34 +134,43 @@ enum class ClarificationReasonCategory {
 
     @SerialName("ambiguous_requirement")
     AmbiguousRequirement,
-
-    @SerialName("unsupported_request")
-    UnsupportedRequest,
 }
 
 @Serializable
-enum class UserIntent {
-    @SerialName("plan_request")
-    PlanRequest,
+enum class TurnIntent {
+    @SerialName("conversation")
+    Conversation,
 
-    @SerialName("requirement_update")
-    RequirementUpdate,
-
-    @SerialName("clarification_response")
-    ClarificationResponse,
+    @SerialName("planning")
+    Planning,
 }
 
 @Serializable
-data class RequirementChangeProposal(
+data class ConstraintDeltaProposal(
+    @SerialName("operation")
+    val operation: ConstraintDeltaOperation,
     @SerialName("kind")
     val kind: RequirementKind,
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     @SerialName("value")
-    val value: RequirementValue,
+    val value: RequirementValue? = null,
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     @SerialName("strength")
-    val strength: RequirementStrength,
+    val strength: RequirementStrength? = null,
     @SerialName("evidenceText")
     val evidenceText: String,
 )
+
+@Serializable
+enum class ConstraintDeltaOperation {
+    @SerialName("upsert")
+    Upsert,
+
+    @SerialName("remove")
+    Remove,
+}
 
 @Serializable
 enum class RequirementKind {

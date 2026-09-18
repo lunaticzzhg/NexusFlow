@@ -25,18 +25,28 @@ Backend owns identity, session rotation, token validation, and revocation. App s
 
 ### Task
 
-- `CreateTaskRequest`
-- `SendTaskMessageRequest`
 - `UpdateRequirementRequest`
 - `TaskSummaryResponse`
 - `TaskDetailResponse`
 - `TaskResponse`
-- `TaskMessageResponse`
 - `RequirementResponse`
 - `RequirementValueResponse`
 - `PlanningStatusResponse`
 
-`TaskDetailResponse` is the current App-facing authoritative projection. It preserves the existing wire shape for this thin refactor slice: `task`, `requirements`, `messages`, `plans`, and `planning`.
+`TaskDetailResponse` is the current App-facing planning projection for requirement and plan mutations: `task`, `requirements`, `plans`, and `planning`. Conversation transcript messages live under the Conversation protocol.
+
+### Conversation
+
+- `CreateConversationRequest`
+- `CreateConversationResponse`
+- `ConversationDetailResponse`
+- `SendConversationMessageRequest`
+- `SendConversationMessageResponse`
+- `ConversationResponse`
+- `ConversationMessageResponse`
+- `ConversationCurrentTaskResponse`
+
+Conversation is the App-facing interaction container for natural chat and planning entry. Its projection contains messages and may include one nullable current Task planning payload; chat-only conversations keep `currentTask` absent or null.
 
 ### Plan
 

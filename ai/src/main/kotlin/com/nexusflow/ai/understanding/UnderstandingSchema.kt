@@ -8,20 +8,26 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-internal const val UNDERSTANDING_SCHEMA_NAME = "orbit_m1_user_message_understanding"
+internal const val UNDERSTANDING_SCHEMA_NAME = "orbit_r1_user_message_understanding"
 
 internal val UnderstandingSchema: JsonObject =
     buildJsonObject {
         put("type", "object")
-        put("required", jsonArray("userIntent", "intentPatch", "requirementChanges", "clarification", "contextSelection"))
+        put(
+            "required",
+            jsonArray("turnIntent", "planningGoalPatch", "constraintDeltas", "clarification", "contextSelection"),
+        )
         put("additionalProperties", false)
         put(
             "properties",
             buildJsonObject {
-                put("userIntent", enumString("plan_request", "requirement_update", "clarification_response"))
-                put("intentPatch", nullableStringSchema())
                 put(
-                    "requirementChanges",
+                    "turnIntent",
+                    enumString("conversation", "planning"),
+                )
+                put("planningGoalPatch", nullableStringSchema())
+                put(
+                    "constraintDeltas",
                     buildJsonObject {
                         put("type", "array")
                         put(
@@ -30,18 +36,11 @@ internal val UnderstandingSchema: JsonObject =
                                 put(
                                     "required",
                                     jsonArray(
+                                        "operation",
                                         "kind",
+                                        "value",
                                         "strength",
                                         "evidenceText",
-                                        "textValue",
-                                        "amountWholeUnits",
-                                        "currencyCode",
-                                        "maxMinutes",
-                                        "commutePreference",
-                                        "activityMode",
-                                        "startAt",
-                                        "endAt",
-                                        "timeZoneId",
                                     ),
                                 )
                                 put("type", "object")
@@ -49,6 +48,7 @@ internal val UnderstandingSchema: JsonObject =
                                 put(
                                     "properties",
                                     buildJsonObject {
+                                        put("operation", enumString("upsert", "remove"))
                                         put(
                                             "kind",
                                             enumString(
@@ -63,17 +63,9 @@ internal val UnderstandingSchema: JsonObject =
                                                 "experience_preference",
                                             ),
                                         )
-                                        put("strength", enumString("must", "prefer"))
+                                        put("value", requirementValueSchema())
+                                        put("strength", nullableEnumString("must", "prefer"))
                                         put("evidenceText", stringSchema())
-                                        put("textValue", nullableStringSchema())
-                                        put("amountWholeUnits", nullableNumberSchema("integer"))
-                                        put("currencyCode", nullableStringSchema())
-                                        put("maxMinutes", nullableNumberSchema("integer"))
-                                        put("commutePreference", nullableEnumString("prefer_shorter"))
-                                        put("activityMode", nullableEnumString("at_home", "out_of_home"))
-                                        put("startAt", nullableStringSchema())
-                                        put("endAt", nullableStringSchema())
-                                        put("timeZoneId", nullableStringSchema())
                                     },
                                 )
                             },
@@ -103,7 +95,6 @@ internal val UnderstandingSchema: JsonObject =
                                         "none",
                                         "missing_required_information",
                                         "ambiguous_requirement",
-                                        "unsupported_request",
                                     ),
                                 )
                                 put("questionDraft", nullableStringSchema())
@@ -131,6 +122,55 @@ internal val UnderstandingSchema: JsonObject =
                         )
                     },
                 )
+            },
+        )
+    }
+
+private fun requirementValueSchema(): JsonObject =
+    buildJsonObject {
+        put("type", jsonArray("object", "null"))
+        put(
+            "required",
+            jsonArray(
+                "type",
+                "textValue",
+                "amountWholeUnits",
+                "currencyCode",
+                "maxMinutes",
+                "commutePreference",
+                "activityMode",
+                "startAt",
+                "endAt",
+                "timeZoneId",
+            ),
+        )
+        put("additionalProperties", false)
+        put(
+            "properties",
+            buildJsonObject {
+                put(
+                    "type",
+                    enumString(
+                        "time_window",
+                        "budget_limit",
+                        "commute_limit",
+                        "commute_preference",
+                        "location",
+                        "activity_domain",
+                        "activity_mode",
+                        "topic",
+                        "experience_preference",
+                    ),
+                )
+                put("textValue", nullableStringSchema())
+                put("amountWholeUnits", nullableNumberSchema("integer"))
+                put("currencyCode", nullableStringSchema())
+                put("maxMinutes", nullableNumberSchema("integer"))
+                put("commutePreference", nullableEnumString("prefer_shorter"))
+                put("activityMode", nullableEnumString("at_home", "out_of_home"))
+                put("startAt", nullableStringSchema())
+                put("endAt", nullableStringSchema())
+                put("timeZoneId", nullableStringSchema())
             },
         )
     }

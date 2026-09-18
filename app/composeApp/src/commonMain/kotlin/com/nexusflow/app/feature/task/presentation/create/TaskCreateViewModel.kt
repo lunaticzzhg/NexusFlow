@@ -3,7 +3,7 @@ package com.nexusflow.app.feature.task.presentation.create
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nexusflow.app.feature.task.data.newTaskClientId
-import com.nexusflow.app.feature.task.domain.CreateTaskCommand
+import com.nexusflow.app.feature.task.domain.CreateConversationCommand
 import com.nexusflow.app.feature.task.domain.TaskRepository
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,14 +47,14 @@ class TaskCreateViewModel(
         _state.value = current.copy(submission = TaskSubmission.Submitting)
         val identity = activeCreateIdentity ?: newCreateIdentity().also { activeCreateIdentity = it }
         viewModelScope.launch {
-            repository.createTask(
-                CreateTaskCommand(
+            repository.createConversation(
+                CreateConversationCommand(
                     creationRequestId = identity.creationRequestId,
                     requestText = current.requestText,
                     timeZoneId = timeZoneIdProvider(),
                 ),
             ).fold(
-                onSuccess = { task -> _effects.emit(TaskCreateEffect.OpenTask(task.id)) },
+                onSuccess = { conversation -> _effects.emit(TaskCreateEffect.OpenConversation(conversation.id)) },
                 onFailure = { _state.value = _state.value.copy(submission = TaskSubmission.Failed) },
             )
         }

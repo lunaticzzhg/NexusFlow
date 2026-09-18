@@ -2,7 +2,7 @@
 
 ## Direction
 
-Orbit 的路线围绕一个简单模型推进：用户提出一件事，系统整理要求，发现真实机会，生成可选择方案。
+Orbit 的路线围绕 Conversation-first, Planning-centered 推进：用户自然聊天和提问；需要安排、推荐、规划或选择方案时，系统在同一个 Conversation 中激活 Task，整理要求，发现真实机会，生成可选择方案。
 
 ## M0 Foundation
 
@@ -19,11 +19,15 @@ Orbit 的路线围绕一个简单模型推进：用户提出一件事，系统�
 - Kotlin validator 负责校验 requirements、source refs、revision 与 validUntil。
 - App 展示事情、要求、方案，并允许用户继续发消息或选择方案。
 
-## M2 Source Expansion
+## M2 Conversation Answer And Research
 
+- Conversation Answer：支持 Direct Answer，以及需要实时、地域、外部或最新事实时的 Grounded Answer。
+- Read-only Research Tool Layer：建立 Backend 管控的 bounded read-only research boundary，验证 tool key、参数、数量、权限、provenance 和失败语义；不引入通用 agent runtime、任意 tool loop 或 side-effect execution。
+- Source Expansion：复用和扩展更多只读来源。
 - 接入更多只读来源。
 - 每个来源通过 typed projector 输出 Opportunity facts。
-- 所有外部文本先经 source owner 校验，再进入 planning context。
+- 所有外部文本先经 source owner 校验、投影、裁剪和标注 provenance，再进入 answer / planning context。
+- Planning Research：Planning 不再依赖关键词 source routing，而是基于 goal、requirements、resolved context 和可用 read-only research definitions 提出需要查询的事实，再由 Backend 执行并保存 Opportunity snapshots。
 
 ## M3 Execution Preparation
 

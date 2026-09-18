@@ -1,5 +1,7 @@
 package com.nexusflow.app.feature.task.data
 
+import com.nexusflow.app.feature.task.domain.ConversationDetail
+import com.nexusflow.app.feature.task.domain.ConversationId
 import com.nexusflow.app.feature.task.domain.MessageRole
 import com.nexusflow.app.feature.task.domain.PlanDirection
 import com.nexusflow.app.feature.task.domain.PlanEstimatedCost
@@ -22,6 +24,8 @@ import com.nexusflow.app.feature.task.domain.TaskSummary
 import kotlinx.datetime.Instant
 
 object TaskFixtures {
+    val linkedConversationId = ConversationId("conversation-liverpool-night")
+
     private val timeRequirement =
         TaskRequirement(
             id = RequirementId("requirement-time"),
@@ -45,6 +49,7 @@ object TaskFixtures {
                         ),
                     ),
                 selectedPlanId = null,
+                conversationId = linkedConversationId,
             ),
         )
 
@@ -102,6 +107,13 @@ object TaskFixtures {
             plans = currentPlans,
             selectedPlanId = null,
             planningState = PlanningState.Ready,
+        )
+
+    val conversation =
+        ConversationDetail(
+            id = linkedConversationId,
+            messages = detail.messages,
+            currentTask = detail.copy(messages = emptyList()),
         )
 }
 

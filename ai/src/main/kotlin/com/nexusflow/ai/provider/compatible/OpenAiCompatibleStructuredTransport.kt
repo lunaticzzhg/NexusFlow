@@ -6,6 +6,9 @@ import com.nexusflow.ai.provider.ProviderRefusedException
 import com.nexusflow.ai.provider.ProviderTimeoutException
 import com.nexusflow.ai.provider.ProviderUnauthorizedException
 import com.nexusflow.ai.provider.ProviderUnavailableException
+import com.nexusflow.ai.provider.TextModelRequest
+import com.nexusflow.ai.provider.TextModelResult
+import com.nexusflow.ai.provider.TextModelResultMetadata
 import com.nexusflow.ai.provider.StructuredModelFinishCategory
 import com.nexusflow.contracts.backendai.common.StructuredModelCapability
 import com.nexusflow.ai.provider.StructuredModelException
@@ -18,13 +21,16 @@ import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpRequestTimeoutException
+import io.ktor.client.request.accept
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -32,7 +38,12 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.IOException
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
@@ -117,8 +128,102 @@ internal class OpenAiCompatibleStructuredTransport(
         }
     }
 
+    suspend fun stream(
+        request: TextModelRequest,
+        onDelta: suspend (String) -> Unit,
+    ): TextModelResult {
+        val started = TimeSource.Monotonic.markNow()
+        logger?.info(
+            component = AI_COMPONENT,
+            event = "ai_request_started",
+            fields = request.safeLogFields(),
+        )
+        val response = try {
+            client.post(endpointUrl) {
+                bearerAuth(apiKey)
+                accept(ContentType.Text.EventStream)
+                contentType(ContentType.Application.Json)
+                setBody(mode.streamingBody(model, request, json, enableThinking))
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: HttpRequestTimeoutException) {
+            throw ProviderTimeoutException(error).also { failure -> logFailure(request, started, failure) }
+        } catch (error: IOException) {
+            throw ProviderUnavailableException(error).also { failure -> logFailure(request, started, failure) }
+        }
+
+        when {
+            response.status == HttpStatusCode.RequestTimeout ->
+                throw ProviderTimeoutException().also { failure -> logFailure(request, started, failure) }
+            response.status == HttpStatusCode.Unauthorized ||
+                response.status == HttpStatusCode.Forbidden ->
+                throw ProviderUnauthorizedException().also { failure -> logFailure(request, started, failure) }
+            response.status.value == 429 ->
+                throw ProviderRateLimitedException().also { failure -> logFailure(request, started, failure) }
+            response.status.value >= 500 ->
+                throw ProviderUnavailableException().also { failure -> logFailure(request, started, failure) }
+            response.status.value !in 200..299 ->
+                throw ProviderUnavailableException().also { failure -> logFailure(request, started, failure) }
+        }
+
+        val body = response.bodyAsChannel()
+        val accumulator = StreamingAccumulator(request)
+        val dataBuffer = StringBuilder()
+        suspend fun flushData() {
+            val payload = dataBuffer.toString()
+            dataBuffer.clear()
+            if (payload.isBlank() || payload == "[DONE]") return
+            accumulator.consume(payload, onDelta)
+        }
+        try {
+            while (true) {
+                val line = body.readUTF8Line() ?: break
+                if (line.isBlank()) {
+                    flushData()
+                } else if (line.startsWith("data:")) {
+                    if (dataBuffer.isNotEmpty()) dataBuffer.append('\n')
+                    dataBuffer.append(line.removePrefix("data:").trimStart())
+                }
+            }
+            flushData()
+            return accumulator.result().also { result ->
+                logger?.info(
+                    component = AI_COMPONENT,
+                    event = "ai_request_finished",
+                    fields = request.safeLogFields(started, result),
+                )
+            }
+        } catch (error: CancellationException) {
+            body.cancel(error)
+            throw error
+        } catch (error: Throwable) {
+            logFailure(request, started, error)
+            throw error
+        }
+    }
+
     private fun logFailure(
         request: StructuredModelRequest,
+        started: TimeMark,
+        failure: Throwable,
+    ) {
+        logger?.error(
+            component = AI_COMPONENT,
+            event = "ai_request_failed",
+            fields =
+                request.safeLogFields(started).withFailureCategory(
+                    when (failure) {
+                        is StructuredModelException -> failure.category.name.toSnakeCase()
+                        else -> failure::class.simpleName?.toSnakeCase() ?: "unknown"
+                    },
+                ),
+            cause = failure,
+        )
+    }
+
+    private fun logFailure(
+        request: TextModelRequest,
         started: TimeMark,
         failure: Throwable,
     ) {
@@ -139,6 +244,32 @@ internal class OpenAiCompatibleStructuredTransport(
     private fun StructuredModelRequest.safeLogFields(
         started: TimeMark? = null,
         result: StructuredModelResult? = null,
+    ): LogFields =
+        logFields {
+            "operation" value metadata.capability.toLogOperation()
+            "provider" value provider
+            "model" value model
+            "attempt" value metadata.attemptNumber
+            "prompt_version" value metadata.promptVersion
+            "available_context_definition_count" value metadata.diagnostics.availableContextDefinitionCount
+            "selected_context_key_count" value metadata.diagnostics.selectedContextKeyCount
+            "resolved_context_block_count" value metadata.diagnostics.resolvedContextBlockCount
+            "included_context_block_count" value metadata.diagnostics.includedContextBlockCount
+            "omitted_context_block_count" value metadata.diagnostics.omittedContextBlockCount
+            "optional_context_serialized_chars" value metadata.diagnostics.optionalContextSerializedChars
+            "context_definitions_serialized_chars" value metadata.diagnostics.contextDefinitionsSerializedChars
+            "full_user_payload_serialized_chars" value metadata.diagnostics.fullUserPayloadSerializedChars
+            started?.let { "duration_ms" value it.elapsedNow().inWholeMilliseconds }
+            result?.metadata?.usage?.inputTokens?.let { "input_tokens" value it }
+            result?.metadata?.usage?.outputTokens?.let { "output_tokens" value it }
+            result?.metadata?.usage?.totalTokens?.let { "total_tokens" value it }
+            result?.metadata?.finishCategory?.let { "finish_category" value it.name.toSnakeCase() }
+            result?.metadata?.providerRequestId?.let { "provider_request_id" value it }
+        }
+
+    private fun TextModelRequest.safeLogFields(
+        started: TimeMark? = null,
+        result: TextModelResult? = null,
     ): LogFields =
         logFields {
             "operation" value metadata.capability.toLogOperation()
@@ -227,6 +358,70 @@ internal class OpenAiCompatibleStructuredTransport(
             ),
         )
     }
+
+    private inner class StreamingAccumulator(
+        private val request: TextModelRequest,
+    ) {
+        private val text = StringBuilder()
+        private var providerRequestId: String? = null
+        private var usage: StructuredModelUsage? = null
+        private var finishCategory = StructuredModelFinishCategory.Complete
+
+        suspend fun consume(
+            payload: String,
+            onDelta: suspend (String) -> Unit,
+        ) {
+            val event = try {
+                json.decodeFromString<JsonElement>(payload).jsonObject
+            } catch (error: SerializationException) {
+                throw InvalidStructuredOutputException("Provider stream event was not valid JSON", error)
+            }
+            event["id"]?.jsonPrimitive?.contentOrNull?.let { providerRequestId = it }
+            event["usage"]?.toUsageOrNull()?.let { usage = it }
+            event["response"]?.jsonObjectOrNull()?.let { response ->
+                response["id"]?.jsonPrimitive?.contentOrNull?.let { providerRequestId = it }
+                response["usage"]?.toUsageOrNull()?.let { usage = it }
+            }
+            event["type"]?.jsonPrimitive?.contentOrNull?.let { type ->
+                if ("refusal" in type || type == "response.refused") throw ProviderRefusedException()
+            }
+            event["choices"]?.jsonArrayOrNull()?.forEach { choiceElement ->
+                val choice = choiceElement.jsonObject
+                val finishReason = choice["finish_reason"]?.jsonPrimitive?.contentOrNull
+                if (finishReason == "content_filter") throw ProviderRefusedException()
+                finishReason?.toFinishCategory()?.let { finishCategory = it }
+                choice["delta"]?.jsonObjectOrNull()
+                    ?.get("content")
+                    ?.jsonPrimitive
+                    ?.contentOrNull
+                    ?.let { emit(it, onDelta) }
+            }
+            event["delta"]?.jsonPrimitiveOrNull()?.contentOrNull?.let { emit(it, onDelta) }
+        }
+
+        fun result(): TextModelResult =
+            TextModelResult(
+                outputText = text.toString(),
+                metadata = TextModelResultMetadata(
+                    provider = provider,
+                    model = model,
+                    providerRequestId = providerRequestId,
+                    attemptCount = request.metadata.attemptNumber,
+                    usage = usage,
+                    finishCategory = finishCategory,
+                    requestDiagnostics = request.metadata.diagnostics,
+                ),
+            )
+
+        private suspend fun emit(
+            delta: String,
+            onDelta: suspend (String) -> Unit,
+        ) {
+            if (delta.isEmpty()) return
+            text.append(delta)
+            onDelta(delta)
+        }
+    }
 }
 
 internal enum class OpenAiCompatibleMode(val path: String) {
@@ -246,6 +441,9 @@ private fun String.toSnakeCase(): String =
 private fun StructuredModelCapability.toLogOperation(): String =
     when (this) {
         StructuredModelCapability.UnderstandMessage -> "understanding"
+        StructuredModelCapability.ConversationDecision -> "conversation_decision"
+        StructuredModelCapability.ConversationAnswer -> "conversation_answer"
+        StructuredModelCapability.PlanningResearch -> "planning_research"
         StructuredModelCapability.CreatePlans -> "plan_compose"
         StructuredModelCapability.ExplainPlans -> "plan_explain"
     }
@@ -304,7 +502,38 @@ private fun OpenAiCompatibleMode.body(
         }
     }
 
+private fun OpenAiCompatibleMode.streamingBody(
+    model: String,
+    request: TextModelRequest,
+    json: Json,
+    enableThinking: Boolean?,
+): Any =
+    request.userPayloadText(json).let { userPayload ->
+        when (this) {
+            OpenAiCompatibleMode.Responses -> OpenAiResponsesTextRequest(
+                model = model,
+                instructions = request.systemPrompt,
+                input = userPayload,
+                stream = true,
+            )
+            OpenAiCompatibleMode.ChatJsonSchema,
+            OpenAiCompatibleMode.ChatJsonObject,
+            -> OpenAiChatCompletionRequest(
+                model = model,
+                messages = listOf(
+                    OpenAiChatMessage(role = "system", content = request.systemPrompt),
+                    OpenAiChatMessage(role = "user", content = userPayload),
+                ),
+                stream = true,
+                enableThinking = enableThinking,
+            )
+        }
+    }
+
 private fun StructuredModelRequest.userPayloadText(json: Json): String =
+    json.encodeToString(JsonObject.serializer(), userPayload)
+
+private fun TextModelRequest.userPayloadText(json: Json): String =
     json.encodeToString(JsonObject.serializer(), userPayload)
 
 private fun OpenAiTokenUsage.toUsage(): StructuredModelUsage =
@@ -324,6 +553,24 @@ private fun String?.toFinishCategory(): StructuredModelFinishCategory =
         else -> StructuredModelFinishCategory.Unknown
     }
 
+private fun JsonElement.jsonObjectOrNull(): JsonObject? =
+    this as? JsonObject
+
+private fun JsonElement.jsonArrayOrNull() =
+    runCatching { jsonArray }.getOrNull()
+
+private fun JsonElement.jsonPrimitiveOrNull() =
+    runCatching { jsonPrimitive }.getOrNull()
+
+private fun JsonElement.toUsageOrNull(): StructuredModelUsage? =
+    runCatching {
+        val json = Json {
+            ignoreUnknownKeys = true
+            explicitNulls = false
+        }
+        json.decodeFromJsonElement(OpenAiTokenUsage.serializer(), this).toUsage()
+    }.getOrNull()
+
 @Serializable
 private data class OpenAiResponsesRequest(
     @SerialName("model")
@@ -334,6 +581,18 @@ private data class OpenAiResponsesRequest(
     val input: String,
     @SerialName("text")
     val text: OpenAiTextConfig,
+)
+
+@Serializable
+private data class OpenAiResponsesTextRequest(
+    @SerialName("model")
+    val model: String,
+    @SerialName("instructions")
+    val instructions: String,
+    @SerialName("input")
+    val input: String,
+    @SerialName("stream")
+    val stream: Boolean,
 )
 
 @Serializable
@@ -387,7 +646,9 @@ private data class OpenAiChatCompletionRequest(
     @SerialName("messages")
     val messages: List<OpenAiChatMessage>,
     @SerialName("response_format")
-    val responseFormat: OpenAiChatResponseFormat,
+    val responseFormat: OpenAiChatResponseFormat? = null,
+    @SerialName("stream")
+    val stream: Boolean? = null,
     @SerialName("enable_thinking")
     val enableThinking: Boolean? = null,
 )

@@ -10,24 +10,66 @@ import com.nexusflow.contracts.backendai.planning.ExplainPlansRequest
 import com.nexusflow.contracts.backendai.planning.PlanModelMetadata
 import com.nexusflow.contracts.backendai.planning.PlanNarrative
 import com.nexusflow.contracts.backendai.planning.PlanNarrativePoint
+import com.nexusflow.contracts.backendai.planning.PlanningResearchCapability
+import com.nexusflow.contracts.backendai.planning.PlanningResearchRequest
+import com.nexusflow.contracts.backendai.planning.PlanningResearchResult
 import com.nexusflow.contracts.backendai.planning.CreatePlansRequest
+import com.nexusflow.contracts.backendai.answer.AnswerNeedCoveragePayload
+import com.nexusflow.contracts.backendai.answer.AnswerNeedCoverageStatus
+import com.nexusflow.contracts.backendai.answer.ComposeConversationAnswerRequest
+import com.nexusflow.contracts.backendai.answer.ComposeConversationAnswerResult
+import com.nexusflow.contracts.backendai.answer.ConversationAnsweringCapability
+import com.nexusflow.contracts.backendai.answer.StreamingConversationAnsweringCapability
+import com.nexusflow.contracts.backendai.conversation.ConversationDecisionCapability
+import com.nexusflow.contracts.backendai.conversation.ConversationDecisionRequest
+import com.nexusflow.contracts.backendai.conversation.ConversationDecisionResult
+import com.nexusflow.contracts.backendai.conversation.InformationNeedMode
+import com.nexusflow.contracts.backendai.conversation.InformationNeedProposal
+import com.nexusflow.contracts.backendai.conversation.ReadOnlyToolCallProposal
 import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
 import com.nexusflow.contracts.backendai.common.CapabilityUnavailableException
 import com.nexusflow.contracts.backendai.understanding.ClarificationProposal
 import com.nexusflow.contracts.backendai.understanding.ClarificationReasonCategory
 import com.nexusflow.contracts.backendai.understanding.ContextSelectionProposal
-import com.nexusflow.contracts.backendai.understanding.RequirementChangeProposal
+import com.nexusflow.contracts.backendai.understanding.ConstraintDeltaOperation
+import com.nexusflow.contracts.backendai.understanding.ConstraintDeltaProposal
 import com.nexusflow.contracts.backendai.understanding.RequirementKind as AiRequirementKind
 import com.nexusflow.contracts.backendai.understanding.RequirementStrength as AiRequirementStrength
 import com.nexusflow.contracts.backendai.understanding.RequirementValue as AiRequirementValue
+import com.nexusflow.contracts.backendai.understanding.TurnIntent
 import com.nexusflow.contracts.backendai.understanding.UnderstandMessageRequest
 import com.nexusflow.contracts.backendai.understanding.UnderstandingMetadata
 import com.nexusflow.contracts.backendai.understanding.UnderstandMessageResult
-import com.nexusflow.contracts.backendai.understanding.UserIntent
 import com.nexusflow.contracts.backendai.understanding.UserMessageUnderstanding
+import com.nexusflow.backend.core.readtool.ReadToolCatalog
+import com.nexusflow.backend.core.readtool.ReadTool
+import com.nexusflow.backend.core.readtool.ReadToolActivityKind
+import com.nexusflow.backend.core.readtool.ReadToolCall
+import com.nexusflow.backend.core.readtool.ReadToolDefinition
+import com.nexusflow.backend.core.readtool.ReadToolEvidence
+import com.nexusflow.backend.core.readtool.ReadToolEvidencePayload
+import com.nexusflow.backend.core.readtool.ReadToolExecutionContext
+import com.nexusflow.backend.core.readtool.ReadToolFact
+import com.nexusflow.backend.core.readtool.ReadToolFactKind
+import com.nexusflow.backend.core.readtool.ReadToolFactValue
+import com.nexusflow.backend.core.readtool.ReadToolExecutor
+import com.nexusflow.backend.core.readtool.ReadToolKey
+import com.nexusflow.backend.core.readtool.ReadToolOutcome
 import com.nexusflow.backend.core.identity.ActorContext
+import com.nexusflow.backend.core.aicontext.ModelContextAssembler
+import com.nexusflow.backend.core.aicontext.ModelContextCatalog
+import com.nexusflow.backend.feature.conversation.application.ConversationService
+import com.nexusflow.backend.feature.conversation.application.ConversationTurnProcessor
+import com.nexusflow.backend.feature.conversation.application.ResponseRunResultConsumer
+import com.nexusflow.backend.feature.conversation.application.ResponseRunWorker
+import com.nexusflow.backend.feature.conversation.application.ResponseRunWorkerConfig
+import com.nexusflow.backend.feature.conversation.infrastructure.JdbcConversationRepository
+import com.nexusflow.backend.feature.task.application.ConversationAnswerService
 import com.nexusflow.backend.feature.task.application.PlanningService
 import com.nexusflow.backend.feature.task.application.TaskService
+import com.nexusflow.backend.feature.task.application.readtool.MovieDiscoveryKey
+import com.nexusflow.backend.feature.task.application.readtool.MovieShowtimesKey
+import com.nexusflow.backend.feature.task.application.readtool.WebSearchKey
 import com.nexusflow.backend.feature.task.domain.ActivityModeValue
 import com.nexusflow.backend.feature.task.domain.AvailabilityFact
 import com.nexusflow.backend.feature.task.domain.DurationFact
@@ -48,10 +90,12 @@ import com.nexusflow.observability.StructuredLogger
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import kotlinx.datetime.Instant as KotlinInstant
+import kotlinx.serialization.json.JsonObject
 import org.flywaydb.core.Flyway
 import org.testcontainers.postgresql.PostgreSQLContainer
 import java.sql.Timestamp
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneOffset
 import java.util.UUID
@@ -71,9 +115,14 @@ internal fun taskActor(
 internal fun createTaskService(
     dataSource: DataSource,
     understanding: UserMessageUnderstanding,
-    opportunityProvider: OpportunityProvider = RecordingOpportunityProvider(),
+    planningResearch: PlanningResearchCapability = RecordingPlanningResearch(),
+    readToolCatalog: ReadToolCatalog = defaultPlanningReadToolCatalog(),
+    readToolExecutor: ReadToolExecutor = ReadToolExecutor(readToolCatalog),
     planComposer: RecordingPlanComposer = RecordingPlanComposer(),
     planExplainer: RecordingPlanExplainer = RecordingPlanExplainer(),
+    conversationAnswerService: ConversationAnswerService? = null,
+    modelContextCatalog: ModelContextCatalog? = null,
+    modelContextAssembler: ModelContextAssembler? = modelContextCatalog?.let(::ModelContextAssembler),
     taskIds: UuidSequence = UuidSequence(),
     planIds: UuidSequence = UuidSequence(500),
     clock: Clock = TaskFlowIds.FixedClock,
@@ -82,9 +131,14 @@ internal fun createTaskService(
     createTaskServices(
         dataSource = dataSource,
         understanding = understanding,
-        opportunityProvider = opportunityProvider,
+        planningResearch = planningResearch,
+        readToolCatalog = readToolCatalog,
+        readToolExecutor = readToolExecutor,
         planComposer = planComposer,
         planExplainer = planExplainer,
+        conversationAnswerService = conversationAnswerService,
+        modelContextCatalog = modelContextCatalog,
+        modelContextAssembler = modelContextAssembler,
         taskIds = taskIds,
         planIds = planIds,
         clock = clock,
@@ -94,9 +148,14 @@ internal fun createTaskService(
 internal fun createTaskServices(
     dataSource: DataSource,
     understanding: UserMessageUnderstanding,
-    opportunityProvider: OpportunityProvider = RecordingOpportunityProvider(),
+    planningResearch: PlanningResearchCapability = RecordingPlanningResearch(),
+    readToolCatalog: ReadToolCatalog = defaultPlanningReadToolCatalog(),
+    readToolExecutor: ReadToolExecutor = ReadToolExecutor(readToolCatalog),
     planComposer: RecordingPlanComposer = RecordingPlanComposer(),
     planExplainer: RecordingPlanExplainer = RecordingPlanExplainer(),
+    conversationAnswerService: ConversationAnswerService? = null,
+    modelContextCatalog: ModelContextCatalog? = null,
+    modelContextAssembler: ModelContextAssembler? = modelContextCatalog?.let(::ModelContextAssembler),
     taskIds: UuidSequence = UuidSequence(),
     planIds: UuidSequence = UuidSequence(500),
     clock: Clock = TaskFlowIds.FixedClock,
@@ -105,8 +164,10 @@ internal fun createTaskServices(
     val repository = JdbcTaskRepository(dataSource)
     val planningService = PlanningService(
         repository = repository,
-        opportunityProvider = opportunityProvider,
         planValidator = PlanValidator(),
+        planningResearch = planningResearch,
+        readToolCatalog = readToolCatalog,
+        readToolExecutor = readToolExecutor,
         planComposer = planComposer,
         planExplainer = planExplainer,
         clock = clock,
@@ -117,12 +178,75 @@ internal fun createTaskServices(
     val taskService = TaskService(
         repository = repository,
         planningService = planningService,
+        clock = clock,
+    )
+    return TaskServices(taskService, planningService, repository, planComposer, planExplainer)
+}
+
+internal fun createConversationServices(
+    dataSource: DataSource,
+    understanding: UserMessageUnderstanding?,
+    planningResearch: PlanningResearchCapability = RecordingPlanningResearch(),
+    readToolCatalog: ReadToolCatalog = defaultPlanningReadToolCatalog(),
+    readToolExecutor: ReadToolExecutor = ReadToolExecutor(readToolCatalog),
+    planComposer: RecordingPlanComposer = RecordingPlanComposer(),
+    planExplainer: RecordingPlanExplainer = RecordingPlanExplainer(),
+    conversationAnswerService: ConversationAnswerService? = null,
+    taskIds: UuidSequence = UuidSequence(),
+    planIds: UuidSequence = UuidSequence(500),
+    clock: Clock = TaskFlowIds.FixedClock,
+    logger: StructuredLogger? = null,
+): ConversationServices {
+    val repository = JdbcTaskRepository(dataSource)
+    val conversationRepository = JdbcConversationRepository(dataSource)
+    val planningService = PlanningService(
+        repository = repository,
+        planValidator = PlanValidator(),
+        planningResearch = planningResearch,
+        readToolCatalog = readToolCatalog,
+        readToolExecutor = readToolExecutor,
+        planComposer = planComposer,
+        planExplainer = planExplainer,
+        clock = clock,
+        uuidFactory = planIds::next,
+        timeZoneId = "Asia/Shanghai",
+        logger = logger,
+    )
+    val conversationService = ConversationService(
+        conversationRepository = conversationRepository,
+        taskRepository = repository,
+        planningService = planningService,
         understanding = understanding,
+        conversationAnswerService = conversationAnswerService,
         clock = clock,
         uuidFactory = taskIds::next,
         logger = logger,
     )
-    return TaskServices(taskService, planningService, repository, planComposer, planExplainer)
+    val responseRunWorker = ResponseRunWorker(
+        repository = conversationRepository,
+        processor = ConversationTurnProcessor(
+            conversationRepository = conversationRepository,
+            taskRepository = repository,
+            understanding = understanding,
+            conversationAnswerService = conversationAnswerService,
+            planningService = planningService,
+            clock = clock,
+            uuidFactory = taskIds::next,
+            timeZoneId = "Asia/Shanghai",
+        ),
+        resultConsumer = ResponseRunResultConsumer(conversationRepository, repository, clock),
+        config = ResponseRunWorkerConfig(
+            enabled = true,
+            pollInterval = Duration.ofMillis(10),
+            leaseDuration = Duration.ofSeconds(30),
+            heartbeatInterval = Duration.ofSeconds(10),
+            retryBackoff = Duration.ZERO,
+            maxAttempts = 3,
+        ),
+        clock = clock,
+        workerId = "test-response-run-worker",
+    )
+    return ConversationServices(conversationService, planningService, repository, planComposer, planExplainer, responseRunWorker)
 }
 
 internal data class TaskServices(
@@ -132,6 +256,21 @@ internal data class TaskServices(
     val planComposer: RecordingPlanComposer,
     val planExplainer: RecordingPlanExplainer,
 )
+
+internal data class ConversationServices(
+    val conversationService: ConversationService,
+    val planningService: PlanningService,
+    val repository: JdbcTaskRepository,
+    val planComposer: RecordingPlanComposer,
+    val planExplainer: RecordingPlanExplainer,
+    val responseRunWorker: ResponseRunWorker,
+)
+
+internal suspend fun ConversationServices.drainResponseRuns(maxRuns: Int = 8) {
+    repeat(maxRuns) {
+        if (!responseRunWorker.runOnce()) return
+    }
+}
 
 internal class ScriptedUnderstanding(
     private vararg val steps: suspend (UnderstandMessageRequest) -> UnderstandMessageResult,
@@ -144,6 +283,189 @@ internal class ScriptedUnderstanding(
         return steps[index](context)
     }
 }
+
+internal class RecordingConversationDecision(
+    private vararg val steps: suspend (ConversationDecisionRequest) -> ConversationDecisionResult,
+) : ConversationDecisionCapability {
+    val requests = mutableListOf<ConversationDecisionRequest>()
+
+    override suspend fun decide(request: ConversationDecisionRequest): ConversationDecisionResult {
+        requests += request
+        val index = requests.lastIndex.coerceAtMost(steps.lastIndex)
+        return steps[index](request)
+    }
+}
+
+internal fun directConversationDecision(answer: String): ConversationDecisionResult =
+    ConversationDecisionResult(
+        informationNeeds = listOf(
+            InformationNeedProposal(
+                id = "need-model-only",
+                question = answer,
+                mode = InformationNeedMode.MODEL_ONLY,
+            ),
+        ),
+    )
+
+internal fun researchConversationDecision(vararg toolCalls: ReadOnlyToolCallProposal): ConversationDecisionResult =
+    ConversationDecisionResult(
+        informationNeeds = listOf(
+            InformationNeedProposal(
+                id = "need-research",
+                question = "Research current facts",
+                mode = InformationNeedMode.TOOL_REQUIRED,
+                toolCalls = toolCalls.toList(),
+            ),
+        ),
+    )
+
+internal fun noSuitableToolConversationDecision(requestedCapabilityHint: String? = null): ConversationDecisionResult =
+    ConversationDecisionResult(
+        informationNeeds = listOf(
+            InformationNeedProposal(
+                id = "need-no-tool",
+                question = "Research current facts",
+                mode = InformationNeedMode.TOOL_REQUIRED,
+                requestedCapabilityHint = requestedCapabilityHint ?: "external facts",
+            ),
+        ),
+    )
+
+internal fun mixedWeatherAndActivityDecision(vararg toolCalls: ReadOnlyToolCallProposal): ConversationDecisionResult =
+    ConversationDecisionResult(
+        informationNeeds = listOf(
+            InformationNeedProposal(
+                id = "need-weather",
+                question = "确认当前天气",
+                mode = InformationNeedMode.TOOL_REQUIRED,
+                toolCalls = toolCalls.toList(),
+            ),
+            InformationNeedProposal(
+                id = "need-activity",
+                question = "给出下雨时的活动建议",
+                mode = InformationNeedMode.MODEL_ONLY,
+            ),
+        ),
+    )
+
+internal fun toolProposal(
+    key: String,
+    arguments: JsonObject,
+): ReadOnlyToolCallProposal =
+    ReadOnlyToolCallProposal(toolKey = key, arguments = arguments)
+
+internal fun conversationAnswerService(
+    decision: ConversationDecisionCapability,
+    answering: ConversationAnsweringCapability? = RecordingQuestionAnswering(),
+    streamingAnswering: StreamingConversationAnsweringCapability? = answering as? StreamingConversationAnsweringCapability,
+    catalog: ReadToolCatalog = ReadToolCatalog(emptyList()),
+    executor: ReadToolExecutor = ReadToolExecutor(catalog),
+    logger: StructuredLogger? = null,
+): ConversationAnswerService =
+    ConversationAnswerService(
+        conversationDecision = decision,
+        conversationAnswering = answering,
+        streamingConversationAnswering = streamingAnswering,
+        readToolCatalog = catalog,
+        readToolExecutor = executor,
+        logger = logger,
+    )
+
+internal fun defaultPlanningReadToolCatalog(): ReadToolCatalog =
+    ReadToolCatalog(listOf(ControlledPlanningReadTool()))
+
+internal class RecordingPlanningResearch(
+    private vararg val steps: suspend (PlanningResearchRequest) -> PlanningResearchResult,
+) : PlanningResearchCapability {
+    val requests = mutableListOf<PlanningResearchRequest>()
+    var researchFailure: Throwable? = null
+    var proposalFactory: (PlanningResearchRequest) -> List<ReadOnlyToolCallProposal> = {
+        val firstToolKey = it.availableReadTools.firstOrNull()?.toolKey ?: WebSearchKey.value
+        listOf(toolProposal(firstToolKey, JsonObject(emptyMap())))
+    }
+
+    override suspend fun research(request: PlanningResearchRequest): PlanningResearchResult {
+        requests += request
+        researchFailure?.let { throw it }
+        val calls =
+            if (steps.isEmpty()) {
+                proposalFactory(request)
+            } else {
+                val index = requests.lastIndex.coerceAtMost(steps.lastIndex)
+                steps[index](request).toolCalls
+            }
+        return PlanningResearchResult(
+            toolCalls = calls,
+            metadata = PlanModelMetadata(provider = "test", model = "research", promptVersion = "test", providerRequestId = "research"),
+        )
+    }
+}
+
+internal class ControlledPlanningReadTool(
+    key: ReadToolKey = MovieShowtimesKey,
+    private val activityKind: ReadToolActivityKind = ReadToolActivityKind.OtherResearch,
+    private val outcomeFactory: (JsonObject, ReadToolExecutionContext) -> ReadToolOutcome = { _, _ ->
+        ReadToolOutcome.Success(
+            ReadToolEvidencePayload(
+                listOf(
+                    readToolEvidence(
+                        sourceId = "controlled-planning-evidence",
+                        sourceUrl = "controlled://planning-evidence",
+                        sourceKey = key.value,
+                        title = "Late movie screening",
+                        summary = "Controlled opportunity snapshot.",
+                        startAt = TaskFlowIds.Now.plusSeconds(3_600),
+                        endAt = TaskFlowIds.Now.plusSeconds(7_200),
+                        location = "Nanshan",
+                        availability = AvailabilityFact.Available.name,
+                    ),
+                ),
+            ),
+        )
+    },
+) : ReadTool {
+    val requests = mutableListOf<Pair<ReadToolCall, ReadToolExecutionContext>>()
+
+    override val definition: ReadToolDefinition = ReadToolDefinition(
+        key = key,
+        description = "${key.value} planning test tool",
+        argumentHint = "test arguments",
+        activityKind = activityKind,
+    )
+
+    override suspend fun execute(
+        proposedArguments: JsonObject,
+        context: ReadToolExecutionContext,
+    ): ReadToolOutcome {
+        requests += ReadToolCall(definition.key, proposedArguments) to context
+        return outcomeFactory(proposedArguments, context)
+    }
+}
+
+internal fun readToolEvidence(
+    sourceId: String,
+    sourceUrl: String?,
+    sourceKey: String,
+    title: String,
+    summary: String? = null,
+    startAt: Instant? = null,
+    endAt: Instant? = null,
+    location: String? = null,
+    availability: String? = null,
+): ReadToolEvidence =
+    ReadToolEvidence(
+        sourceId = sourceId,
+        sourceUrl = sourceUrl,
+        sourceKey = sourceKey,
+        facts = listOfNotNull(
+            ReadToolFact(ReadToolFactKind.TITLE, ReadToolFactValue.Text(title)),
+            summary?.let { ReadToolFact(ReadToolFactKind.SUMMARY, ReadToolFactValue.Text(it)) },
+            startAt?.let { ReadToolFact(ReadToolFactKind.START_TIME, ReadToolFactValue.Timestamp(it)) },
+            endAt?.let { ReadToolFact(ReadToolFactKind.END_TIME, ReadToolFactValue.Timestamp(it)) },
+            location?.let { ReadToolFact(ReadToolFactKind.LOCATION_NAME, ReadToolFactValue.Text(it)) },
+            availability?.let { ReadToolFact(ReadToolFactKind.AVAILABILITY, ReadToolFactValue.Text(it)) },
+        ),
+    )
 
 internal class RecordingPlanComposer : PlanComposer {
     val contexts = mutableListOf<CreatePlansRequest>()
@@ -193,6 +515,46 @@ internal class RecordingPlanExplainer : PlanExplainer {
     }
 }
 
+internal class RecordingQuestionAnswering : StreamingConversationAnsweringCapability {
+    val requests = mutableListOf<ComposeConversationAnswerRequest>()
+    var answerFailure: Throwable? = null
+    var answerText: String? = null
+    var deltas: List<String>? = null
+    val emittedDeltas = mutableListOf<String>()
+
+    override suspend fun answer(
+        request: ComposeConversationAnswerRequest,
+        onDelta: suspend (String) -> Unit,
+    ): ComposeConversationAnswerResult {
+        requests += request
+        val text = answerText
+            ?: request.informationNeeds.firstOrNull { it.mode == InformationNeedMode.MODEL_ONLY }?.question
+            ?: "Grounded answer from evidence."
+        (deltas ?: listOf(text)).forEach { delta ->
+            emittedDeltas += delta
+            onDelta(delta)
+        }
+        answerFailure?.let { throw it }
+        return ComposeConversationAnswerResult(
+            answer = deltas?.joinToString(separator = "") ?: text,
+            coverage = request.informationNeeds.map { need ->
+                val used = need.evidenceSourceIds.takeIf { ids ->
+                    need.mode == InformationNeedMode.TOOL_REQUIRED && ids.isNotEmpty()
+                }.orEmpty()
+                AnswerNeedCoveragePayload(
+                    needId = need.id,
+                    status = if (need.mode == InformationNeedMode.TOOL_REQUIRED && need.evidenceSourceIds.isEmpty()) {
+                        AnswerNeedCoverageStatus.UNRESOLVED
+                    } else {
+                        AnswerNeedCoverageStatus.ANSWERED
+                    },
+                    usedEvidenceSourceIds = used,
+                )
+            },
+        )
+    }
+}
+
 internal class RecordingOpportunityProvider : OpportunityProvider {
     val requests = mutableListOf<OpportunityRequest>()
     var discoverFailure: Throwable? = null
@@ -213,7 +575,7 @@ internal class RecordingOpportunityProvider : OpportunityProvider {
         )
     }
 
-    override fun discover(request: OpportunityRequest): List<Opportunity> {
+    override suspend fun discover(request: OpportunityRequest): List<Opportunity> {
         requests += request
         discoverFailure?.let { throw it }
         return opportunityFactory(request)
@@ -223,22 +585,24 @@ internal class RecordingOpportunityProvider : OpportunityProvider {
 internal fun planningUnavailable(): Throwable = CapabilityUnavailableException()
 
 internal fun understandingOutcome(
+    turnIntent: TurnIntent = TurnIntent.Planning,
     intentPatch: String? = null,
-    changes: List<RequirementChangeProposal>,
+    changes: List<ConstraintDeltaProposal>,
     clarificationNeeded: Boolean = false,
     questionDraft: String? = null,
+    selectedContextKeys: List<String> = emptyList(),
 ): UnderstandMessageResult =
     UnderstandMessageResult(
-        userIntent = UserIntent.PlanRequest,
-        intentPatch = intentPatch,
-        requirementChanges = changes,
+        turnIntent = turnIntent,
+        planningGoalPatch = intentPatch,
+        constraintDeltas = changes,
         clarification = ClarificationProposal(
             needed = clarificationNeeded,
             missingInformation = if (clarificationNeeded) listOf("details") else emptyList(),
             reasonCategory = if (clarificationNeeded) ClarificationReasonCategory.MissingRequiredInformation else ClarificationReasonCategory.None,
             questionDraft = questionDraft,
         ),
-        contextSelection = ContextSelectionProposal(),
+        contextSelection = ContextSelectionProposal(selectedKeys = selectedContextKeys),
         metadata = UnderstandingMetadata(
             provider = "test",
             model = "understanding",
@@ -253,8 +617,9 @@ internal fun activityDomainChange(
     value: String,
     evidenceText: String,
     strength: AiRequirementStrength = AiRequirementStrength.Must,
-): RequirementChangeProposal =
-    RequirementChangeProposal(
+): ConstraintDeltaProposal =
+    ConstraintDeltaProposal(
+        operation = ConstraintDeltaOperation.Upsert,
         kind = AiRequirementKind.ActivityDomain,
         value = AiRequirementValue.ActivityDomain(value),
         strength = strength,
@@ -265,11 +630,48 @@ internal fun locationChange(
     text: String,
     evidenceText: String,
     strength: AiRequirementStrength = AiRequirementStrength.Prefer,
-): RequirementChangeProposal =
-    RequirementChangeProposal(
+): ConstraintDeltaProposal =
+    ConstraintDeltaProposal(
+        operation = ConstraintDeltaOperation.Upsert,
         kind = AiRequirementKind.Location,
         value = AiRequirementValue.Location(text),
         strength = strength,
+        evidenceText = evidenceText,
+    )
+
+internal fun budgetChange(
+    wholeUnits: Long,
+    evidenceText: String,
+    currencyCode: String? = "CNY",
+    strength: AiRequirementStrength = AiRequirementStrength.Must,
+): ConstraintDeltaProposal =
+    ConstraintDeltaProposal(
+        operation = ConstraintDeltaOperation.Upsert,
+        kind = AiRequirementKind.BudgetLimit,
+        value = AiRequirementValue.BudgetLimit(wholeUnits = wholeUnits, currencyCode = currencyCode),
+        strength = strength,
+        evidenceText = evidenceText,
+    )
+
+internal fun commuteLimitChange(
+    maxMinutes: Int,
+    evidenceText: String,
+    strength: AiRequirementStrength = AiRequirementStrength.Must,
+): ConstraintDeltaProposal =
+    ConstraintDeltaProposal(
+        operation = ConstraintDeltaOperation.Upsert,
+        kind = AiRequirementKind.CommuteLimit,
+        value = AiRequirementValue.CommuteLimit(maxMinutes = maxMinutes),
+        strength = strength,
+        evidenceText = evidenceText,
+    )
+
+internal fun removeBudget(evidenceText: String = ""): ConstraintDeltaProposal =
+    ConstraintDeltaProposal(
+        operation = ConstraintDeltaOperation.Remove,
+        kind = AiRequirementKind.BudgetLimit,
+        value = null,
+        strength = null,
         evidenceText = evidenceText,
     )
 
@@ -338,6 +740,8 @@ internal fun opportunity(
     activityMode: ActivityModeValue = ActivityModeValue.OutOfHome,
     location: String = "Futian",
     topics: String = "movie,cinema",
+    price: MoneyFact? = MoneyFact(180, "CNY"),
+    commute: DurationFact? = DurationFact(18),
     validUntil: Instant = TaskFlowIds.Now.plusSeconds(86_400),
 ): Opportunity =
     Opportunity(
@@ -352,8 +756,8 @@ internal fun opportunity(
             endTime = TaskFlowIds.Now.plusSeconds(7_200),
             location = LocationFact(location, location.lowercase()),
             activityMode = activityMode,
-            price = MoneyFact(180, "CNY"),
-            commute = DurationFact(18),
+            price = price,
+            commute = commute,
             availability = AvailabilityFact.Available,
             attributes = mapOf("topics" to FactValue.Text(topics), "locations" to FactValue.Text(location)),
         ),

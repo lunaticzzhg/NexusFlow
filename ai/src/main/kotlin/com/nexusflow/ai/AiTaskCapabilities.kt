@@ -1,14 +1,22 @@
 package com.nexusflow.ai
 
+import com.nexusflow.ai.answer.StructuredConversationAnswerer
+import com.nexusflow.ai.answer.StreamingConversationAnswerer
+import com.nexusflow.ai.conversation.StructuredConversationDecision
 import com.nexusflow.ai.planner.StructuredPlanComposer
 import com.nexusflow.ai.planner.StructuredPlanExplainer
+import com.nexusflow.ai.planner.StructuredPlanningResearch
 import com.nexusflow.ai.provider.StructuredModelProvider
+import com.nexusflow.ai.provider.StreamingTextModelProvider
 import com.nexusflow.ai.provider.deepseek.DeepSeekStructuredModelProvider
 import com.nexusflow.ai.provider.openai.OpenAiStructuredModelProvider
 import com.nexusflow.ai.provider.qwen.QwenStructuredModelProvider
 import com.nexusflow.ai.understanding.StructuredUserMessageUnderstanding
+import com.nexusflow.contracts.backendai.answer.ConversationAnsweringCapability
+import com.nexusflow.contracts.backendai.conversation.ConversationDecisionCapability
 import com.nexusflow.contracts.backendai.planning.PlanComposer
 import com.nexusflow.contracts.backendai.planning.PlanExplainer
+import com.nexusflow.contracts.backendai.planning.PlanningResearchCapability
 import com.nexusflow.contracts.backendai.understanding.UserMessageUnderstanding
 import com.nexusflow.observability.StructuredLogger
 import io.ktor.client.HttpClient
@@ -30,6 +38,9 @@ enum class AiTaskCapabilityProvider {
 data class AiTaskCapabilities(
     val structuredProvider: StructuredModelProvider,
     val understanding: UserMessageUnderstanding,
+    val conversationDecision: ConversationDecisionCapability,
+    val conversationAnswering: ConversationAnsweringCapability,
+    val planningResearch: PlanningResearchCapability,
     val planComposer: PlanComposer,
     val planExplainer: PlanExplainer,
 )
@@ -40,9 +51,17 @@ fun createAiTaskCapabilities(
     logger: StructuredLogger,
 ): AiTaskCapabilities {
     val structuredProvider = config.createProvider(client, logger)
+    val conversationAnswering = if (structuredProvider is StreamingTextModelProvider) {
+        StreamingConversationAnswerer(structuredProvider)
+    } else {
+        StructuredConversationAnswerer(structuredProvider, logger = logger)
+    }
     return AiTaskCapabilities(
         structuredProvider = structuredProvider,
         understanding = StructuredUserMessageUnderstanding(structuredProvider, logger = logger),
+        conversationDecision = StructuredConversationDecision(structuredProvider, logger = logger),
+        conversationAnswering = conversationAnswering,
+        planningResearch = StructuredPlanningResearch(structuredProvider, logger = logger),
         planComposer = StructuredPlanComposer(structuredProvider, logger = logger),
         planExplainer = StructuredPlanExplainer(structuredProvider, logger = logger),
     )

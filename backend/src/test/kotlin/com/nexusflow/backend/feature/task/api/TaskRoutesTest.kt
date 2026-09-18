@@ -1,30 +1,43 @@
 package com.nexusflow.backend.feature.task.api
 
-import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
-import com.nexusflow.backend.feature.task.RecordingOpportunityProvider
 import com.nexusflow.backend.core.http.configureHttpPlatform
 import com.nexusflow.backend.core.identity.ActorContext
 import com.nexusflow.backend.core.identity.ActorResolver
 import com.nexusflow.backend.core.identity.UnauthenticatedException
+import com.nexusflow.backend.core.readtool.ReadToolCatalog
+import com.nexusflow.backend.core.readtool.ReadToolEvidencePayload
+import com.nexusflow.backend.core.readtool.ReadToolOutcome
+import com.nexusflow.backend.feature.conversation.api.conversationRoutes
+import com.nexusflow.backend.feature.task.ControlledPlanningReadTool
 import com.nexusflow.backend.feature.task.ScriptedUnderstanding
 import com.nexusflow.backend.feature.task.TaskFlowIds
 import com.nexusflow.backend.feature.task.activityDomainChange
+import com.nexusflow.backend.feature.task.application.readtool.MovieShowtimesKey
 import com.nexusflow.backend.feature.task.cleanMigrateAndSeed
+import com.nexusflow.backend.feature.task.createConversationServices
 import com.nexusflow.backend.feature.task.createTaskServices
+import com.nexusflow.backend.feature.task.drainResponseRuns
 import com.nexusflow.backend.feature.task.locationChange
 import com.nexusflow.backend.feature.task.postgresDataSource
+import com.nexusflow.backend.feature.task.readToolEvidence
 import com.nexusflow.backend.feature.task.understandingOutcome
-import com.nexusflow.contracts.appbackend.task.CreateTaskRequest
 import com.nexusflow.contracts.appbackend.common.KResponse
+import com.nexusflow.contracts.appbackend.conversation.CreateConversationRequest
+import com.nexusflow.contracts.appbackend.conversation.CreateConversationResponse
+import com.nexusflow.contracts.appbackend.conversation.ConversationDetailResponse
+import com.nexusflow.contracts.appbackend.conversation.ResponseRunStatusResponse
+import com.nexusflow.contracts.appbackend.conversation.SendConversationMessageRequest
+import com.nexusflow.contracts.appbackend.conversation.SendConversationMessageResponse
 import com.nexusflow.contracts.appbackend.task.PlanningStatus
 import com.nexusflow.contracts.appbackend.task.RequirementKind
 import com.nexusflow.contracts.appbackend.task.RequirementStrength
 import com.nexusflow.contracts.appbackend.task.RequirementValueResponse
-import com.nexusflow.contracts.appbackend.task.SendTaskMessageRequest
 import com.nexusflow.contracts.appbackend.task.TaskDetailResponse
 import com.nexusflow.contracts.appbackend.task.UpdateRequirementRequest
+import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.delete
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.put
@@ -48,11 +61,11 @@ import kotlin.test.assertNotNull
 
 class TaskRoutesTest {
     @Test
-    fun `task routes expose message requirement and plan selection flow without removed generation endpoints`() {
+    fun `task routes mutate conversation linked planning task while task message route is removed`() {
         val dataSource = postgresDataSource("Task routes")
         try {
             cleanMigrateAndSeed(dataSource)
-            val services = createTaskServices(
+            val conversationServices = createConversationServices(
                 dataSource = dataSource,
                 understanding = ScriptedUnderstanding(
                     {
@@ -68,36 +81,50 @@ class TaskRoutesTest {
                     },
                 ),
             )
+            val taskServices = createTaskServices(
+                dataSource = dataSource,
+                readToolCatalog = ReadToolCatalog(listOf(ControlledPlanningReadTool())),
+                understanding = ScriptedUnderstanding({ understandingOutcome(changes = emptyList()) }),
+            )
             testApplication {
                 application {
                     configureHttpPlatform()
-                    routing { taskRoutes(services.taskService, services.planningService, HeaderActorResolver) }
+                    routing {
+                        conversationRoutes(conversationServices.conversationService, HeaderActorResolver)
+                        taskRoutes(taskServices.taskService, taskServices.planningService, HeaderActorResolver)
+                    }
                 }
 
-                val created = postJson<CreateTaskRequest, TaskDetailResponse>(
-                    "/v1/tasks",
-                    CreateTaskRequest("route-create", "Find a movie near Futian", "Asia/Shanghai"),
+                val created = postJson<CreateConversationRequest, CreateConversationResponse>(
+                    "/v1/conversations",
+                    CreateConversationRequest("route-create", "Find a movie near Futian", "Asia/Shanghai"),
                 )
-                assertEquals(2, created.data.task.revision)
-                assertEquals(2, created.data.requirements.size)
-                assertEquals(1, created.data.plans.size)
+                conversationServices.drainResponseRuns()
+                val createdDetail = getJson<ConversationDetailResponse>("/v1/conversations/${created.data.conversation.id}")
+                val currentTask = createdDetail.data.currentTask!!
+                assertEquals(2, currentTask.task.revision)
+                assertEquals(2, currentTask.requirements.size)
+                assertEquals(1, currentTask.plans.size)
                 assertFalse(created.rawBody.contains("planningRun"))
                 assertFalse(created.rawBody.contains("constraint"))
 
-                val selected = postEmpty<TaskDetailResponse>("/v1/tasks/${created.data.task.id}/plans/${created.data.plans.single().id}/select")
-                assertEquals(created.data.plans.single().id, selected.data.task.selectedPlanId)
+                val selected = postEmpty<TaskDetailResponse>("/v1/tasks/${currentTask.task.id}/plans/${currentTask.plans.single().id}/select")
+                assertEquals(currentTask.plans.single().id, selected.data.task.selectedPlanId)
 
-                val afterMessage = postJson<SendTaskMessageRequest, TaskDetailResponse>(
-                    "/v1/tasks/${created.data.task.id}/messages",
-                    SendTaskMessageRequest("route-message", "Actually make it sports", "Asia/Shanghai"),
+                val afterMessage = postJson<SendConversationMessageRequest, SendConversationMessageResponse>(
+                    "/v1/conversations/${created.data.conversation.id}/messages",
+                    SendConversationMessageRequest("route-message", "Actually make it sports", "Asia/Shanghai"),
                 )
-                assertEquals(3, afterMessage.data.task.revision)
-                assertEquals(null, afterMessage.data.task.selectedPlanId)
-                assertEquals(1, afterMessage.data.plans.size)
+                conversationServices.drainResponseRuns()
+                val afterMessageDetail = getJson<ConversationDetailResponse>("/v1/conversations/${afterMessage.data.conversation.id}")
+                val changedTask = afterMessageDetail.data.currentTask!!
+                assertEquals(3, changedTask.task.revision)
+                assertEquals(null, changedTask.task.selectedPlanId)
+                assertEquals(0, changedTask.plans.size)
 
-                val locationId = afterMessage.data.requirements.single { it.kind == RequirementKind.Location }.id
+                val locationId = changedTask.requirements.single { it.kind == RequirementKind.Location }.id
                 val afterPut = putJson<UpdateRequirementRequest>(
-                    "/v1/tasks/${created.data.task.id}/requirements/$locationId",
+                    "/v1/tasks/${currentTask.task.id}/requirements/$locationId",
                     UpdateRequirementRequest(
                         kind = RequirementKind.Location,
                         value = RequirementValueResponse.Location("Nanshan"),
@@ -105,20 +132,14 @@ class TaskRoutesTest {
                     ),
                 )
                 assertEquals(4, afterPut.data.task.revision)
-                assertEquals(1, afterPut.data.plans.size)
+                assertEquals(null, afterPut.data.task.selectedPlanId)
 
-                val selectedAgain = postEmpty<TaskDetailResponse>(
-                    "/v1/tasks/${created.data.task.id}/plans/${afterPut.data.plans.single().id}/select",
-                )
-                assertNotNull(selectedAgain.data.task.selectedPlanId)
-
-                val afterDelete = deleteJson<TaskDetailResponse>("/v1/tasks/${created.data.task.id}/requirements/$locationId")
+                val afterDelete = deleteJson<TaskDetailResponse>("/v1/tasks/${currentTask.task.id}/requirements/$locationId")
                 assertEquals(5, afterDelete.data.task.revision)
                 assertEquals(null, afterDelete.data.task.selectedPlanId)
                 assertEquals(1, afterDelete.data.requirements.size)
-                assertEquals(1, afterDelete.data.plans.size)
 
-                val removedRouteResponse = client.post("/v1/tasks/${created.data.task.id}/planning-runs") {
+                val removedRouteResponse = client.post("/v1/tasks/${currentTask.task.id}/planning-runs") {
                     actor()
                     contentType(ContentType.Application.Json)
                     setBody("""{"clientRequestId":"removed"}""")
@@ -131,14 +152,14 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `planning empty and post commit understanding unavailable are returned as successful detail responses`() {
+    fun `planning empty and post commit understanding unavailable are returned through conversation responses`() {
         val dataSource = postgresDataSource("Task routes outcomes")
         try {
             cleanMigrateAndSeed(dataSource)
-            val emptyProvider = RecordingOpportunityProvider().apply { opportunityFactory = { emptyList() } }
-            val services = createTaskServices(
+            val emptyPlanningTool = ControlledPlanningReadTool(outcomeFactory = { _, _ -> ReadToolOutcome.Empty })
+            val services = createConversationServices(
                 dataSource = dataSource,
-                opportunityProvider = emptyProvider,
+                readToolCatalog = ReadToolCatalog(listOf(emptyPlanningTool)),
                 understanding = ScriptedUnderstanding(
                     {
                         understandingOutcome(changes = listOf(activityDomainChange("movie", "movie")))
@@ -151,22 +172,26 @@ class TaskRoutesTest {
             testApplication {
                 application {
                     configureHttpPlatform()
-                    routing { taskRoutes(services.taskService, services.planningService, HeaderActorResolver) }
+                    routing { conversationRoutes(services.conversationService, HeaderActorResolver) }
                 }
 
-                val created = postJson<CreateTaskRequest, TaskDetailResponse>(
-                    "/v1/tasks",
-                    CreateTaskRequest("route-no-candidates", "Find a movie", "Asia/Shanghai"),
+                val created = postJson<CreateConversationRequest, CreateConversationResponse>(
+                    "/v1/conversations",
+                    CreateConversationRequest("route-no-candidates", "Find a movie", "Asia/Shanghai"),
                 )
-                assertEquals(PlanningStatus.NoCandidates, created.data.planning.status)
-                assertEquals(emptyList(), created.data.plans)
+                services.drainResponseRuns()
+                val createdDetail = getJson<ConversationDetailResponse>("/v1/conversations/${created.data.conversation.id}")
+                assertEquals(PlanningStatus.Idle, createdDetail.data.currentTask!!.planning.status)
+                assertEquals(emptyList(), createdDetail.data.currentTask!!.plans)
 
-                val sent = postJson<SendTaskMessageRequest, TaskDetailResponse>(
-                    "/v1/tasks/${created.data.task.id}/messages",
-                    SendTaskMessageRequest("route-pending", "Near Futian", "Asia/Shanghai"),
+                val sent = postJson<SendConversationMessageRequest, SendConversationMessageResponse>(
+                    "/v1/conversations/${created.data.conversation.id}/messages",
+                    SendConversationMessageRequest("route-pending", "Near Futian", "Asia/Shanghai"),
                 )
-                assertEquals(PlanningStatus.Unavailable, sent.data.planning.status)
-                val pending = sent.data.messages.single { it.clientMessageId == "route-pending" }
+                services.drainResponseRuns()
+                val sentDetail = getJson<ConversationDetailResponse>("/v1/conversations/${sent.data.conversation.id}")
+                assertEquals(ResponseRunStatusResponse.Completed, sentDetail.data.conversation.responseRuns.last().status)
+                val pending = sent.data.conversation.messages.single { it.clientMessageId == "route-pending" }
                 assertEquals(null, pending.understoodAt)
             }
         } finally {
@@ -175,18 +200,33 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `no feasible plan is returned as successful detail response`() {
+    fun `no feasible plan is returned as successful conversation response`() {
         val dataSource = postgresDataSource("Task routes no feasible")
         try {
             cleanMigrateAndSeed(dataSource)
-            val movieProvider = RecordingOpportunityProvider().apply {
-                opportunityFactory = {
-                    listOf(com.nexusflow.backend.feature.task.opportunity(id = "00000000-0000-0000-0000-000000000401"))
-                }
-            }
-            val services = createTaskServices(
+            val movieTool = ControlledPlanningReadTool(
+                outcomeFactory = { _, _ ->
+                    ReadToolOutcome.Success(
+                        ReadToolEvidencePayload(
+                            listOf(
+                                readToolEvidence(
+                                    "movie-1",
+                                    "controlled://movie",
+                                    MovieShowtimesKey.value,
+                                    "Late movie screening",
+                                    startAt = TaskFlowIds.Now.plusSeconds(3_600),
+                                    endAt = TaskFlowIds.Now.plusSeconds(7_200),
+                                    location = "Nanshan",
+                                    availability = "Available",
+                                ),
+                            ),
+                        ),
+                    )
+                },
+            )
+            val services = createConversationServices(
                 dataSource = dataSource,
-                opportunityProvider = movieProvider,
+                readToolCatalog = ReadToolCatalog(listOf(movieTool)),
                 understanding = ScriptedUnderstanding({
                     understandingOutcome(changes = listOf(activityDomainChange("sports", "sports")))
                 }),
@@ -194,16 +234,18 @@ class TaskRoutesTest {
             testApplication {
                 application {
                     configureHttpPlatform()
-                    routing { taskRoutes(services.taskService, services.planningService, HeaderActorResolver) }
+                    routing { conversationRoutes(services.conversationService, HeaderActorResolver) }
                 }
 
-                val created = postJson<CreateTaskRequest, TaskDetailResponse>(
-                    "/v1/tasks",
-                    CreateTaskRequest("route-no-feasible", "Find sports", "Asia/Shanghai"),
+                val created = postJson<CreateConversationRequest, CreateConversationResponse>(
+                    "/v1/conversations",
+                    CreateConversationRequest("route-no-feasible", "Find sports", "Asia/Shanghai"),
                 )
+                services.drainResponseRuns()
+                val createdDetail = getJson<ConversationDetailResponse>("/v1/conversations/${created.data.conversation.id}")
 
-                assertEquals(PlanningStatus.NoFeasiblePlan, created.data.planning.status)
-                assertEquals(emptyList(), created.data.plans)
+                assertEquals(PlanningStatus.Idle, createdDetail.data.currentTask!!.planning.status)
+                assertEquals(emptyList(), createdDetail.data.currentTask!!.plans)
             }
         } finally {
             dataSource.close()
@@ -224,6 +266,13 @@ class TaskRoutesTest {
 
     private suspend inline fun <reified T> ApplicationTestBuilder.postEmpty(path: String): DecodedResponse<T> {
         val response = client.post(path) {
+            actor()
+        }
+        return response.decode()
+    }
+
+    private suspend inline fun <reified T> ApplicationTestBuilder.getJson(path: String): DecodedResponse<T> {
+        val response = client.get(path) {
             actor()
         }
         return response.decode()

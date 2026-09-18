@@ -75,6 +75,42 @@ class PlanValidatorTest {
     }
 
     @Test
+    fun `must budget rejects selected opportunity with unknown price`() {
+        val result = PlanValidator().validate(
+            PlanningContextSnapshot(
+                task = task,
+                requirements = listOf(
+                    requirement(RequirementKind.BudgetLimit, RequirementValue.BudgetLimit(300, "CNY"), RequirementStrength.Must),
+                ),
+                opportunities = listOf(opportunity(price = null)),
+                referenceTime = referenceTime,
+            ),
+            listOf(PlanDraft(planId("00000000-0000-0000-0000-000000000201"), PlanDirection.BestMatch, listOf(opportunity.id))),
+        )
+
+        assertEquals(emptyList(), result.plans)
+        assertTrue(result.failures.any { it.code == PlanValidationFailureCode.MustBudgetLimitRejected })
+    }
+
+    @Test
+    fun `must commute rejects selected opportunity with unknown commute`() {
+        val result = PlanValidator().validate(
+            PlanningContextSnapshot(
+                task = task,
+                requirements = listOf(
+                    requirement(RequirementKind.CommuteLimit, RequirementValue.CommuteLimit(30), RequirementStrength.Must),
+                ),
+                opportunities = listOf(opportunity(commute = null)),
+                referenceTime = referenceTime,
+            ),
+            listOf(PlanDraft(planId("00000000-0000-0000-0000-000000000201"), PlanDirection.BestMatch, listOf(opportunity.id))),
+        )
+
+        assertEquals(emptyList(), result.plans)
+        assertTrue(result.failures.any { it.code == PlanValidationFailureCode.MustCommuteLimitRejected })
+    }
+
+    @Test
     fun `partial validation keeps valid plans and reports rejected drafts`() {
         val secondOpportunity = opportunity(
             id = opportunityId("00000000-0000-0000-0000-000000000102"),
@@ -161,6 +197,8 @@ class PlanValidatorTest {
     private fun opportunity(
         id: OpportunityId = opportunityId("00000000-0000-0000-0000-000000000101"),
         title: String = "Liverpool supporters pub screening",
+        price: MoneyFact? = MoneyFact(180, "CNY"),
+        commute: DurationFact? = DurationFact(18),
     ): Opportunity =
         Opportunity(
             id = id,
@@ -174,8 +212,8 @@ class PlanValidatorTest {
                 endTime = referenceTime.plusSeconds(7_200),
                 location = LocationFact("Futian Sports Bar", "futian sports bar"),
                 activityMode = ActivityModeValue.OutOfHome,
-                price = MoneyFact(180, "CNY"),
-                commute = DurationFact(18),
+                price = price,
+                commute = commute,
                 availability = AvailabilityFact.Available,
                 attributes = mapOf("topics" to FactValue.Text("sports,football,liverpool")),
             ),

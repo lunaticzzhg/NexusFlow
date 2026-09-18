@@ -31,9 +31,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nexusflow.app.core.design.AppSpacing
+import com.nexusflow.app.feature.task.domain.ConversationDetail
 import com.nexusflow.app.feature.task.domain.PlanId
 import com.nexusflow.app.feature.task.domain.PlanningState
-import com.nexusflow.app.feature.task.domain.TaskDetail
 import com.nexusflow.app.feature.task.domain.TaskMessage
 import kotlinx.coroutines.launch
 import nexusflow.app.composeapp.generated.resources.Res
@@ -66,6 +66,13 @@ internal sealed interface TaskTranscriptItem {
         override val contentType: String = "planning-notice"
     }
 
+    data class ActiveResponse(
+        val response: ActiveResponseUiState,
+    ) : TaskTranscriptItem {
+        override val key: String = "active-response-${response.runId.value}"
+        override val contentType: String = "active-response"
+    }
+
     data class PendingMessage(
         val message: PendingTaskMessage,
     ) : TaskTranscriptItem {
@@ -88,15 +95,17 @@ internal sealed interface TaskTranscriptItem {
 
 @Composable
 internal fun TaskTranscript(
-    detail: TaskDetail,
+    detail: ConversationDetail,
     operation: TaskDetailOperation,
     pendingMessage: PendingTaskMessage?,
     failedMessage: PendingTaskMessage?,
+    activeResponse: ActiveResponseUiState?,
     operationFailure: TaskDetailOperationFailure?,
     expiredPlanIds: Set<PlanId>,
     onSelectPlan: (PlanId) -> Unit,
     onRetryMessage: () -> Unit,
-    onRetryPersistedMessage: (String) -> Unit,
+    onCancelResponseRun: (com.nexusflow.app.feature.task.domain.ResponseRunId) -> Unit,
+    onRetryResponseRun: (com.nexusflow.app.feature.task.domain.ResponseRunId) -> Unit,
     onRetryOperation: (TaskDetailRetryTarget) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -105,10 +114,11 @@ internal fun TaskTranscript(
     var autoFollow by remember { mutableStateOf(true) }
     val isUserDragging by listState.interactionSource.collectIsDraggedAsState()
     val items =
-        remember(detail, pendingMessage, failedMessage, operation, operationFailure) {
+        remember(detail, pendingMessage, failedMessage, activeResponse, operation, operationFailure) {
             detail.toTranscriptItems(
                 pendingMessage = pendingMessage,
                 failedMessage = failedMessage,
+                activeResponse = activeResponse,
                 operation = operation,
                 operationFailure = operationFailure,
             )
@@ -149,8 +159,13 @@ internal fun TaskTranscript(
                     is TaskTranscriptItem.Message ->
                         TaskMessageBubble(
                             message = item.message,
-                            isProcessingRetry = operation == TaskDetailOperation.SendingMessage(item.message.clientMessageId.orEmpty()),
-                            onRetryPersistedMessage = onRetryPersistedMessage,
+                        )
+
+                    is TaskTranscriptItem.ActiveResponse ->
+                        ActiveResponseBubble(
+                            response = item.response,
+                            onCancel = onCancelResponseRun,
+                            onRetry = onRetryResponseRun,
                         )
 
                     is TaskTranscriptItem.PlanningNotice ->
@@ -173,13 +188,15 @@ internal fun TaskTranscript(
                         )
 
                     is TaskTranscriptItem.Planning ->
-                        PlanningSection(
-                            plans = detail.plans,
-                            selectedPlanId = detail.selectedPlanId,
-                            operation = operation,
-                            expiredPlanIds = expiredPlanIds,
-                            onSelectPlan = onSelectPlan,
-                        )
+                        detail.currentTask?.let { task ->
+                            PlanningSection(
+                                plans = task.plans,
+                                selectedPlanId = task.selectedPlanId,
+                                operation = operation,
+                                expiredPlanIds = expiredPlanIds,
+                                onSelectPlan = onSelectPlan,
+                            )
+                        }
                 }
             }
         }
@@ -200,9 +217,10 @@ internal fun TaskTranscript(
     }
 }
 
-private fun TaskDetail.toTranscriptItems(
+private fun ConversationDetail.toTranscriptItems(
     pendingMessage: PendingTaskMessage?,
     failedMessage: PendingTaskMessage?,
+    activeResponse: ActiveResponseUiState?,
     operation: TaskDetailOperation,
     operationFailure: TaskDetailOperationFailure?,
 ): List<TaskTranscriptItem> =
@@ -210,16 +228,26 @@ private fun TaskDetail.toTranscriptItems(
         operationFailure
             ?.takeUnless { it.reason == TaskDetailFailureReason.MessageSendFailed }
             ?.let { add(TaskTranscriptItem.OperationFailure(it)) }
-        messages.forEachIndexed { index, message ->
+        messages.sortedForTranscript().forEachIndexed { index, message ->
             add(TaskTranscriptItem.Message(message = message, index = index))
+            if (activeResponse?.userMessageId == message.id) {
+                add(TaskTranscriptItem.ActiveResponse(activeResponse))
+            }
         }
-        planningState.noticeOrNull()?.let { add(TaskTranscriptItem.PlanningNotice(it)) }
+        currentTask?.planningState?.noticeOrNull()?.let { add(TaskTranscriptItem.PlanningNotice(it)) }
         pendingMessage?.let { add(TaskTranscriptItem.PendingMessage(it)) }
         failedMessage?.let { add(TaskTranscriptItem.FailedMessage(it)) }
-        if (plans.isNotEmpty()) {
+        if (currentTask?.plans.orEmpty().isNotEmpty()) {
             add(TaskTranscriptItem.Planning)
         }
     }
+
+private fun List<TaskMessage>.sortedForTranscript(): List<TaskMessage> =
+    sortedWith(
+        compareBy<TaskMessage> { it.turnIndex ?: Long.MAX_VALUE }
+            .thenBy { if (it.role == com.nexusflow.app.feature.task.domain.MessageRole.User) 0 else 1 }
+            .thenBy { it.id },
+    )
 
 private fun PlanningState.noticeOrNull(): PlanningState? =
     when (this) {

@@ -21,7 +21,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.nexusflow.app.core.design.AppSpacing
+import com.nexusflow.app.feature.task.domain.ConversationId
 import com.nexusflow.app.feature.task.presentation.create.TaskCreateRoute
+import com.nexusflow.app.feature.task.presentation.detail.TaskDetailIdentity
 import com.nexusflow.app.feature.task.presentation.detail.TaskDetailRoute
 import com.nexusflow.app.feature.task.presentation.home.TaskHomeRoute
 import nexusflow.app.composeapp.generated.resources.Res
@@ -76,7 +78,7 @@ fun AppShell(onLogout: () -> Unit) {
             composable<AppHomeDestination> {
                 TaskHomeRoute(
                     onOpenCreate = { navController.navigate(TaskCreateDestination) },
-                    onOpenTask = { taskId -> navController.navigate(TaskDetailDestination(taskId)) },
+                    onOpenConversation = { conversationId -> navController.navigate(ConversationDetailDestination(conversationId)) },
                 )
             }
             composable<AppTasksDestination> {
@@ -99,8 +101,8 @@ fun AppShell(onLogout: () -> Unit) {
             composable<TaskCreateDestination> {
                 TaskCreateRoute(
                     onBackHome = { navController.navigateToTab(AppHomeDestination) },
-                    onOpenTask = { taskId ->
-                        navController.navigate(TaskDetailDestination(taskId)) {
+                    onOpenConversation = { conversationId ->
+                        navController.navigate(ConversationDetailDestination(conversationId)) {
                             popUpTo(TaskCreateDestination) {
                                 inclusive = true
                             }
@@ -108,9 +110,12 @@ fun AppShell(onLogout: () -> Unit) {
                     },
                 )
             }
-            composable<TaskDetailDestination> { entry ->
+            composable<ConversationDetailDestination> { entry ->
                 TaskDetailRoute(
-                    taskId = entry.arguments?.getString("taskId").orEmpty(),
+                    detailIdentity =
+                        TaskDetailIdentity.Conversation(
+                            ConversationId(entry.arguments?.getString("conversationId").orEmpty()),
+                        ),
                     onBackHome = {
                         navController.navigateToTab(AppHomeDestination)
                     },

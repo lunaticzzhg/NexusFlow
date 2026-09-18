@@ -1,6 +1,6 @@
 package com.nexusflow.app.feature.task.presentation.create
 
-import com.nexusflow.app.feature.task.domain.TaskId
+import com.nexusflow.app.feature.task.domain.ConversationId
 
 data class TaskCreateUiState(
     val requestText: String = "",
@@ -29,7 +29,7 @@ sealed interface TaskCreateAction {
 }
 
 sealed interface TaskCreateEffect {
-    data class OpenTask(
-        val taskId: TaskId,
+    data class OpenConversation(
+        val conversationId: ConversationId,
     ) : TaskCreateEffect
 }

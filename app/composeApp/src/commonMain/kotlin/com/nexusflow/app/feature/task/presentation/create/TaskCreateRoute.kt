@@ -35,14 +35,14 @@ import org.koin.compose.viewmodel.koinViewModel
 @Composable
 fun TaskCreateRoute(
     onBackHome: () -> Unit,
-    onOpenTask: (String) -> Unit,
+    onOpenConversation: (String) -> Unit,
     viewModel: TaskCreateViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
     LaunchedEffect(viewModel) {
         viewModel.effects.collect { effect ->
             when (effect) {
-                is TaskCreateEffect.OpenTask -> onOpenTask(effect.taskId.value)
+                is TaskCreateEffect.OpenConversation -> onOpenConversation(effect.conversationId.value)
             }
         }
     }

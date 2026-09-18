@@ -15,6 +15,15 @@ enum class StructuredModelCapability {
 
     @SerialName("plan_explanation")
     ExplainPlans,
+
+    @SerialName("conversation_decision")
+    ConversationDecision,
+
+    @SerialName("conversation_answer")
+    ConversationAnswer,
+
+    @SerialName("planning_research")
+    PlanningResearch,
 }
 
 /**

@@ -10,8 +10,8 @@ import kotlinx.serialization.Serializable
 internal data class UnderstandingModelPayload(
     @SerialName("request")
     val request: UnderstandingModelRequest,
-    @SerialName("coreContext")
-    val coreContext: UnderstandingCoreContextPayload,
+    @SerialName("activePlanning")
+    val activePlanning: ActivePlanningPayload? = null,
     @SerialName("optionalContext")
     val optionalContext: List<ModelContextBlockPayload> = emptyList(),
     @SerialName("availableContextDefinitions")
@@ -29,9 +29,9 @@ internal data class UnderstandingModelRequest(
 )
 
 @Serializable
-internal data class UnderstandingCoreContextPayload(
-    @SerialName("intent")
-    val intent: String,
+internal data class ActivePlanningPayload(
+    @SerialName("goal")
+    val goal: String,
     @SerialName("requirements")
     val requirements: List<RequirementPayload>,
 )
@@ -48,12 +48,12 @@ internal data class RequirementPayload(
 
 @Serializable
 internal data class StructuredUnderstandingPayload(
-    @SerialName("userIntent")
-    val userIntent: String,
-    @SerialName("intentPatch")
-    val intentPatch: String? = null,
-    @SerialName("requirementChanges")
-    val requirementChanges: List<StructuredRequirementPayload>,
+    @SerialName("turnIntent")
+    val turnIntent: String,
+    @SerialName("planningGoalPatch")
+    val planningGoalPatch: String? = null,
+    @SerialName("constraintDeltas")
+    val constraintDeltas: List<StructuredConstraintDeltaPayload>,
     @SerialName("clarification")
     val clarification: StructuredClarificationPayload,
     @SerialName("contextSelection")
@@ -79,13 +79,23 @@ internal data class StructuredClarificationPayload(
 )
 
 @Serializable
-internal data class StructuredRequirementPayload(
+internal data class StructuredConstraintDeltaPayload(
+    @SerialName("operation")
+    val operation: String,
     @SerialName("kind")
     val kind: String,
     @SerialName("strength")
-    val strength: String,
+    val strength: String? = null,
     @SerialName("evidenceText")
     val evidenceText: String,
+    @SerialName("value")
+    val value: StructuredRequirementValuePayload? = null,
+)
+
+@Serializable
+internal data class StructuredRequirementValuePayload(
+    @SerialName("type")
+    val type: String,
     @SerialName("textValue")
     val textValue: String? = null,
     @SerialName("amountWholeUnits")

@@ -1,6 +1,8 @@
 package com.nexusflow.ai.planner
 
 import com.nexusflow.contracts.backendai.common.ModelContextBlockPayload
+import com.nexusflow.contracts.backendai.conversation.ReadOnlyToolCallProposal
+import com.nexusflow.contracts.backendai.conversation.ReadOnlyToolDefinitionPayload
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -54,25 +56,77 @@ internal data class CandidateOpportunityPayload(
     @SerialName("summary")
     val summary: String?,
     @SerialName("location")
-    val location: String,
+    val location: String?,
     @SerialName("activityMode")
-    val activityMode: String,
+    val activityMode: String?,
+    @SerialName("availability")
+    val availability: String? = null,
     @SerialName("startsAt")
-    val startsAt: Instant,
+    val startsAt: Instant?,
     @SerialName("endsAt")
-    val endsAt: Instant,
+    val endsAt: Instant?,
     @SerialName("estimatedCostWholeUnits")
     val estimatedCostWholeUnits: Long?,
     @SerialName("currencyCode")
     val currencyCode: String?,
     @SerialName("commuteMinutes")
     val commuteMinutes: Int?,
-    @SerialName("sourceLabel")
-    val sourceLabel: String,
-    @SerialName("sourceUpdatedAt")
-    val sourceUpdatedAt: Instant,
+    @SerialName("sources")
+    val sources: List<CandidateSourceRefPayload>,
     @SerialName("validUntil")
-    val validUntil: Instant,
+    val validUntil: Instant?,
+)
+
+@Serializable
+internal data class CandidateSourceRefPayload(
+    @SerialName("label")
+    val label: String,
+    @SerialName("uri")
+    val uri: String?,
+    @SerialName("sourceUpdatedAt")
+    val sourceUpdatedAt: Instant?,
+    @SerialName("sourceId")
+    val sourceId: String,
+    @SerialName("authority")
+    val authority: String,
+    @SerialName("factKeys")
+    val factKeys: List<String>,
+)
+
+@Serializable
+internal data class PlanningResearchModelPayload(
+    @SerialName("request")
+    val request: PlanningResearchModelRequest,
+    @SerialName("coreContext")
+    val coreContext: PlanningResearchCoreContextPayload,
+    @SerialName("optionalContext")
+    val optionalContext: List<ModelContextBlockPayload> = emptyList(),
+)
+
+@Serializable
+internal data class PlanningResearchModelRequest(
+    @SerialName("referenceTime")
+    val referenceTime: Instant,
+    @SerialName("timeZoneId")
+    val timeZoneId: String,
+    @SerialName("taskRevision")
+    val taskRevision: Long,
+)
+
+@Serializable
+internal data class PlanningResearchCoreContextPayload(
+    @SerialName("goal")
+    val goal: String,
+    @SerialName("requirements")
+    val requirements: List<PlanningRequirementPayload>,
+    @SerialName("availableReadTools")
+    val availableReadTools: List<ReadOnlyToolDefinitionPayload>,
+)
+
+@Serializable
+internal data class PlanningResearchPayload(
+    @SerialName("toolCalls")
+    val toolCalls: List<ReadOnlyToolCallProposal>,
 )
 
 @Serializable

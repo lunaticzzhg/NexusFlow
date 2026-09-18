@@ -8,11 +8,17 @@ value class TaskId(
     val value: String,
 )
 
+@JvmInline
+value class ConversationId(
+    val value: String,
+)
+
 data class TaskSummary(
     val id: TaskId,
     val intent: String,
     val requirements: List<RequirementSummary>,
     val selectedPlanId: PlanId?,
+    val conversationId: ConversationId? = null,
 )
 
 data class RequirementSummary(
@@ -21,14 +27,14 @@ data class RequirementSummary(
     val strength: RequirementStrength,
 )
 
-data class CreateTaskCommand(
+data class CreateConversationCommand(
     val creationRequestId: String,
     val requestText: String,
     val timeZoneId: String,
 )
 
-data class SendTaskMessageCommand(
-    val taskId: TaskId,
+data class SendConversationMessageCommand(
+    val conversationId: ConversationId,
     val clientMessageId: String,
     val text: String,
     val timeZoneId: String,
@@ -61,6 +67,13 @@ data class TaskDetail(
     val plans: List<TaskPlan>,
     val selectedPlanId: PlanId?,
     val planningState: PlanningState,
+)
+
+data class ConversationDetail(
+    val id: ConversationId,
+    val messages: List<TaskMessage>,
+    val responseRuns: List<ResponseRun> = emptyList(),
+    val currentTask: TaskDetail?,
 )
 
 enum class PlanningState {
@@ -153,12 +166,88 @@ data class TaskMessage(
     val role: MessageRole,
     val content: String,
     val clientMessageId: String?,
+    val turnIndex: Long? = null,
     val understoodAt: Instant?,
 )
 
 enum class MessageRole {
     User,
     Assistant,
+}
+
+data class ResponseRun(
+    val id: ResponseRunId,
+    val userMessageId: String,
+    val turnIndex: Long,
+    val status: ResponseRunStatus,
+    val stage: ResponseRunStage,
+    val attempt: Int,
+    val retryable: Boolean,
+    val assistantMessageId: String?,
+    val failureCategory: ResponseRunFailureCategory?,
+    val createdAt: Instant,
+    val updatedAt: Instant,
+    val completedAt: Instant?,
+)
+
+@JvmInline
+value class ResponseRunId(
+    val value: String,
+)
+
+enum class ResponseRunStage {
+    Turn,
+    Planning,
+}
+
+enum class ResponseRunStatus {
+    Queued,
+    Processing,
+    Streaming,
+    Completed,
+    FailedRetryable,
+    Failed,
+    TimedOut,
+    Cancelled,
+}
+
+enum class ResponseRunFailureCategory {
+    ProviderTemporary,
+    AiInvalidResult,
+    WorkerLost,
+    RunTimeout,
+    InternalInvariant,
+}
+
+data class ResponseRunSnapshot(
+    val run: ResponseRun,
+    val conversation: ConversationDetail,
+    val streamAttempt: Int,
+    val lastSeq: Long,
+    val partialText: String,
+    val activities: List<ResponseRunActivity>,
+    val realtimeSnapshotAvailable: Boolean,
+)
+
+data class ResponseRunActivity(
+    val id: String,
+    val kind: ResponseRunActivityKind,
+    val message: String?,
+    val startedAt: Instant,
+    val completedAt: Instant?,
+    val failed: Boolean,
+)
+
+enum class ResponseRunActivityKind {
+    Thinking,
+    Weather,
+    PlaceSearch,
+    Route,
+    Movie,
+    Sports,
+    Music,
+    Web,
+    OtherResearch,
 }
 
 data class TaskPlan(

@@ -32,6 +32,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.nexusflow.app.core.design.AppSpacing
 import com.nexusflow.app.feature.task.domain.ActivityModeValue
+import com.nexusflow.app.feature.task.domain.ConversationDetail
 import com.nexusflow.app.feature.task.domain.MessageRole
 import com.nexusflow.app.feature.task.domain.PlanDirection
 import com.nexusflow.app.feature.task.domain.PlanId
@@ -40,14 +41,16 @@ import com.nexusflow.app.feature.task.domain.RequirementKind
 import com.nexusflow.app.feature.task.domain.RequirementSource
 import com.nexusflow.app.feature.task.domain.RequirementStrength
 import com.nexusflow.app.feature.task.domain.RequirementValue
+import com.nexusflow.app.feature.task.domain.ResponseRunActivityKind
+import com.nexusflow.app.feature.task.domain.ResponseRunId
 import com.nexusflow.app.feature.task.domain.TaskDetail
 import com.nexusflow.app.feature.task.domain.TaskMessage
 import com.nexusflow.app.feature.task.domain.TaskPlan
 import com.nexusflow.app.feature.task.domain.TaskRequirement
 import nexusflow.app.composeapp.generated.resources.Res
+import nexusflow.app.composeapp.generated.resources.task_detail_conversation_title
 import nexusflow.app.composeapp.generated.resources.task_detail_empty_requirements
 import nexusflow.app.composeapp.generated.resources.task_detail_message_failed
-import nexusflow.app.composeapp.generated.resources.task_detail_message_processing_pending
 import nexusflow.app.composeapp.generated.resources.task_detail_message_retry
 import nexusflow.app.composeapp.generated.resources.task_detail_operation_requirement_failed
 import nexusflow.app.composeapp.generated.resources.task_detail_operation_selection_conflict
@@ -59,6 +62,19 @@ import nexusflow.app.composeapp.generated.resources.task_detail_planning_no_cand
 import nexusflow.app.composeapp.generated.resources.task_detail_planning_no_feasible_plan
 import nexusflow.app.composeapp.generated.resources.task_detail_planning_unavailable
 import nexusflow.app.composeapp.generated.resources.task_detail_requirements
+import nexusflow.app.composeapp.generated.resources.task_detail_response_cancel
+import nexusflow.app.composeapp.generated.resources.task_detail_response_cancelled
+import nexusflow.app.composeapp.generated.resources.task_detail_response_failed
+import nexusflow.app.composeapp.generated.resources.task_detail_response_processing
+import nexusflow.app.composeapp.generated.resources.task_detail_response_retry
+import nexusflow.app.composeapp.generated.resources.task_detail_response_timed_out
+import nexusflow.app.composeapp.generated.resources.task_detail_response_tool_movie
+import nexusflow.app.composeapp.generated.resources.task_detail_response_tool_music
+import nexusflow.app.composeapp.generated.resources.task_detail_response_tool_place
+import nexusflow.app.composeapp.generated.resources.task_detail_response_tool_route
+import nexusflow.app.composeapp.generated.resources.task_detail_response_tool_sports
+import nexusflow.app.composeapp.generated.resources.task_detail_response_tool_weather
+import nexusflow.app.composeapp.generated.resources.task_detail_response_tool_web
 import nexusflow.app.composeapp.generated.resources.task_detail_send
 import nexusflow.app.composeapp.generated.resources.task_detail_send_hint
 import nexusflow.app.composeapp.generated.resources.task_requirement_activity_domain
@@ -82,10 +98,14 @@ import org.jetbrains.compose.resources.stringResource
 
 @Composable
 internal fun TaskHeaderSection(
-    detail: TaskDetail,
+    detail: ConversationDetail,
     onBackHome: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val title =
+        detail.currentTask?.intent
+            ?: detail.messages.firstOrNull { it.role == MessageRole.User }?.content
+            ?: stringResource(Res.string.task_detail_conversation_title)
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(AppSpacing.medium),
@@ -98,12 +118,12 @@ internal fun TaskHeaderSection(
                 Icon(imageVector = Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null)
             }
             Text(
-                text = detail.intent,
+                text = title,
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.weight(1f),
             )
         }
-        RequirementStrip(detail.requirements)
+        detail.currentTask?.let { RequirementStrip(it.requirements) }
     }
 }
 
@@ -179,11 +199,7 @@ internal fun OperationFailureBanner(
 }
 
 @Composable
-internal fun TaskMessageBubble(
-    message: TaskMessage,
-    isProcessingRetry: Boolean,
-    onRetryPersistedMessage: (String) -> Unit,
-) {
+internal fun TaskMessageBubble(message: TaskMessage) {
     val isUser = message.role == MessageRole.User
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -209,18 +225,54 @@ internal fun TaskMessageBubble(
                     modifier = Modifier.padding(AppSpacing.medium),
                 )
             }
-            message.clientMessageId?.takeIf { isUser && message.understoodAt == null }?.let { clientMessageId ->
-                Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.small), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = stringResource(Res.string.task_detail_message_processing_pending),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Button(
-                        onClick = { onRetryPersistedMessage(clientMessageId) },
-                        enabled = !isProcessingRetry,
-                    ) {
-                        Text(stringResource(Res.string.task_detail_message_retry))
+        }
+    }
+}
+
+@Composable
+internal fun ActiveResponseBubble(
+    response: ActiveResponseUiState,
+    onCancel: (ResponseRunId) -> Unit,
+    onRetry: (ResponseRunId) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Start,
+    ) {
+        Surface(
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.widthIn(max = 520.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(AppSpacing.medium),
+                verticalArrangement = Arrangement.spacedBy(AppSpacing.small),
+            ) {
+                val partial = response.partialText.takeIf { it.isNotBlank() }
+                Text(
+                    text = partial ?: response.status.label(),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                response.activities
+                    .filter { it.kind != ResponseRunActivityKind.Thinking && it.completedAt == null }
+                    .forEach { activity ->
+                        Text(
+                            text = activity.kind.label(),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.small)) {
+                    if (response.canCancel) {
+                        Button(onClick = { onCancel(response.runId) }) {
+                            Text(stringResource(Res.string.task_detail_response_cancel))
+                        }
+                    }
+                    if (response.canRetry) {
+                        Button(onClick = { onRetry(response.runId) }) {
+                            Text(stringResource(Res.string.task_detail_response_retry))
+                        }
                     }
                 }
             }
@@ -406,8 +458,8 @@ private fun PlanCard(
 }
 
 @Composable
-internal fun TaskDetail.composerPlaceholder(): String =
-    if (requirements.isEmpty()) {
+internal fun TaskDetail?.composerPlaceholder(): String =
+    if (this == null || requirements.isEmpty()) {
         stringResource(Res.string.task_detail_send_hint)
     } else {
         stringResource(Res.string.task_detail_send_hint)
@@ -472,4 +524,30 @@ private fun RequirementSource.label(): String =
     when (this) {
         RequirementSource.UserExplicit -> stringResource(Res.string.task_requirement_source_user_explicit)
         RequirementSource.SystemDerived -> stringResource(Res.string.task_requirement_source_system_derived)
+    }
+
+@Composable
+private fun ActiveResponseStatus.label(): String =
+    when (this) {
+        ActiveResponseStatus.Queued,
+        ActiveResponseStatus.Thinking,
+        -> stringResource(Res.string.task_detail_response_processing)
+        ActiveResponseStatus.Streaming -> stringResource(Res.string.task_detail_response_processing)
+        ActiveResponseStatus.Failed -> stringResource(Res.string.task_detail_response_failed)
+        ActiveResponseStatus.Cancelled -> stringResource(Res.string.task_detail_response_cancelled)
+        ActiveResponseStatus.TimedOut -> stringResource(Res.string.task_detail_response_timed_out)
+    }
+
+@Composable
+private fun ResponseRunActivityKind.label(): String =
+    when (this) {
+        ResponseRunActivityKind.Thinking -> stringResource(Res.string.task_detail_response_processing)
+        ResponseRunActivityKind.Weather -> stringResource(Res.string.task_detail_response_tool_weather)
+        ResponseRunActivityKind.PlaceSearch -> stringResource(Res.string.task_detail_response_tool_place)
+        ResponseRunActivityKind.Route -> stringResource(Res.string.task_detail_response_tool_route)
+        ResponseRunActivityKind.Movie -> stringResource(Res.string.task_detail_response_tool_movie)
+        ResponseRunActivityKind.Sports -> stringResource(Res.string.task_detail_response_tool_sports)
+        ResponseRunActivityKind.Music -> stringResource(Res.string.task_detail_response_tool_music)
+        ResponseRunActivityKind.Web -> stringResource(Res.string.task_detail_response_tool_web)
+        ResponseRunActivityKind.OtherResearch -> stringResource(Res.string.task_detail_response_tool_web)
     }

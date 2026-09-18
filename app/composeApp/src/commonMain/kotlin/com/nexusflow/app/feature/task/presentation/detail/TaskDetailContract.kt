@@ -1,12 +1,21 @@
 package com.nexusflow.app.feature.task.presentation.detail
 
+import com.nexusflow.app.feature.task.domain.ConversationDetail
+import com.nexusflow.app.feature.task.domain.ConversationId
 import com.nexusflow.app.feature.task.domain.PlanId
 import com.nexusflow.app.feature.task.domain.RequirementId
-import com.nexusflow.app.feature.task.domain.TaskDetail
+import com.nexusflow.app.feature.task.domain.ResponseRunActivity
+import com.nexusflow.app.feature.task.domain.ResponseRunId
 
 data class TaskDetailUiState(
     val content: TaskDetailContent = TaskDetailContent.Uninitialized,
 )
+
+sealed interface TaskDetailIdentity {
+    data class Conversation(
+        val id: ConversationId,
+    ) : TaskDetailIdentity
+}
 
 sealed interface TaskDetailContent {
     data object Uninitialized : TaskDetailContent
@@ -14,11 +23,12 @@ sealed interface TaskDetailContent {
     data object Loading : TaskDetailContent
 
     data class Success(
-        val detail: TaskDetail,
+        val detail: ConversationDetail,
         val draft: String = "",
         val operation: TaskDetailOperation = TaskDetailOperation.Idle,
         val pendingMessage: PendingTaskMessage? = null,
         val failedMessage: PendingTaskMessage? = null,
+        val activeResponse: ActiveResponseUiState? = null,
         val operationFailure: TaskDetailOperationFailure? = null,
         val expiredPlanIds: Set<PlanId> = emptySet(),
     ) : TaskDetailContent
@@ -30,6 +40,26 @@ data class PendingTaskMessage(
     val clientMessageId: String,
     val text: String,
 )
+
+data class ActiveResponseUiState(
+    val runId: ResponseRunId,
+    val userMessageId: String,
+    val turnIndex: Long,
+    val status: ActiveResponseStatus,
+    val partialText: String,
+    val activities: List<ResponseRunActivity>,
+    val canCancel: Boolean,
+    val canRetry: Boolean,
+)
+
+enum class ActiveResponseStatus {
+    Queued,
+    Thinking,
+    Streaming,
+    Failed,
+    Cancelled,
+    TimedOut,
+}
 
 sealed interface TaskDetailOperation {
     data object Idle : TaskDetailOperation
@@ -78,8 +108,12 @@ sealed interface TaskDetailAction {
 
     data object RetryMessage : TaskDetailAction
 
-    data class RetryPersistedMessage(
-        val clientMessageId: String,
+    data class CancelResponseRun(
+        val runId: ResponseRunId,
+    ) : TaskDetailAction
+
+    data class RetryResponseRun(
+        val runId: ResponseRunId,
     ) : TaskDetailAction
 
     data class RemoveRequirement(

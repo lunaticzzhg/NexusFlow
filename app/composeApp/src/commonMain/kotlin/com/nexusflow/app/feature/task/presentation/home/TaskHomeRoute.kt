@@ -23,7 +23,6 @@ import androidx.compose.ui.Modifier
 import com.nexusflow.app.core.design.AppSpacing
 import com.nexusflow.app.core.design.feedback.AppErrorState
 import com.nexusflow.app.core.design.feedback.AppFullScreenLoading
-import com.nexusflow.app.feature.task.domain.TaskId
 import com.nexusflow.app.feature.task.domain.TaskSummary
 import nexusflow.app.composeapp.generated.resources.Res
 import nexusflow.app.composeapp.generated.resources.task_detail_empty_requirements
@@ -43,7 +42,7 @@ import org.koin.compose.viewmodel.koinViewModel
 @Composable
 fun TaskHomeRoute(
     onOpenCreate: () -> Unit,
-    onOpenTask: (String) -> Unit,
+    onOpenConversation: (String) -> Unit,
     viewModel: TaskHomeViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
@@ -53,7 +52,7 @@ fun TaskHomeRoute(
     LaunchedEffect(viewModel) {
         viewModel.effects.collect { effect ->
             when (effect) {
-                is TaskHomeEffect.OpenTask -> onOpenTask(effect.taskId.value)
+                is TaskHomeEffect.OpenConversation -> onOpenConversation(effect.conversationId.value)
             }
         }
     }
@@ -61,7 +60,7 @@ fun TaskHomeRoute(
         state = state,
         onRetry = { viewModel.onAction(TaskHomeAction.Retry) },
         onOpenCreate = onOpenCreate,
-        onOpenTask = { viewModel.onAction(TaskHomeAction.OpenTask(it)) },
+        onOpenSummary = { viewModel.onAction(TaskHomeAction.OpenSummary(it)) },
     )
 }
 
@@ -70,7 +69,7 @@ fun TaskHomeContent(
     state: TaskHomeUiState,
     onRetry: () -> Unit,
     onOpenCreate: () -> Unit,
-    onOpenTask: (TaskId) -> Unit,
+    onOpenSummary: (TaskSummary) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     when (val content = state.content) {
@@ -94,7 +93,7 @@ fun TaskHomeContent(
             TaskHomeSuccess(
                 summaries = content.summaries,
                 onOpenCreate = onOpenCreate,
-                onOpenTask = onOpenTask,
+                onOpenSummary = onOpenSummary,
                 modifier = modifier,
             )
     }
@@ -104,7 +103,7 @@ fun TaskHomeContent(
 private fun TaskHomeSuccess(
     summaries: List<TaskSummary>,
     onOpenCreate: () -> Unit,
-    onOpenTask: (TaskId) -> Unit,
+    onOpenSummary: (TaskSummary) -> Unit,
     modifier: Modifier,
 ) {
     Column(
@@ -124,7 +123,7 @@ private fun TaskHomeSuccess(
         )
         Text(stringResource(Res.string.task_home_latest), style = MaterialTheme.typography.titleLarge)
         summaries.forEach { summary ->
-            TaskSummaryCard(summary = summary, onOpenTask = onOpenTask)
+            TaskSummaryCard(summary = summary, onOpenSummary = onOpenSummary)
         }
         Button(onClick = onOpenCreate, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(Res.string.task_home_create))
@@ -157,10 +156,10 @@ private fun TaskHomeEmpty(
 @Composable
 private fun TaskSummaryCard(
     summary: TaskSummary,
-    onOpenTask: (TaskId) -> Unit,
+    onOpenSummary: (TaskSummary) -> Unit,
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth().clickable { onOpenTask(summary.id) },
+        modifier = Modifier.fillMaxWidth().clickable { onOpenSummary(summary) },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
     ) {
         Column(

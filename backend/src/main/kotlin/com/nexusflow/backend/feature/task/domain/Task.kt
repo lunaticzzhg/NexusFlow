@@ -1,5 +1,6 @@
 package com.nexusflow.backend.feature.task.domain
 
+import com.nexusflow.backend.feature.conversation.domain.ConversationId
 import java.time.Instant
 import java.util.UUID
 
@@ -42,11 +43,11 @@ data class Task(
     val createdAt: Instant,
     val updatedAt: Instant,
     val archivedAt: Instant? = null,
+    val conversationId: ConversationId? = null,
 )
 
 data class TaskDetail(
     val task: Task,
-    val messages: List<TaskMessage>,
     val requirements: List<Requirement>,
     val plans: List<Plan>,
     val selectedContextKeys: List<String> = emptyList(),

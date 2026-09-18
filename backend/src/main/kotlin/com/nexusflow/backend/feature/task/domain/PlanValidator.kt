@@ -77,11 +77,16 @@ class PlanValidator {
         draft: PlanDraft,
         opportunities: List<Opportunity>,
     ): List<PlanValidationFailure> {
-        val totalCost = opportunities.mapNotNull { it.facts.price?.wholeUnits }.sum()
         return context.mustRequirements.mapNotNull { requirement ->
             val value = requirement.value
-            if (value is RequirementValue.BudgetLimit && totalCost > value.wholeUnits) {
-                draft.failure(PlanValidationFailureCode.MustBudgetLimitRejected)
+            if (value is RequirementValue.BudgetLimit) {
+                val prices = opportunities.map { it.facts.price }
+                when {
+                    prices.any { it == null } -> draft.failure(PlanValidationFailureCode.MustBudgetLimitRejected)
+                    prices.sumOf { it?.wholeUnits ?: 0L } > value.wholeUnits ->
+                        draft.failure(PlanValidationFailureCode.MustBudgetLimitRejected)
+                    else -> null
+                }
             } else {
                 null
             }
@@ -117,7 +122,7 @@ class PlanValidator {
                     }
                 is RequirementValue.BudgetLimit -> Unit
                 is RequirementValue.CommuteLimit ->
-                    if (opportunity.facts.commute != null && opportunity.facts.commute.minutes > value.maxMinutes) {
+                    if (opportunity.facts.commute == null || opportunity.facts.commute.minutes > value.maxMinutes) {
                         failures += draft.failure(PlanValidationFailureCode.MustCommuteLimitRejected)
                     }
                 is RequirementValue.ActivityMode ->

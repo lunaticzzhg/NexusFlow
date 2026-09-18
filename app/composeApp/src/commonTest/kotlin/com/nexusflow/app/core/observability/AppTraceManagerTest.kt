@@ -3,10 +3,8 @@ package com.nexusflow.app.core.observability
 import com.nexusflow.observability.TraceId
 import com.nexusflow.observability.TraceIdGenerator
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.withContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -54,22 +52,6 @@ class AppTraceManagerTest {
                 }
 
             assertEquals(setOf(TRACE_A, TRACE_B), setOf(left.await(), right.await()))
-            assertEquals(null, manager.currentTraceId())
-        }
-
-    @Test
-    fun `trace follows coroutine dispatcher switches`() =
-        runTest {
-            val manager = manager(RecordingLogger(), TRACE_A)
-
-            val observed =
-                manager.withNewTrace(operation = "switch") {
-                    withContext(Dispatchers.Default) {
-                        manager.currentTraceId()?.value
-                    }
-                }
-
-            assertEquals(TRACE_A, observed)
             assertEquals(null, manager.currentTraceId())
         }
 

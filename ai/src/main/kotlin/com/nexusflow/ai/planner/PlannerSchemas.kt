@@ -11,9 +11,12 @@ import kotlinx.serialization.json.put
 
 internal const val COMPOSE_PLANS_PROMPT_VERSION = "compose-plans-v1"
 internal const val EXPLAIN_PLANS_PROMPT_VERSION = "explain-plans-v1"
+internal const val PLANNING_RESEARCH_PROMPT_VERSION = "planning-research-v1"
 
 internal const val COMPOSE_PLANS_SCHEMA_NAME = "orbit_m1_plan_composition"
 internal const val EXPLAIN_PLANS_SCHEMA_NAME = "orbit_m1_plan_explanation"
+internal const val PLANNING_RESEARCH_SCHEMA_NAME = "orbit_r2_planning_research"
+internal const val PLANNING_RESEARCH_MAX_TOOL_CALLS = 5
 
 internal val ComposePlansSchema: JsonObject =
     buildJsonObject {
@@ -86,6 +89,46 @@ internal val ExplainPlansSchema: JsonObject =
                                         put("summary", stringSchema())
                                         put("reasons", narrativePointsSchema())
                                         put("tradeoffs", narrativePointsSchema())
+                                    },
+                                )
+                            },
+                        )
+                    },
+                )
+            },
+        )
+    }
+
+internal val PlanningResearchSchema: JsonObject =
+    buildJsonObject {
+        put("type", "object")
+        put("required", jsonArray("toolCalls"))
+        put("additionalProperties", false)
+        put(
+            "properties",
+            buildJsonObject {
+                put(
+                    "toolCalls",
+                    buildJsonObject {
+                        put("type", "array")
+                        put("maxItems", PLANNING_RESEARCH_MAX_TOOL_CALLS)
+                        put(
+                            "items",
+                            buildJsonObject {
+                                put("type", "object")
+                                put("required", jsonArray("toolKey", "arguments"))
+                                put("additionalProperties", false)
+                                put(
+                                    "properties",
+                                    buildJsonObject {
+                                        put("toolKey", stringSchema())
+                                        put(
+                                            "arguments",
+                                            buildJsonObject {
+                                                put("type", "object")
+                                                put("additionalProperties", true)
+                                            },
+                                        )
                                     },
                                 )
                             },

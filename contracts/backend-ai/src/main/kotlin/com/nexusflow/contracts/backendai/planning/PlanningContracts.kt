@@ -3,6 +3,8 @@ package com.nexusflow.contracts.backendai.planning
 import com.nexusflow.contracts.backendai.common.ModelContextBlockPayload
 import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
 import com.nexusflow.contracts.backendai.common.StructuredModelUsage
+import com.nexusflow.contracts.backendai.conversation.ReadOnlyToolCallProposal
+import com.nexusflow.contracts.backendai.conversation.ReadOnlyToolDefinitionPayload
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -13,6 +15,10 @@ fun interface PlanComposer {
 
 fun interface PlanExplainer {
     suspend fun explain(request: ExplainPlansRequest): ExplainPlansResult
+}
+
+fun interface PlanningResearchCapability {
+    suspend fun research(request: PlanningResearchRequest): PlanningResearchResult
 }
 
 /** Backend asks the AI layer to propose plan drafts from Backend-supplied Task facts and verified opportunities. */
@@ -52,6 +58,47 @@ data class PlanningRequirement(
     val strength: PlanningRequirementStrength,
 )
 
+/**
+ * Backend asks the AI layer to propose bounded read-only research calls needed before plan generation.
+ *
+ * The AI only proposes tool keys and JsonObject arguments from Backend-offered definitions. Backend owns validation,
+ * source execution, opportunity projection, provenance, permissions, idempotency, persistence, and side effects.
+ */
+@Serializable
+data class PlanningResearchRequest(
+    @SerialName("planningResearchRequestId")
+    val planningResearchRequestId: String,
+    @SerialName("taskId")
+    val taskId: String,
+    @SerialName("taskRevision")
+    val taskRevision: Long,
+    @SerialName("goal")
+    val goal: String,
+    @SerialName("requirements")
+    val requirements: List<PlanningRequirement>,
+    @SerialName("optionalContext")
+    val optionalContext: List<ModelContextBlockPayload> = emptyList(),
+    @SerialName("availableReadTools")
+    val availableReadTools: List<ReadOnlyToolDefinitionPayload> = emptyList(),
+    @SerialName("referenceTime")
+    val referenceTime: Instant,
+    @SerialName("timeZoneId")
+    val timeZoneId: String,
+    @SerialName("diagnostics")
+    val diagnostics: StructuredModelRequestDiagnostics = StructuredModelRequestDiagnostics(),
+)
+
+/**
+ * Empty proposals are allowed only when no external facts are needed for the current planning request snapshot.
+ */
+@Serializable
+data class PlanningResearchResult(
+    @SerialName("toolCalls")
+    val toolCalls: List<ReadOnlyToolCallProposal>,
+    @SerialName("metadata")
+    val metadata: PlanModelMetadata = PlanModelMetadata(),
+)
+
 @Serializable
 enum class PlanningRequirementStrength {
     @SerialName("must")
@@ -72,25 +119,41 @@ data class CandidateOpportunity(
     @SerialName("summary")
     val summary: String?,
     @SerialName("location")
-    val location: String,
+    val location: String?,
     @SerialName("activityMode")
-    val activityMode: String,
+    val activityMode: String?,
+    @SerialName("availability")
+    val availability: String? = null,
     @SerialName("startsAt")
-    val startsAt: Instant,
+    val startsAt: Instant?,
     @SerialName("endsAt")
-    val endsAt: Instant,
+    val endsAt: Instant?,
     @SerialName("estimatedCostWholeUnits")
     val estimatedCostWholeUnits: Long?,
     @SerialName("currencyCode")
     val currencyCode: String?,
     @SerialName("commuteMinutes")
     val commuteMinutes: Int?,
-    @SerialName("sourceLabel")
-    val sourceLabel: String,
-    @SerialName("sourceUpdatedAt")
-    val sourceUpdatedAt: Instant,
+    @SerialName("sources")
+    val sources: List<CandidateSourceRef>,
     @SerialName("validUntil")
-    val validUntil: Instant,
+    val validUntil: Instant?,
+)
+
+@Serializable
+data class CandidateSourceRef(
+    @SerialName("label")
+    val label: String,
+    @SerialName("uri")
+    val uri: String?,
+    @SerialName("sourceUpdatedAt")
+    val sourceUpdatedAt: Instant?,
+    @SerialName("sourceId")
+    val sourceId: String,
+    @SerialName("authority")
+    val authority: String,
+    @SerialName("factKeys")
+    val factKeys: List<String>,
 )
 
 /**

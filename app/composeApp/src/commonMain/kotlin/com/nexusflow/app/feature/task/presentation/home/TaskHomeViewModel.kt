@@ -27,8 +27,11 @@ class TaskHomeViewModel(
             TaskHomeAction.Retry -> {
                 if (_state.value.content is TaskHomeContent.Failure) load()
             }
-            is TaskHomeAction.OpenTask -> {
-                viewModelScope.launch { _effects.emit(TaskHomeEffect.OpenTask(action.taskId)) }
+            is TaskHomeAction.OpenSummary -> {
+                val conversationId = action.summary.conversationId ?: return
+                viewModelScope.launch {
+                    _effects.emit(TaskHomeEffect.OpenConversation(conversationId))
+                }
             }
         }
     }

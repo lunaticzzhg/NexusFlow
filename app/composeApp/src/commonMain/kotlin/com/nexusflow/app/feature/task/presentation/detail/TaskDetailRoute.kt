@@ -20,9 +20,8 @@ import androidx.compose.ui.Modifier
 import com.nexusflow.app.core.design.AppSpacing
 import com.nexusflow.app.core.design.feedback.AppErrorState
 import com.nexusflow.app.core.design.feedback.AppFullScreenLoading
+import com.nexusflow.app.feature.task.domain.ConversationDetail
 import com.nexusflow.app.feature.task.domain.PlanId
-import com.nexusflow.app.feature.task.domain.TaskDetail
-import com.nexusflow.app.feature.task.domain.TaskId
 import nexusflow.app.composeapp.generated.resources.Res
 import nexusflow.app.composeapp.generated.resources.task_detail_unavailable_body
 import nexusflow.app.composeapp.generated.resources.task_detail_unavailable_title
@@ -32,10 +31,10 @@ import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 
 @Composable
-fun TaskDetailRoute(
-    taskId: String,
+internal fun TaskDetailRoute(
+    detailIdentity: TaskDetailIdentity,
     onBackHome: () -> Unit,
-    viewModel: TaskDetailViewModel = koinViewModel(parameters = { parametersOf(TaskId(taskId)) }),
+    viewModel: TaskDetailViewModel = koinViewModel(parameters = { parametersOf(detailIdentity) }),
 ) {
     val state by viewModel.state.collectAsState()
     LaunchedEffect(viewModel) {
@@ -48,7 +47,8 @@ fun TaskDetailRoute(
         onDraftChanged = { viewModel.onAction(TaskDetailAction.DraftChanged(it)) },
         onSendMessage = { viewModel.onAction(TaskDetailAction.SendMessage) },
         onRetryMessage = { viewModel.onAction(TaskDetailAction.RetryMessage) },
-        onRetryPersistedMessage = { viewModel.onAction(TaskDetailAction.RetryPersistedMessage(it)) },
+        onCancelResponseRun = { viewModel.onAction(TaskDetailAction.CancelResponseRun(it)) },
+        onRetryResponseRun = { viewModel.onAction(TaskDetailAction.RetryResponseRun(it)) },
         onSelectPlan = { viewModel.onAction(TaskDetailAction.SelectPlan(it)) },
         onRetryOperation = { viewModel.onAction(TaskDetailAction.RetryOperation(it)) },
     )
@@ -62,7 +62,8 @@ fun TaskDetailContent(
     onDraftChanged: (String) -> Unit,
     onSendMessage: () -> Unit,
     onRetryMessage: () -> Unit,
-    onRetryPersistedMessage: (String) -> Unit,
+    onCancelResponseRun: (com.nexusflow.app.feature.task.domain.ResponseRunId) -> Unit,
+    onRetryResponseRun: (com.nexusflow.app.feature.task.domain.ResponseRunId) -> Unit,
     onSelectPlan: (PlanId) -> Unit,
     onRetryOperation: (TaskDetailRetryTarget) -> Unit,
     modifier: Modifier = Modifier,
@@ -86,13 +87,15 @@ fun TaskDetailContent(
                 operation = content.operation,
                 pendingMessage = content.pendingMessage,
                 failedMessage = content.failedMessage,
+                activeResponse = content.activeResponse,
                 operationFailure = content.operationFailure,
                 expiredPlanIds = content.expiredPlanIds,
                 onBackHome = onBackHome,
                 onDraftChanged = onDraftChanged,
                 onSendMessage = onSendMessage,
                 onRetryMessage = onRetryMessage,
-                onRetryPersistedMessage = onRetryPersistedMessage,
+                onCancelResponseRun = onCancelResponseRun,
+                onRetryResponseRun = onRetryResponseRun,
                 onSelectPlan = onSelectPlan,
                 onRetryOperation = onRetryOperation,
                 modifier = modifier,
@@ -102,18 +105,20 @@ fun TaskDetailContent(
 
 @Composable
 private fun TaskDetailSnapshot(
-    detail: TaskDetail,
+    detail: ConversationDetail,
     draft: String,
     operation: TaskDetailOperation,
     pendingMessage: PendingTaskMessage?,
     failedMessage: PendingTaskMessage?,
+    activeResponse: ActiveResponseUiState?,
     operationFailure: TaskDetailOperationFailure?,
     expiredPlanIds: Set<PlanId>,
     onBackHome: () -> Unit,
     onDraftChanged: (String) -> Unit,
     onSendMessage: () -> Unit,
     onRetryMessage: () -> Unit,
-    onRetryPersistedMessage: (String) -> Unit,
+    onCancelResponseRun: (com.nexusflow.app.feature.task.domain.ResponseRunId) -> Unit,
+    onRetryResponseRun: (com.nexusflow.app.feature.task.domain.ResponseRunId) -> Unit,
     onSelectPlan: (PlanId) -> Unit,
     onRetryOperation: (TaskDetailRetryTarget) -> Unit,
     modifier: Modifier,
@@ -134,11 +139,13 @@ private fun TaskDetailSnapshot(
             operation = operation,
             pendingMessage = pendingMessage,
             failedMessage = failedMessage,
+            activeResponse = activeResponse,
             operationFailure = operationFailure,
             expiredPlanIds = expiredPlanIds,
             onSelectPlan = onSelectPlan,
             onRetryMessage = onRetryMessage,
-            onRetryPersistedMessage = onRetryPersistedMessage,
+            onCancelResponseRun = onCancelResponseRun,
+            onRetryResponseRun = onRetryResponseRun,
             onRetryOperation = onRetryOperation,
             modifier = Modifier.weight(1f),
         )
@@ -151,7 +158,7 @@ private fun TaskDetailSnapshot(
         ) {
             TaskComposer(
                 draft = draft,
-                placeholder = detail.composerPlaceholder(),
+                placeholder = detail.currentTask.composerPlaceholder(),
                 operation = operation,
                 onDraftChanged = onDraftChanged,
                 onSendMessage = onSendMessage,

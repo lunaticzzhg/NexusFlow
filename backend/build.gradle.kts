@@ -25,6 +25,7 @@ dependencies {
     implementation(libs.ktor.server.call.id)
     implementation(libs.ktor.server.call.logging)
     implementation(libs.ktor.server.status.pages)
+    implementation(libs.ktor.server.sse)
     runtimeOnly(libs.logback.classic)
     implementation(libs.kotlinx.datetime)
     implementation(libs.flyway.core)
@@ -33,7 +34,9 @@ dependencies {
     implementation(libs.postgresql)
     implementation(libs.java.jwt)
     implementation(libs.jwks.rsa)
+    implementation(libs.jsoup)
     testImplementation(kotlin("test"))
     testImplementation("io.ktor:ktor-server-test-host-jvm:${libs.versions.ktor.get()}")
+    testImplementation(libs.ktor.client.mock)
     testImplementation(libs.testcontainers.postgresql)
 }

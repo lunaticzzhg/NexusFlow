@@ -1,9 +1,10 @@
 package com.nexusflow.backend.feature.task.domain
 
+import com.nexusflow.backend.feature.conversation.domain.ConversationId
 import java.time.Instant
 
 interface TaskRepository {
-    suspend fun createTask(command: CreateTaskPersistenceCommand): CreateTaskPersistenceResult
+    suspend fun createLinkedTask(command: CreateLinkedTaskPersistenceCommand): CreateLinkedTaskPersistenceResult
 
     suspend fun listTaskSummaries(owner: TaskOwner): List<TaskDetail>
 
@@ -12,16 +13,17 @@ interface TaskRepository {
         taskId: TaskId,
     ): TaskDetail?
 
+    suspend fun findCurrentTaskForConversation(
+        owner: TaskOwner,
+        conversationId: ConversationId,
+    ): TaskDetail?
+
     suspend fun listTaskContextKeys(
         owner: TaskOwner,
         taskId: TaskId,
     ): List<String>
 
-    suspend fun appendUserMessage(command: AppendUserMessageCommand): AppendUserMessageResult
-
-    suspend fun recordAiUnderstandingAudit(command: RecordAiUnderstandingAuditCommand): RecordAiUnderstandingAuditResult
-
-    suspend fun applyUnderstanding(command: ApplyUnderstandingCommand): ApplyUnderstandingResult
+    suspend fun applyConversationUnderstanding(command: ApplyConversationUnderstandingCommand): ApplyUnderstandingResult
 
     suspend fun updateRequirement(command: UpdateRequirementCommand): RequirementMutationResult
 
@@ -32,110 +34,33 @@ interface TaskRepository {
     suspend fun selectCurrentPlan(command: SelectPlanCommand): SelectPlanResult
 }
 
-data class CreateTaskPersistenceCommand(
+data class CreateLinkedTaskPersistenceCommand(
     val owner: TaskOwner,
+    val conversationId: ConversationId,
     val taskId: TaskId,
-    val firstMessageId: MessageId,
     val creationRequestId: String,
-    val message: String,
-    val aiRequestId: String,
+    val intent: String,
     val now: Instant,
 )
 
-sealed interface CreateTaskPersistenceResult {
-    data class Created(
-        val detail: TaskDetail,
-        val message: TaskMessage,
-        val taskRevision: Long,
-    ) : CreateTaskPersistenceResult
+sealed interface CreateLinkedTaskPersistenceResult {
+    data class Created(val detail: TaskDetail) : CreateLinkedTaskPersistenceResult
 
-    data class Existing(val detail: TaskDetail) : CreateTaskPersistenceResult
+    data class Existing(val detail: TaskDetail) : CreateLinkedTaskPersistenceResult
 
-    data object ConflictingRequest : CreateTaskPersistenceResult
+    data object ConflictingRequest : CreateLinkedTaskPersistenceResult
 }
 
-data class AppendUserMessageCommand(
-    val owner: TaskOwner,
-    val taskId: TaskId,
-    val messageId: MessageId,
-    val clientMessageId: String,
-    val text: String,
-    val aiRequestId: String,
-    val now: Instant,
-)
-
-sealed interface AppendUserMessageResult {
-    data class Appended(
-        val detail: TaskDetail,
-        val message: TaskMessage,
-        val taskRevision: Long,
-    ) : AppendUserMessageResult
-
-    data class Existing(val detail: TaskDetail) : AppendUserMessageResult
-
-    data object ConflictingMessage : AppendUserMessageResult
-
-    data object TaskNotFound : AppendUserMessageResult
-}
-
-data class RecordAiUnderstandingAuditCommand(
-    val owner: TaskOwner,
-    val taskId: TaskId,
-    val taskRevision: Long,
-    val aiRequestId: String,
-    val eventType: AiUnderstandingAuditEventType,
-    val provider: String?,
-    val model: String?,
-    val promptVersion: String?,
-    val providerRequestId: String?,
-    val attemptCount: Int?,
-    val usage: AiModelTokenUsage? = null,
-    val diagnostics: AiInvocationDiagnostics = AiInvocationDiagnostics(),
-    val outcome: String,
-    val latencyMs: Long?,
-    val failureCategory: String?,
-    val now: Instant,
-)
-
-data class AiModelTokenUsage(
-    val inputTokens: Int?,
-    val outputTokens: Int?,
-    val totalTokens: Int?,
-)
-
-data class AiInvocationDiagnostics(
-    val availableContextDefinitionCount: Int = 0,
-    val selectedContextKeyCount: Int = 0,
-    val resolvedContextBlockCount: Int = 0,
-    val includedContextBlockCount: Int = 0,
-    val omittedContextBlockCount: Int = 0,
-    val optionalContextSerializedChars: Int = 0,
-    val contextDefinitionsSerializedChars: Int = 0,
-    val fullUserPayloadSerializedChars: Int = 0,
-)
-
-enum class AiUnderstandingAuditEventType {
-    Started,
-    Succeeded,
-    Failed,
-}
-
-sealed interface RecordAiUnderstandingAuditResult {
-    data object Recorded : RecordAiUnderstandingAuditResult
-
-    data object TaskNotFound : RecordAiUnderstandingAuditResult
-}
-
-data class ApplyUnderstandingCommand(
+data class ApplyConversationUnderstandingCommand(
     val owner: TaskOwner,
     val taskId: TaskId,
     val expectedTaskRevision: Long,
-    val messageId: MessageId,
+    val conversationMessageId: MessageId,
     val aiRequestId: String,
     val intentPatch: String?,
     val requirements: List<RequirementWrite>,
+    val removedRequirementKinds: List<RequirementKind> = emptyList(),
     val selectedTaskContextKeys: List<String> = emptyList(),
-    val assistantMessage: AssistantMessageWrite?,
     val now: Instant,
 )
 
