@@ -261,7 +261,7 @@ private fun StructuredLogger?.logSse(
     cause: Throwable? = null,
 ) {
     this?.log(
-        level = if (event == "response_run_sse_send_failed") LogLevel.WARN else LogLevel.INFO,
+        level = if (event == "response_run_sse_send_failed") LogLevel.WARN else LogLevel.DEBUG,
         component = RESPONSE_RUN_SSE_LOG_COMPONENT,
         event = event,
         fields =

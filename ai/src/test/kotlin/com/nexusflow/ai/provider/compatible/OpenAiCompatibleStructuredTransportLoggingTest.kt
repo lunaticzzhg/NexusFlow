@@ -29,7 +29,7 @@ import kotlin.test.assertTrue
 
 class OpenAiCompatibleStructuredTransportLoggingTest {
     @Test
-    fun `logs safe provider start and finish fields`() =
+    fun `logs safe provider start and finish fields at debug`() =
         runBlocking {
             val logger = RecordingLogger()
             val transport =
@@ -49,8 +49,11 @@ class OpenAiCompatibleStructuredTransportLoggingTest {
 
             assertEquals(listOf("ai_request_started", "ai_request_finished"), logger.entries.map { it.event })
             val finish = logger.entries.last()
-            assertEquals(LogLevel.INFO, finish.level)
+            assertEquals(LogLevel.DEBUG, logger.entries.first().level)
+            assertEquals(LogLevel.DEBUG, finish.level)
             assertEquals("ai", finish.component)
+            assertEquals("diagnostic-request-id", finish.fields["request_id"])
+            assertEquals("diagnostic-request-id", finish.fields["ai_request_id"])
             assertEquals("understanding", finish.fields["operation"])
             assertEquals("openai", finish.fields["provider"])
             assertEquals("test-model", finish.fields["model"])
@@ -87,6 +90,8 @@ class OpenAiCompatibleStructuredTransportLoggingTest {
             val failure = logger.entries.last()
             assertEquals(LogLevel.ERROR, failure.level)
             assertEquals("ProviderUnauthorizedException", failure.errorType)
+            assertEquals("diagnostic-request-id", failure.fields["request_id"])
+            assertEquals("diagnostic-request-id", failure.fields["ai_request_id"])
             assertEquals("openai", failure.fields["provider"])
             assertTrue(failure.fields.containsKey("duration_ms"))
             assertNoSensitiveLogContent(logger)

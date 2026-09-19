@@ -31,6 +31,7 @@ class ConversationTurnProcessor(
         conversationAnswerService = conversationAnswerService,
         planningService = planningService,
         realtimeHub = realtimeHub,
+        logger = logger,
         clock = clock,
         uuidFactory = uuidFactory,
     )

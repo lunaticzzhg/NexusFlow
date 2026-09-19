@@ -1,7 +1,7 @@
 package com.nexusflow.observability
 
 object LogSanitizer {
-    const val MaxFieldCount = 16
+    const val MaxFieldCount = 32
     const val MaxValueLength = 256
 
     private const val ControlCharacterLimit = 32

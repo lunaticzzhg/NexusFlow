@@ -7,34 +7,76 @@ interface LogFormatter {
 object PrettyLogFormatter : LogFormatter {
     override fun format(record: LogRecord): String =
         buildString {
-            append("timestamp=")
-            append(LogSanitizer.escape(record.timestamp))
-            append(" level=")
+            append(record.timestamp)
+            append(' ')
             append(record.level.name)
-            record.traceId?.let {
-                append(" trace_id=")
-                append(it)
-            }
-            append(" service=")
-            append(LogSanitizer.escape(record.service))
             append(" component=")
             append(LogSanitizer.escape(record.component))
-            append(" environment=")
-            append(LogSanitizer.escape(record.environment))
             append(" event=")
             append(record.event)
-            record.fields.values.forEach { (key, value) ->
-                append(' ')
-                append(key)
-                append('=')
-                append(value)
-            }
-            record.errorType?.let {
-                append(" error_type=")
-                append(LogSanitizer.escape(it))
+
+            appendProjectedField("action", record.fields.explicitAction(record.event))
+            appendProjectedField("trace", record.traceId?.shortIdentity())
+            appendProjectedField("operation_type", record.fields.values["operation_type"])
+            appendProjectedField("step", record.fields.values["step"])
+            appendProjectedField("operation_id", record.fields.values["operation_id"]?.shortIdentity())
+            appendProjectedField("branch", record.fields.values["branch"])
+            appendProjectedField("stage", record.fields.values["stage"])
+            appendProjectedField("outcome", record.fields.values["outcome"])
+            appendProjectedField("duration_ms", record.fields.values["duration_ms"])
+
+            record.errorType?.let { appendProjectedField("error_type", it) }
+
+            if (record.level == LogLevel.DEBUG) {
+                appendDebugDetails(record)
             }
         }
+
+    private fun StringBuilder.appendProjectedField(
+        key: String,
+        value: String?,
+    ) {
+        if (value.isNullOrBlank()) return
+        append(' ')
+        append(key)
+        append('=')
+        append(LogSanitizer.escape(value))
+    }
+
+    private fun StringBuilder.appendDebugDetails(record: LogRecord) {
+        val detailFields = record.fields.values.filterKeys { it !in HUMAN_FIELD_KEYS }
+        if (detailFields.isEmpty()) return
+        append(" detail=\"")
+        detailFields.entries.forEachIndexed { index, (key, value) ->
+            if (index > 0) append(' ')
+            append(key)
+            append('=')
+            append(LogSanitizer.escape(value))
+        }
+        append('"')
+    }
 }
+
+private val HUMAN_FIELD_KEYS =
+    setOf(
+        "action",
+        "operation_type",
+        "step",
+        "operation_id",
+        "branch",
+        "stage",
+        "outcome",
+        "duration_ms",
+    )
+
+private fun LogFields.explicitAction(event: String): String? =
+    values["action"]?.takeUnless { it == event }
+
+private fun String.shortIdentity(): String =
+    when {
+        length <= 16 -> this
+        else -> take(12)
+    }
 
 object JsonLogFormatter : LogFormatter {
     override fun format(record: LogRecord): String =

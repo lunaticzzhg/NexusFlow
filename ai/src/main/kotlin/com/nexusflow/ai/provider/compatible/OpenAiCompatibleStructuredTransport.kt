@@ -73,7 +73,7 @@ internal class OpenAiCompatibleStructuredTransport(
 
     suspend fun generate(request: StructuredModelRequest): StructuredModelResult {
         val started = TimeSource.Monotonic.markNow()
-        logger?.info(
+        logger?.debug(
             component = AI_COMPONENT,
             event = "ai_request_started",
             fields = request.safeLogFields(),
@@ -114,7 +114,7 @@ internal class OpenAiCompatibleStructuredTransport(
                 OpenAiCompatibleMode.ChatJsonObject,
                 -> decodeChatCompletion(body, request)
             }.also { result ->
-                logger?.info(
+                logger?.debug(
                     component = AI_COMPONENT,
                     event = "ai_request_finished",
                     fields = request.safeLogFields(started, result),
@@ -133,7 +133,7 @@ internal class OpenAiCompatibleStructuredTransport(
         onDelta: suspend (String) -> Unit,
     ): TextModelResult {
         val started = TimeSource.Monotonic.markNow()
-        logger?.info(
+        logger?.debug(
             component = AI_COMPONENT,
             event = "ai_request_started",
             fields = request.safeLogFields(),
@@ -188,7 +188,7 @@ internal class OpenAiCompatibleStructuredTransport(
             }
             flushData()
             return accumulator.result().also { result ->
-                logger?.info(
+                logger?.debug(
                     component = AI_COMPONENT,
                     event = "ai_request_finished",
                     fields = request.safeLogFields(started, result),
@@ -246,6 +246,8 @@ internal class OpenAiCompatibleStructuredTransport(
         result: StructuredModelResult? = null,
     ): LogFields =
         logFields {
+            "request_id" value metadata.requestId
+            "ai_request_id" value metadata.requestId
             "operation" value metadata.capability.toLogOperation()
             "provider" value provider
             "model" value model
@@ -272,6 +274,8 @@ internal class OpenAiCompatibleStructuredTransport(
         result: TextModelResult? = null,
     ): LogFields =
         logFields {
+            "request_id" value metadata.requestId
+            "ai_request_id" value metadata.requestId
             "operation" value metadata.capability.toLogOperation()
             "provider" value provider
             "model" value model

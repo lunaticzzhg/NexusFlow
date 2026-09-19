@@ -2,6 +2,7 @@ package com.nexusflow.backend.feature.task.application
 
 import com.nexusflow.backend.core.aicontext.ModelContextAssembler
 import com.nexusflow.backend.core.identity.ActorContext
+import com.nexusflow.backend.core.observability.OperationLogContext
 import com.nexusflow.backend.feature.research.application.ReadToolCatalog
 import com.nexusflow.backend.feature.research.application.ReadToolExecutionObserver
 import com.nexusflow.backend.feature.research.application.ReadToolExecutor
@@ -111,12 +112,14 @@ class PlanningService(
         detail: TaskDetail,
         trigger: PlanningTrigger = PlanningTrigger.PlanningInputChanged,
         readToolObserver: ReadToolExecutionObserver? = null,
+        operationLogContext: OperationLogContext? = null,
     ): PlanningComputationResult =
         workflow.computeIfReady(
             actor = actor,
             detail = detail,
             trigger = trigger,
             readToolObserver = readToolObserver,
+            operationLogContext = operationLogContext,
         )
 
     suspend fun selectPlan(

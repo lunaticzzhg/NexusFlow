@@ -1,6 +1,7 @@
 package com.nexusflow.backend.feature.task.application
 
 import com.nexusflow.backend.core.identity.ActorContext
+import com.nexusflow.backend.core.observability.OperationLogContext
 import com.nexusflow.backend.feature.research.application.ReadToolExecutionObserver
 import com.nexusflow.backend.feature.task.domain.Opportunity
 import com.nexusflow.backend.feature.task.domain.Plan
@@ -24,10 +25,12 @@ internal class PlanningWorkflow(
         detail: TaskDetail,
         trigger: PlanningTrigger = PlanningTrigger.PlanningInputChanged,
         readToolObserver: ReadToolExecutionObserver? = null,
+        operationLogContext: OperationLogContext? = null,
     ): PlanningComputationResult {
         val decision = readiness.decide(detail, trigger)
         if (decision != PlanningDecision.Plan) {
-            logger.planningNotAttempted(detail, trigger, decision)
+            logger.readinessChecked(detail, trigger, decision, operationLogContext)
+            logger.planningNotAttempted(detail, trigger, decision, operationLogContext)
             return PlanningComputationResult(
                 expectedTaskId = detail.task.id,
                 expectedTaskRevision = detail.task.revision,
@@ -36,7 +39,8 @@ internal class PlanningWorkflow(
                 outcome = PlanningOutcome.NotAttempted,
             )
         }
-        return compute(actor, detail, trigger, readToolObserver)
+        logger.readinessChecked(detail, trigger, decision, operationLogContext)
+        return compute(actor, detail, trigger, readToolObserver, operationLogContext)
     }
 
     private suspend fun compute(
@@ -44,11 +48,12 @@ internal class PlanningWorkflow(
         detail: TaskDetail,
         trigger: PlanningTrigger,
         readToolObserver: ReadToolExecutionObserver?,
+        operationLogContext: OperationLogContext?,
     ): PlanningComputationResult {
         val startedAt = clock.instant()
         var stage = "opportunity_discovery"
         var planningFailureLogged = false
-        logger.planningStarted(detail, trigger)
+        logger.planningStarted(detail, trigger, operationLogContext)
         try {
             val now = clock.instant()
             stage = "optional_context"
@@ -57,14 +62,14 @@ internal class PlanningWorkflow(
             val discovery = opportunityDiscovery.discover(actor, detail, now, optionalContext, readToolObserver)
             if (discovery.outcome != null) {
                 planningFailureLogged = true
-                logger.planningFinished(detail, startedAt, trigger, discovery.outcome, 0, 0)
+                logger.planningFinished(detail, startedAt, trigger, discovery.outcome, 0, 0, operationLogContext = operationLogContext)
                 return detail.computationResult(discovery.outcome)
             }
 
             val opportunities = discovery.opportunities.filterVerified(now)
             if (opportunities.isEmpty()) {
                 planningFailureLogged = true
-                logger.planningFinished(detail, startedAt, trigger, PlanningOutcome.NoCandidates, 0, 0)
+                logger.planningFinished(detail, startedAt, trigger, PlanningOutcome.NoCandidates, 0, 0, operationLogContext = operationLogContext)
                 return detail.computationResult(PlanningOutcome.NoCandidates)
             }
 
@@ -81,7 +86,16 @@ internal class PlanningWorkflow(
             if (validation.plans.isEmpty()) {
                 val outcome = validation.failures.toPlanningOutcome()
                 planningFailureLogged = true
-                logger.planningFinished(detail, startedAt, trigger, outcome, opportunities.size, 0, validation.failures)
+                logger.planningFinished(
+                    detail,
+                    startedAt,
+                    trigger,
+                    outcome,
+                    opportunities.size,
+                    0,
+                    validation.failures,
+                    operationLogContext,
+                )
                 return detail.computationResult(outcome, opportunities)
             }
 
@@ -95,21 +109,22 @@ internal class PlanningWorkflow(
                 opportunityCount = opportunities.size,
                 planCount = finalPlans.size,
                 validationFailures = validation.failures,
+                operationLogContext = operationLogContext,
             )
             return detail.computationResult(PlanningOutcome.Ready, opportunities, finalPlans)
         } catch (cause: CancellationException) {
             if (!planningFailureLogged) {
-                logger.planningFailed(detail, startedAt, trigger, stage, "cancelled", cause)
+                logger.planningFailed(detail, startedAt, trigger, stage, "cancelled", cause, operationLogContext)
             }
             throw cause
         } catch (cause: TaskDependencyUnavailableException) {
             if (!planningFailureLogged) {
-                logger.planningUnavailable(detail, startedAt, trigger, stage, cause)
+                logger.planningUnavailable(detail, startedAt, trigger, stage, cause, operationLogContext)
             }
             return detail.computationResult(PlanningOutcome.Unavailable)
         } catch (cause: Throwable) {
             if (!planningFailureLogged) {
-                logger.planningFailed(detail, startedAt, trigger, stage, cause.safeFailureCategory(), cause)
+                logger.planningFailed(detail, startedAt, trigger, stage, cause.safeFailureCategory(), cause, operationLogContext)
             }
             throw cause
         }

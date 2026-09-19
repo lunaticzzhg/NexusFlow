@@ -16,11 +16,37 @@ class LogFormatterTest {
         val pretty = PrettyLogFormatter.format(record)
         val json = Json.parseToJsonElement(JsonLogFormatter.format(record)).jsonObject
 
-        assertTrue(pretty.contains("trace_id=4bf92f3577b34da6a3ce929d0e0e4736"))
-        assertTrue(pretty.contains("task_id=task-1"))
+        assertTrue(pretty.contains("INFO component=ai event=ai_request_finished"))
+        assertFalse(pretty.contains("action=ai_request_finished"))
+        assertTrue(pretty.contains("trace=4bf92f3577b3"))
+        assertTrue(pretty.contains("operation_type=conversation_turn"))
+        assertTrue(pretty.contains("step=answer_finished"))
+        assertTrue(pretty.contains("operation_id=response-run"))
+        assertTrue(pretty.contains("branch=chat_answer"))
+        assertTrue(pretty.contains("stage=turn"))
+        assertTrue(pretty.contains("outcome=finished"))
+        assertTrue(pretty.contains("duration_ms=42"))
+        assertFalse(pretty.contains("response_run_id=response-run"))
+        assertFalse(pretty.contains("task_id=task-1"))
+        assertFalse(pretty.contains("provider_request_id=provider-request-1"))
         assertEquals("4bf92f3577b34da6a3ce929d0e0e4736", json["trace_id"]?.jsonPrimitive?.content)
         assertEquals("ai_request_finished", json["event"]?.jsonPrimitive?.content)
         assertEquals("task-1", json["task_id"]?.jsonPrimitive?.content)
+        assertEquals("response-run", json["response_run_id"]?.jsonPrimitive?.content)
+        assertEquals("conversation_turn", json["operation_type"]?.jsonPrimitive?.content)
+        assertEquals("chat_answer", json["branch"]?.jsonPrimitive?.content)
+        assertEquals("provider-request-1", json["provider_request_id"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `debug pretty includes detail fields that info omits`() {
+        val pretty = PrettyLogFormatter.format(record(level = LogLevel.DEBUG))
+
+        assertTrue(pretty.contains("DEBUG component=ai event=ai_request_finished"))
+        assertTrue(pretty.contains("detail=\""))
+        assertTrue(pretty.contains("response_run_id=response-run"))
+        assertTrue(pretty.contains("task_id=task-1"))
+        assertTrue(pretty.contains("provider_request_id=provider-request-1"))
     }
 
     @Test
@@ -49,14 +75,14 @@ class LogFormatterTest {
 
         assertEquals(1, sink.attempts)
         assertFalse(sink.messages.joinToString().contains("secret"))
-        assertTrue(sink.messages.single().contains("service=nexusflow-backend"))
+        assertTrue(sink.messages.single().contains("INFO component=ai_provider event=invalid_event"))
         assertTrue(sink.messages.single().contains("component=ai_provider"))
     }
 
-    private fun record(): LogRecord =
+    private fun record(level: LogLevel = LogLevel.INFO): LogRecord =
         LogRecord(
             timestamp = "2026-09-03T00:00:00Z",
-            level = LogLevel.INFO,
+            level = level,
             traceId = "4bf92f3577b34da6a3ce929d0e0e4736",
             service = "nexusflow-backend",
             component = "ai",
@@ -65,7 +91,19 @@ class LogFormatterTest {
             fields =
                 logFields {
                     "task_id" value "task-1"
+                    "response_run_id" value "response-run"
+                    "operation_type" value "conversation_turn"
+                    "operation_id" value "response-run"
+                    "branch" value "chat_answer"
+                    "stage" value "turn"
+                    "step" value "answer_finished"
+                    "conversation_id" value "conversation"
+                    "ai_request_id" value "ai-request"
+                    "operation" value "understanding"
+                    "finish_category" value "complete"
+                    "outcome" value "finished"
                     "duration_ms" value 42
+                    "provider_request_id" value "provider-request-1"
                 },
         )
 

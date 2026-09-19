@@ -84,6 +84,7 @@ import com.nexusflow.observability.DefaultStructuredLogger
 import com.nexusflow.observability.JsonLogFormatter
 import com.nexusflow.observability.LogLevel
 import com.nexusflow.observability.LogSink
+import com.nexusflow.observability.StructuredLogger
 import com.zaxxer.hikari.HikariDataSource
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
@@ -615,6 +616,71 @@ class JdbcResponseRunResultBusTest {
         }
 
     @Test
+    fun `chat answer response run emits operation timeline`() =
+        runBlocking {
+            val logger = jsonRecordingLogger()
+            val understanding = ScriptedUnderstanding({
+                understandingOutcome(turnIntent = TurnIntent.Conversation, changes = emptyList())
+            })
+            val decision = RecordingConversationDecision({ directConversationDecision("Worker answer") })
+            val answerService = conversationAnswerService(decision, logger = logger.logger)
+            val accepted = createConversationServices(
+                dataSource = dataSource,
+                understanding = understanding,
+                conversationAnswerService = answerService,
+            ).conversationService.createConversation(
+                taskActor(),
+                "chat-answer-timeline",
+                "Hello",
+                "Asia/Shanghai",
+            )
+            val runId = accepted.detail.responseRuns.single().id.value.toString()
+            val processor = ConversationTurnProcessor(
+                conversationRepository = repository,
+                taskRepository = taskRepository,
+                understanding = understanding,
+                conversationAnswerService = answerService,
+                logger = logger.logger,
+                clock = TaskFlowIds.FixedClock,
+                uuidFactory = { UUID.fromString("00000000-0000-0000-0000-000000004998") },
+                timeZoneId = "Asia/Shanghai",
+            )
+
+            assertEquals(true, worker(processor, logger = logger.logger).runOnce())
+
+            val records = logger.records()
+            assertEquals(
+                "conversation_turn",
+                records.single { it.field("event") == "response_run_processing_started" }.field("operation_type"),
+            )
+            assertEquals(
+                runId,
+                records.single { it.field("event") == "response_run_processing_started" }.field("operation_id"),
+            )
+            assertStepsInOrder(
+                records.filter { it.field("operation_id") == runId },
+                listOf(
+                    "started",
+                    "understanding_started",
+                    "understanding_finished",
+                    "answer_started",
+                    "decision_finished",
+                    "answer_generated",
+                    "answer_finished",
+                    "finished",
+                ),
+            )
+            val chatBranch = records.filter { it.field("operation_id") == runId && it.field("branch") == "chat_answer" }
+            listOf("understanding_finished", "decision_finished", "answer_generated", "answer_finished", "finished")
+                .forEach { step -> assertTrue(chatBranch.any { it.field("step") == step }, "missing $step") }
+            assertEquals(
+                "conversation",
+                chatBranch.single { it.field("step") == "understanding_finished" }.field("outcome"),
+            )
+            assertTrue(records.none { it.field("event") == "response_run_result_stored" && it.field("level") == "INFO" })
+        }
+
+    @Test
     fun `worker logs and processing use response run origin trace`() =
         runBlocking {
             val originTraceId = "fedcba9876543210fedcba9876543210"
@@ -655,7 +721,7 @@ class JdbcResponseRunResultBusTest {
                 sink = sink,
                 serviceName = "nexusflow-backend",
                 environment = RuntimeEnvironment.Local.value,
-                minimumLevel = LogLevel.INFO,
+                minimumLevel = LogLevel.DEBUG,
             )
             val worker = ResponseRunWorker(
                 responseRunStore = responseRunRepository,
@@ -680,10 +746,21 @@ class JdbcResponseRunResultBusTest {
             val records = sink.lines.map { Json.parseToJsonElement(it).jsonObject }
             val claimed = records.single { it.getValue("event").jsonPrimitive.content == "response_run_claimed" }
             assertEquals(originTraceId, claimed.getValue("trace_id").jsonPrimitive.content)
+            assertEquals("DEBUG", claimed.getValue("level").jsonPrimitive.content)
             assertEquals(originTraceId, claimed.getValue("origin_trace_id").jsonPrimitive.content)
             assertEquals(
                 created.detail.responseRuns.single().id.value.toString(),
                 claimed.getValue("response_run_id").jsonPrimitive.content,
+            )
+            val stored = records.single { it.getValue("event").jsonPrimitive.content == "response_run_result_stored" }
+            assertEquals("DEBUG", stored.getValue("level").jsonPrimitive.content)
+            assertEquals(
+                created.detail.messages.single { it.role == MessageRole.User }.aiRequestId,
+                stored.getValue("ai_request_id").jsonPrimitive.content,
+            )
+            assertEquals(
+                created.detail.responseRuns.single().id.value.toString(),
+                stored.getValue("response_run_id").jsonPrimitive.content,
             )
             assertTrue(records.all { it.getValue("trace_id").jsonPrimitive.content == originTraceId })
         }
@@ -999,7 +1076,16 @@ class JdbcResponseRunResultBusTest {
             )
             val runId = accepted.detail.responseRuns.single().id
             val processor = planningProcessor(understanding, services.planningService)
-            val worker = worker(processor)
+            val sink = RecordingLogSink()
+            val logger = DefaultStructuredLogger(
+                traceContext = BackendTraceContext,
+                formatter = JsonLogFormatter,
+                sink = sink,
+                serviceName = "nexusflow-backend",
+                environment = RuntimeEnvironment.Local.value,
+                minimumLevel = LogLevel.INFO,
+            )
+            val worker = worker(processor, logger = logger)
 
             assertEquals(true, worker.runOnce())
 
@@ -1014,6 +1100,14 @@ class JdbcResponseRunResultBusTest {
             assertEquals(RequirementKind.ActivityDomain, task.requirements.single().kind)
             assertEquals(emptyList(), services.planComposer.contexts)
             assertEquals(1, understanding.calls.size)
+            val records = sink.lines.map { Json.parseToJsonElement(it).jsonObject }
+            val planningQueued = records.single { it.getValue("event").jsonPrimitive.content == "response_run_planning_queued" }
+            assertEquals("INFO", planningQueued.getValue("level").jsonPrimitive.content)
+            assertEquals(runId.value.toString(), planningQueued.getValue("response_run_id").jsonPrimitive.content)
+            assertEquals(runId.value.toString(), planningQueued.getValue("source_response_run_id").jsonPrimitive.content)
+            assertEquals(run.expectedTaskId?.value.toString(), planningQueued.getValue("task_id").jsonPrimitive.content)
+            assertEquals("planning", planningQueued.getValue("stage").jsonPrimitive.content)
+            assertEquals("queued", planningQueued.getValue("status").jsonPrimitive.content)
             Unit
         }
 
@@ -1051,6 +1145,70 @@ class JdbcResponseRunResultBusTest {
             assertEquals(1, services.planComposer.contexts.size)
             assertNotNull(responseRunRepository.findResponseRunResult(run.id, 1)?.consumedAt)
             Unit
+        }
+
+    @Test
+    fun `planning response run emits operation timeline across queued and planning stage`() =
+        runBlocking {
+            val logger = jsonRecordingLogger()
+            val understanding = ScriptedUnderstanding({
+                understandingOutcome(
+                    turnIntent = TurnIntent.Planning,
+                    intentPatch = "Plan a movie night",
+                    changes = listOf(activityDomainChange("movie", "movie night")),
+                )
+            })
+            val services = createConversationServices(
+                dataSource = dataSource,
+                understanding = understanding,
+                logger = logger.logger,
+            )
+            val accepted = services.conversationService.createConversation(
+                taskActor(),
+                "planning-timeline",
+                "Plan a movie night",
+                "Asia/Shanghai",
+            )
+            val runId = accepted.detail.responseRuns.single().id.value.toString()
+            val processor = planningProcessor(understanding, services.planningService, logger.logger)
+            val worker = worker(processor, logger = logger.logger)
+
+            assertEquals(true, worker.runOnce())
+            assertEquals(true, worker.runOnce())
+
+            val records = logger.records().filter { it.field("operation_id") == runId }
+            assertStepsInOrder(
+                records,
+                listOf(
+                    "started",
+                    "understanding_started",
+                    "understanding_finished",
+                    "planning_queued",
+                    "started",
+                    "readiness_checked",
+                    "planning_started",
+                    "planning_finished",
+                    "finished",
+                ),
+            )
+            val planningBranch = records.filter { it.field("branch") == "planning" }
+            listOf(
+                "understanding_finished",
+                "planning_queued",
+                "readiness_checked",
+                "planning_started",
+                "planning_finished",
+                "finished",
+            ).forEach { step -> assertTrue(planningBranch.any { it.field("step") == step }, "missing $step") }
+            assertEquals(
+                "planning",
+                planningBranch.single { it.field("step") == "understanding_finished" }.field("outcome"),
+            )
+            val planningFinished = planningBranch.single { it.field("event") == "planning_finished" }
+            assertEquals("ready", planningFinished.field("outcome"))
+            assertEquals("plan", planningFinished.field("planning_decision"))
+            assertNotNull(planningFinished.field("task_id"))
+            assertEquals("2", planningFinished.field("task_revision"))
         }
 
     @Test
@@ -1321,6 +1479,7 @@ class JdbcResponseRunResultBusTest {
     private fun planningProcessor(
         understanding: ScriptedUnderstanding,
         planningService: PlanningService,
+        logger: StructuredLogger? = null,
     ): ConversationTurnProcessor =
         ConversationTurnProcessor(
             conversationRepository = repository,
@@ -1328,6 +1487,7 @@ class JdbcResponseRunResultBusTest {
             understanding = understanding,
             conversationAnswerService = null,
             planningService = planningService,
+            logger = logger,
             clock = TaskFlowIds.FixedClock,
             uuidFactory = { UUID.randomUUID() },
             timeZoneId = "Asia/Shanghai",
@@ -1353,6 +1513,7 @@ class JdbcResponseRunResultBusTest {
     private fun worker(
         processor: ConversationTurnProcessor,
         realtimeHub: ResponseRunRealtimeHub? = null,
+        logger: StructuredLogger? = null,
     ): ResponseRunWorker =
         ResponseRunWorker(
             responseRunStore = responseRunRepository,
@@ -1370,6 +1531,7 @@ class JdbcResponseRunResultBusTest {
             clock = TaskFlowIds.FixedClock,
             workerId = "worker-result-bus",
             realtimeHub = realtimeHub,
+            logger = logger,
         )
 
     private fun stealResponseRunLease(
@@ -1539,6 +1701,54 @@ class JdbcResponseRunResultBusTest {
         ) {
             lines += formatted
         }
+    }
+
+    private data class JsonRecordingLogger(
+        val logger: StructuredLogger,
+        val sink: RecordingLogSink,
+    ) {
+        fun records(): List<JsonObject> =
+            sink.lines.map { Json.parseToJsonElement(it).jsonObject }
+    }
+
+    private fun jsonRecordingLogger(): JsonRecordingLogger {
+        val sink = RecordingLogSink()
+        return JsonRecordingLogger(
+            logger = DefaultStructuredLogger(
+                traceContext = BackendTraceContext,
+                formatter = JsonLogFormatter,
+                sink = sink,
+                serviceName = "nexusflow-backend",
+                environment = RuntimeEnvironment.Local.value,
+                minimumLevel = LogLevel.INFO,
+            ),
+            sink = sink,
+        )
+    }
+
+    private fun JsonObject.field(key: String): String? =
+        this[key]?.jsonPrimitive?.content
+
+    private fun assertStepsInOrder(
+        records: List<JsonObject>,
+        steps: List<String>,
+    ) {
+        var cursor = -1
+        steps.forEach { step ->
+            val next = records.indexOfFirstAfter(cursor) { it.field("step") == step }
+            assertTrue(next >= 0, "missing timeline step $step after index $cursor")
+            cursor = next
+        }
+    }
+
+    private fun List<JsonObject>.indexOfFirstAfter(
+        cursor: Int,
+        predicate: (JsonObject) -> Boolean,
+    ): Int {
+        for (index in cursor + 1 until size) {
+            if (predicate(this[index])) return index
+        }
+        return -1
     }
 
     private data class CreatedRun(

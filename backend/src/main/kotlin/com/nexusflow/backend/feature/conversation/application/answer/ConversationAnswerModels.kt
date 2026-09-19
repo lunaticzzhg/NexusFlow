@@ -1,5 +1,6 @@
 package com.nexusflow.backend.feature.conversation.application.answer
 
+import com.nexusflow.backend.core.observability.OperationLogContext
 import com.nexusflow.backend.feature.research.application.ReadToolExecutionObserver
 import com.nexusflow.backend.feature.conversation.domain.ConversationDetail
 import com.nexusflow.backend.feature.conversation.domain.ConversationMessage
@@ -24,6 +25,7 @@ data class StandaloneConversationAnswerRequest(
     val actorUserId: String? = null,
     val taskId: String? = null,
     val taskRevision: Long? = null,
+    val operationLogContext: OperationLogContext? = null,
     val readToolObserver: ReadToolExecutionObserver? = null,
     val onAnswerDelta: suspend (String) -> Unit = {},
 )
@@ -42,6 +44,7 @@ internal data class ConversationAnswerTurnRequest(
     val optionalContext: List<ModelContextBlockPayload> = emptyList(),
     val actorTenantId: String? = null,
     val actorUserId: String? = null,
+    val operationLogContext: OperationLogContext? = null,
     val readToolObserver: ReadToolExecutionObserver? = null,
     val onAnswerDelta: suspend (String) -> Unit = {},
 )
@@ -143,6 +146,7 @@ internal fun StandaloneConversationAnswerRequest.toTurnRequest(): ConversationAn
         optionalContext = optionalContext,
         actorTenantId = actorTenantId,
         actorUserId = actorUserId,
+        operationLogContext = operationLogContext,
         readToolObserver = readToolObserver,
         onAnswerDelta = onAnswerDelta,
     )

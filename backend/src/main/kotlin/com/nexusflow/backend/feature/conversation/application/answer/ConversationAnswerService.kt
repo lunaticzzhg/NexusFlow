@@ -1,5 +1,6 @@
 package com.nexusflow.backend.feature.conversation.application.answer
 
+import com.nexusflow.backend.core.observability.addOperationFields
 import com.nexusflow.backend.feature.research.application.ReadToolCatalog
 import com.nexusflow.backend.feature.research.application.ReadToolExecutor
 import com.nexusflow.contracts.backendai.answer.ConversationAnsweringCapability
@@ -37,9 +38,18 @@ class ConversationAnswerService(
     private suspend fun answer(request: ConversationAnswerTurnRequest): ConversationAnswerResult {
         logStarted(request)
         val result = when (val decision = decisionStep.decide(request)) {
-            ConversationDecisionStepResult.AiUnavailable -> ConversationAnswerResult.aiUnavailable(request.assistantMessageId)
-            ConversationDecisionStepResult.InvalidAiResult -> ConversationAnswerResult.invalidAiResult(request.assistantMessageId)
-            is ConversationDecisionStepResult.Success -> answerDecision(request, decision)
+            ConversationDecisionStepResult.AiUnavailable -> {
+                logDecisionFinished(request, "ai_unavailable")
+                ConversationAnswerResult.aiUnavailable(request.assistantMessageId)
+            }
+            ConversationDecisionStepResult.InvalidAiResult -> {
+                logDecisionFinished(request, "invalid_ai_result")
+                ConversationAnswerResult.invalidAiResult(request.assistantMessageId)
+            }
+            is ConversationDecisionStepResult.Success -> {
+                logDecisionFinished(request, "success", decision.decision.informationNeeds.size)
+                answerDecision(request, decision)
+            }
         }
         logFinished(request, result)
         return result
@@ -62,6 +72,7 @@ class ConversationAnswerService(
             ConversationAnswerStepResult.InvalidAiResult -> return ConversationAnswerResult.invalidAiResult(request.assistantMessageId)
             is ConversationAnswerStepResult.Success -> generated.answer
         }
+        logAnswerGenerated(request, answer.answer.length, research.size)
         return if (validator.validateNeedCoverage(answer, needs, research)) {
             validator.resultFromAnswer(request, answer, needs, research)
         } else {
@@ -74,8 +85,49 @@ class ConversationAnswerService(
             component = "answer",
             event = "conversation_answer_started",
             fields = logFields {
+                addOperationFields(request.operationLogContext, step = "answer_started", outcome = "started")
+                "response_run_id" value request.operationLogContext?.operationId
                 "conversation_id" value request.conversationId
                 "task_id" value request.taskId
+            },
+        )
+    }
+
+    private fun logDecisionFinished(
+        request: ConversationAnswerTurnRequest,
+        outcome: String,
+        informationNeedCount: Int? = null,
+    ) {
+        logger?.info(
+            component = "answer",
+            event = "conversation_decision_finished",
+            fields = logFields {
+                addOperationFields(request.operationLogContext, step = "decision_finished", outcome = outcome)
+                "response_run_id" value request.operationLogContext?.operationId
+                "conversation_id" value request.conversationId
+                "task_id" value request.taskId
+                "task_revision" value request.taskRevision
+                "information_need_count" value informationNeedCount
+            },
+        )
+    }
+
+    private fun logAnswerGenerated(
+        request: ConversationAnswerTurnRequest,
+        answerLength: Int,
+        researchCount: Int,
+    ) {
+        logger?.info(
+            component = "answer",
+            event = "conversation_answer_generated",
+            fields = logFields {
+                addOperationFields(request.operationLogContext, step = "answer_generated", outcome = "generated")
+                "response_run_id" value request.operationLogContext?.operationId
+                "conversation_id" value request.conversationId
+                "task_id" value request.taskId
+                "task_revision" value request.taskRevision
+                "answer_length" value answerLength
+                "research_need_count" value researchCount
             },
         )
     }
@@ -88,6 +140,12 @@ class ConversationAnswerService(
             component = "answer",
             event = "conversation_answer_finished",
             fields = logFields {
+                addOperationFields(
+                    request.operationLogContext,
+                    step = "answer_finished",
+                    outcome = result.outcome.name.toSnakeCase(),
+                )
+                "response_run_id" value request.operationLogContext?.operationId
                 "conversation_id" value request.conversationId
                 "task_id" value request.taskId
                 "answer_outcome" value result.outcome.name.toSnakeCase()

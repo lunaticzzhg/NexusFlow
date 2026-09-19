@@ -1,5 +1,7 @@
 package com.nexusflow.backend.feature.task.application
 
+import com.nexusflow.backend.core.observability.OperationLogContext
+import com.nexusflow.backend.core.observability.addOperationFields
 import com.nexusflow.backend.feature.research.application.ReadToolExecution
 import com.nexusflow.backend.feature.research.application.ReadToolOutcome
 import com.nexusflow.backend.feature.task.domain.Plan
@@ -19,15 +21,40 @@ internal class PlanningLogger(
     fun planningStarted(
         detail: TaskDetail,
         trigger: PlanningTrigger,
+        operationLogContext: OperationLogContext? = null,
     ) {
         logger?.info(
             component = PLANNING_LOG_COMPONENT,
             event = "planning_started",
             fields =
                 logFields {
+                    addOperationFields(operationLogContext, step = "planning_started", outcome = "started")
+                    "response_run_id" value operationLogContext?.operationId
                     "task_id" value detail.task.id.value.toString()
                     "task_revision" value detail.task.revision
                     "planning_trigger" value trigger.logValue
+                    "planning_decision" value PlanningDecision.Plan.logValue
+                },
+        )
+    }
+
+    fun readinessChecked(
+        detail: TaskDetail,
+        trigger: PlanningTrigger,
+        decision: PlanningDecision,
+        operationLogContext: OperationLogContext? = null,
+    ) {
+        logger?.info(
+            component = PLANNING_LOG_COMPONENT,
+            event = "planning_readiness_checked",
+            fields =
+                logFields {
+                    addOperationFields(operationLogContext, step = "readiness_checked", outcome = decision.logValue)
+                    "response_run_id" value operationLogContext?.operationId
+                    "task_id" value detail.task.id.value.toString()
+                    "task_revision" value detail.task.revision
+                    "planning_trigger" value trigger.logValue
+                    "planning_decision" value decision.logValue
                 },
         )
     }
@@ -36,17 +63,19 @@ internal class PlanningLogger(
         detail: TaskDetail,
         trigger: PlanningTrigger,
         decision: PlanningDecision,
+        operationLogContext: OperationLogContext? = null,
     ) {
         logger?.info(
             component = PLANNING_LOG_COMPONENT,
             event = "planning_not_attempted",
             fields =
                 logFields {
+                    addOperationFields(operationLogContext, step = "planning_finished", outcome = PlanningOutcome.NotAttempted.logValue)
+                    "response_run_id" value operationLogContext?.operationId
                     "task_id" value detail.task.id.value.toString()
                     "task_revision" value detail.task.revision
                     "planning_trigger" value trigger.logValue
                     "planning_decision" value decision.logValue
-                    "outcome" value PlanningOutcome.NotAttempted.logValue
                 },
         )
     }
@@ -59,17 +88,20 @@ internal class PlanningLogger(
         opportunityCount: Int,
         planCount: Int,
         validationFailures: List<PlanValidationFailure> = emptyList(),
+        operationLogContext: OperationLogContext? = null,
     ) {
         logger?.info(
             component = PLANNING_LOG_COMPONENT,
             event = "planning_finished",
             fields =
                 logFields {
+                    addOperationFields(operationLogContext, step = "planning_finished", outcome = outcome.logValue)
+                    "response_run_id" value operationLogContext?.operationId
                     "task_id" value detail.task.id.value.toString()
                     "task_revision" value detail.task.revision
                     "duration_ms" value Duration.between(startedAt, clock.instant()).toMillis().coerceAtLeast(0)
                     "planning_trigger" value trigger.logValue
-                    "outcome" value outcome.logValue
+                    "planning_decision" value PlanningDecision.Plan.logValue
                     "opportunity_count" value opportunityCount
                     "plan_count" value planCount
                     "validation_failure_count" value validationFailures.size
@@ -102,18 +134,21 @@ internal class PlanningLogger(
         trigger: PlanningTrigger,
         stage: String,
         cause: Throwable,
+        operationLogContext: OperationLogContext? = null,
     ) {
         logger?.warn(
             component = PLANNING_LOG_COMPONENT,
             event = "planning_unavailable",
             fields =
                 logFields {
+                    addOperationFields(operationLogContext, step = "planning_finished", outcome = PlanningOutcome.Unavailable.logValue)
+                    "response_run_id" value operationLogContext?.operationId
                     "task_id" value detail.task.id.value.toString()
                     "task_revision" value detail.task.revision
                     "duration_ms" value Duration.between(startedAt, clock.instant()).toMillis().coerceAtLeast(0)
                     "planning_trigger" value trigger.logValue
-                    "stage" value stage
-                    "outcome" value PlanningOutcome.Unavailable.logValue
+                    "planning_stage" value stage
+                    "planning_decision" value PlanningDecision.Plan.logValue
                     "failure_category" value cause.safeFailureCategory()
                     "failure_reason" value (cause.message ?: "unavailable")
                 },
@@ -131,9 +166,10 @@ internal class PlanningLogger(
             event = "planning_degraded",
             fields =
                 logFields {
-                    "task_id" value requestId
+                    "request_id" value requestId
                     "task_revision" value taskRevision
                     "stage" value stage
+                    "outcome" value "degraded"
                     "failure_category" value failureCategory
                 },
         )
@@ -203,17 +239,21 @@ internal class PlanningLogger(
         stage: String,
         failureCategory: String,
         cause: Throwable? = null,
+        operationLogContext: OperationLogContext? = null,
     ) {
         logger?.error(
             component = PLANNING_LOG_COMPONENT,
             event = "planning_failed",
             fields =
                 logFields {
+                    addOperationFields(operationLogContext, step = "planning_failed", outcome = "failed")
+                    "response_run_id" value operationLogContext?.operationId
                     "task_id" value detail.task.id.value.toString()
                     "task_revision" value detail.task.revision
                     "duration_ms" value Duration.between(startedAt, clock.instant()).toMillis().coerceAtLeast(0)
                     "planning_trigger" value trigger.logValue
-                    "stage" value stage
+                    "planning_stage" value stage
+                    "planning_decision" value PlanningDecision.Plan.logValue
                     "failure_category" value failureCategory
                 },
             cause = cause,

@@ -1,5 +1,7 @@
 package com.nexusflow.backend.feature.conversation.application
 
+import com.nexusflow.backend.core.observability.OperationLogContext
+import com.nexusflow.backend.core.observability.addOperationFields
 import com.nexusflow.contracts.backendai.common.AiCapabilityException
 import com.nexusflow.contracts.backendai.understanding.TurnIntent
 import com.nexusflow.contracts.backendai.understanding.UnderstandMessageResult as AiUnderstandMessageResult
@@ -38,8 +40,11 @@ internal class ConversationUnderstandingStep(
             component = "conversation",
             event = "turn_understanding_started",
             fields = logFields {
+                addOperationFields(context.operationLogContext(), step = "understanding_started", outcome = "started")
                 "conversation_id" value context.detail.conversation.id.value.toString()
                 "task_id" value context.currentTask?.task?.id?.value?.toString()
+                "response_run_id" value context.claim.run.id.value.toString()
+                "ai_request_id" value context.userMessage.aiRequestId
             },
         )
     }
@@ -52,13 +57,44 @@ internal class ConversationUnderstandingStep(
             component = "conversation",
             event = "turn_understanding_finished",
             fields = logFields {
+                addOperationFields(
+                    context.operationLogContext(branch = turnIntent.operationBranch()),
+                    step = "understanding_finished",
+                    outcome = turnIntent.operationOutcome(),
+                )
                 "conversation_id" value context.detail.conversation.id.value.toString()
                 "task_id" value context.currentTask?.task?.id?.value?.toString()
+                "response_run_id" value context.claim.run.id.value.toString()
+                "ai_request_id" value context.userMessage.aiRequestId
                 "turn_intent" value turnIntent.name.toSnakeCase()
             },
         )
     }
 }
+
+internal fun ConversationTurnContext.operationLogContext(branch: String? = null): OperationLogContext =
+    OperationLogContext(
+        operationType = CONVERSATION_TURN_OPERATION_TYPE,
+        operationId = claim.run.id.value.toString(),
+        branch = branch,
+        stage = claim.run.stage.name.toSnakeCase(),
+    )
+
+internal fun TurnIntent.operationBranch(): String =
+    when (this) {
+        TurnIntent.Conversation -> CONVERSATION_BRANCH_CHAT_ANSWER
+        TurnIntent.Planning -> CONVERSATION_BRANCH_PLANNING
+    }
+
+private fun TurnIntent.operationOutcome(): String =
+    when (this) {
+        TurnIntent.Conversation -> "conversation"
+        TurnIntent.Planning -> "planning"
+    }
+
+internal const val CONVERSATION_TURN_OPERATION_TYPE = "conversation_turn"
+internal const val CONVERSATION_BRANCH_CHAT_ANSWER = "chat_answer"
+internal const val CONVERSATION_BRANCH_PLANNING = "planning"
 
 private fun String.toSnakeCase(): String =
     buildString(length + 4) {
