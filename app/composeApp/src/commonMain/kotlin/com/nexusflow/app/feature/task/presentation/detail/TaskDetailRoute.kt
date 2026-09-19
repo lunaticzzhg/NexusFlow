@@ -2,12 +2,14 @@
 
 package com.nexusflow.app.feature.task.presentation.detail
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -16,7 +18,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import com.nexusflow.app.core.design.AppSpacing
 import com.nexusflow.app.core.design.feedback.AppErrorState
 import com.nexusflow.app.core.design.feedback.AppFullScreenLoading
@@ -83,13 +92,8 @@ fun TaskDetailContent(
         is TaskDetailContent.Success ->
             TaskDetailSnapshot(
                 detail = content.detail,
-                draft = content.draft,
+                screen = content.screen,
                 operation = content.operation,
-                pendingMessage = content.pendingMessage,
-                failedMessage = content.failedMessage,
-                activeResponse = content.activeResponse,
-                operationFailure = content.operationFailure,
-                expiredPlanIds = content.expiredPlanIds,
                 onBackHome = onBackHome,
                 onDraftChanged = onDraftChanged,
                 onSendMessage = onSendMessage,
@@ -106,13 +110,8 @@ fun TaskDetailContent(
 @Composable
 private fun TaskDetailSnapshot(
     detail: ConversationDetail,
-    draft: String,
+    screen: TaskDetailScreenUiState,
     operation: TaskDetailOperation,
-    pendingMessage: PendingTaskMessage?,
-    failedMessage: PendingTaskMessage?,
-    activeResponse: ActiveResponseUiState?,
-    operationFailure: TaskDetailOperationFailure?,
-    expiredPlanIds: Set<PlanId>,
     onBackHome: () -> Unit,
     onDraftChanged: (String) -> Unit,
     onSendMessage: () -> Unit,
@@ -124,7 +123,7 @@ private fun TaskDetailSnapshot(
     modifier: Modifier,
 ) {
     Column(
-        modifier = modifier.fillMaxSize().imePadding(),
+        modifier = modifier.fillMaxSize(),
     ) {
         TaskHeaderSection(
             detail = detail,
@@ -134,32 +133,105 @@ private fun TaskDetailSnapshot(
                     .fillMaxWidth()
                     .padding(AppSpacing.page),
         )
-        TaskTranscript(
+        TaskChatSurface(
             detail = detail,
+            screen = screen,
             operation = operation,
-            pendingMessage = pendingMessage,
-            failedMessage = failedMessage,
-            activeResponse = activeResponse,
-            operationFailure = operationFailure,
-            expiredPlanIds = expiredPlanIds,
+            onDraftChanged = onDraftChanged,
+            onSendMessage = onSendMessage,
+            onRetryMessage = onRetryMessage,
+            onCancelResponseRun = onCancelResponseRun,
+            onRetryResponseRun = onRetryResponseRun,
+            onSelectPlan = onSelectPlan,
+            onRetryOperation = onRetryOperation,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun TaskChatSurface(
+    detail: ConversationDetail,
+    screen: TaskDetailScreenUiState,
+    operation: TaskDetailOperation,
+    onDraftChanged: (String) -> Unit,
+    onSendMessage: () -> Unit,
+    onRetryMessage: () -> Unit,
+    onCancelResponseRun: (com.nexusflow.app.feature.task.domain.ResponseRunId) -> Unit,
+    onRetryResponseRun: (com.nexusflow.app.feature.task.domain.ResponseRunId) -> Unit,
+    onSelectPlan: (PlanId) -> Unit,
+    onRetryOperation: (TaskDetailRetryTarget) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    val keyboardInsetPx = WindowInsets.ime.getBottom(density)
+    val safeBottomPx = WindowInsets.navigationBars.getBottom(density)
+    val inputTopPadding = AppSpacing.medium
+    val inputTopPaddingPx = with(density) { inputTopPadding.roundToPx() }
+    val inputBottomPadding = with(density) { (keyboardInsetPx + safeBottomPx).toDp() }
+    var inputContentHeightPx by remember { mutableStateOf(0) }
+    val bottomObstruction =
+        with(density) {
+            (
+                inputContentHeightPx.coerceAtLeast(0) +
+                    inputTopPaddingPx.coerceAtLeast(0) +
+                    keyboardInsetPx.coerceAtLeast(0) +
+                    safeBottomPx.coerceAtLeast(0)
+            ).toDp()
+        }
+    Box(modifier = modifier) {
+        TaskTranscript(
+            state = screen.transcript,
+            operation = operation,
             onSelectPlan = onSelectPlan,
             onRetryMessage = onRetryMessage,
             onCancelResponseRun = onCancelResponseRun,
             onRetryResponseRun = onRetryResponseRun,
             onRetryOperation = onRetryOperation,
-            modifier = Modifier.weight(1f),
+            bottomObstruction = bottomObstruction,
+            modifier = Modifier.fillMaxSize(),
         )
-        Column(
+        TaskInputOverlay(
+            composer = screen.composer,
+            placeholder = detail.currentTask.composerPlaceholder(),
+            topPadding = inputTopPadding,
+            bottomPadding = inputBottomPadding,
+            onContentHeightChanged = { heightPx -> inputContentHeightPx = heightPx },
+            onDraftChanged = onDraftChanged,
+            onSendMessage = onSendMessage,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+    }
+}
+
+@Composable
+private fun TaskInputOverlay(
+    composer: TaskComposerUiState,
+    placeholder: String,
+    topPadding: Dp,
+    bottomPadding: Dp,
+    onContentHeightChanged: (Int) -> Unit,
+    onDraftChanged: (String) -> Unit,
+    onSendMessage: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .padding(top = topPadding, bottom = bottomPadding)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                .padding(horizontal = AppSpacing.page),
+    ) {
+        Box(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
-                    .padding(horizontal = AppSpacing.page, vertical = AppSpacing.medium),
+                    .onSizeChanged { size -> onContentHeightChanged(size.height) },
         ) {
             TaskComposer(
-                draft = draft,
-                placeholder = detail.currentTask.composerPlaceholder(),
-                operation = operation,
+                state = composer,
+                placeholder = placeholder,
                 onDraftChanged = onDraftChanged,
                 onSendMessage = onSendMessage,
             )

@@ -6,13 +6,14 @@ import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material3.Icon
@@ -23,24 +24,23 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.nexusflow.app.core.design.AppSpacing
-import com.nexusflow.app.feature.task.domain.ConversationDetail
 import com.nexusflow.app.feature.task.domain.PlanId
 import com.nexusflow.app.feature.task.domain.PlanningState
 import com.nexusflow.app.feature.task.domain.TaskMessage
+import com.nexusflow.app.feature.task.domain.TaskPlan
 import kotlinx.coroutines.launch
 import nexusflow.app.composeapp.generated.resources.Res
 import nexusflow.app.composeapp.generated.resources.task_detail_jump_to_latest
 import org.jetbrains.compose.resources.stringResource
 
-internal sealed interface TaskTranscriptItem {
+sealed interface TaskTranscriptItem {
     val key: String
     val contentType: String
 
@@ -87,54 +87,51 @@ internal sealed interface TaskTranscriptItem {
         override val contentType: String = "failed-message"
     }
 
-    data object Planning : TaskTranscriptItem {
-        override val key: String = "planning"
+    data class Planning(
+        val plans: List<TaskPlan>,
+        val selectedPlanId: PlanId?,
+        val expiredPlanIds: Set<PlanId>,
+    ) : TaskTranscriptItem {
+        override val key: String = "planning-${plans.joinToString("-") { it.id.value }}-$selectedPlanId"
         override val contentType: String = "planning"
     }
 }
 
 @Composable
 internal fun TaskTranscript(
-    detail: ConversationDetail,
+    state: TaskTranscriptUiState,
     operation: TaskDetailOperation,
-    pendingMessage: PendingTaskMessage?,
-    failedMessage: PendingTaskMessage?,
-    activeResponse: ActiveResponseUiState?,
-    operationFailure: TaskDetailOperationFailure?,
-    expiredPlanIds: Set<PlanId>,
     onSelectPlan: (PlanId) -> Unit,
     onRetryMessage: () -> Unit,
     onCancelResponseRun: (com.nexusflow.app.feature.task.domain.ResponseRunId) -> Unit,
     onRetryResponseRun: (com.nexusflow.app.feature.task.domain.ResponseRunId) -> Unit,
     onRetryOperation: (TaskDetailRetryTarget) -> Unit,
+    bottomObstruction: Dp,
     modifier: Modifier = Modifier,
 ) {
-    val listState = rememberLazyListState()
+    val scrollState = remember { TaskTranscriptScrollState() }
+    val listState = scrollState.listState
     val scope = rememberCoroutineScope()
-    var autoFollow by remember { mutableStateOf(true) }
     val isUserDragging by listState.interactionSource.collectIsDraggedAsState()
-    val items =
-        remember(detail, pendingMessage, failedMessage, activeResponse, operation, operationFailure) {
-            detail.toTranscriptItems(
-                pendingMessage = pendingMessage,
-                failedMessage = failedMessage,
-                activeResponse = activeResponse,
-                operation = operation,
-                operationFailure = operationFailure,
-            )
-        }
+    val items = state.items
     val isNearBottom by remember(listState) {
         derivedStateOf { listState.isNearBottom() }
     }
     LaunchedEffect(isUserDragging, isNearBottom) {
         when {
-            isNearBottom -> autoFollow = true
-            isUserDragging -> autoFollow = false
+            isUserDragging -> scrollState.pauseAutoFollow()
+            isNearBottom -> scrollState.resumeAutoFollow()
         }
     }
-    LaunchedEffect(items.lastOrNull()?.key, items.size, autoFollow) {
-        if (autoFollow && items.isNotEmpty()) {
-            listState.animateScrollToItem(items.lastIndex)
+    LaunchedEffect(state.conversationId, items, state.followSignal) {
+        when (scrollState.nextCommand(items, state.followSignal)) {
+            TaskTranscriptScrollCommand.FollowLatest -> listState.animateScrollToItem(bottomAnchorIndex(items))
+            TaskTranscriptScrollCommand.None -> Unit
+        }
+    }
+    LaunchedEffect(state.conversationId, bottomObstruction) {
+        if (scrollState.autoFollowEnabled && !isUserDragging && items.isNotEmpty()) {
+            listState.scrollToItem(bottomAnchorIndex(items))
         }
     }
     Box(modifier = modifier.fillMaxWidth()) {
@@ -188,77 +185,38 @@ internal fun TaskTranscript(
                         )
 
                     is TaskTranscriptItem.Planning ->
-                        detail.currentTask?.let { task ->
-                            PlanningSection(
-                                plans = task.plans,
-                                selectedPlanId = task.selectedPlanId,
-                                operation = operation,
-                                expiredPlanIds = expiredPlanIds,
-                                onSelectPlan = onSelectPlan,
-                            )
-                        }
+                        PlanningSection(
+                            plans = item.plans,
+                            selectedPlanId = item.selectedPlanId,
+                            operation = operation,
+                            expiredPlanIds = item.expiredPlanIds,
+                            onSelectPlan = onSelectPlan,
+                        )
                 }
+            }
+            item(key = "input-spacer", contentType = "input-spacer") {
+                Spacer(Modifier.fillMaxWidth().height(bottomObstruction))
+            }
+            item(key = "bottom-anchor", contentType = "bottom-anchor") {
+                Spacer(Modifier.fillMaxWidth().height(BottomAnchorHeight))
             }
         }
         if (!isNearBottom) {
             JumpToLatestButton(
                 onClick = {
-                    autoFollow = true
+                    scrollState.resumeAutoFollow()
                     if (items.isNotEmpty()) {
-                        scope.launch { listState.animateScrollToItem(items.lastIndex) }
+                        scope.launch { listState.animateScrollToItem(bottomAnchorIndex(items)) }
                     }
                 },
                 modifier =
                     Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = AppSpacing.medium),
+                        .padding(bottom = bottomObstruction + AppSpacing.medium),
             )
         }
     }
 }
-
-private fun ConversationDetail.toTranscriptItems(
-    pendingMessage: PendingTaskMessage?,
-    failedMessage: PendingTaskMessage?,
-    activeResponse: ActiveResponseUiState?,
-    operation: TaskDetailOperation,
-    operationFailure: TaskDetailOperationFailure?,
-): List<TaskTranscriptItem> =
-    buildList {
-        operationFailure
-            ?.takeUnless { it.reason == TaskDetailFailureReason.MessageSendFailed }
-            ?.let { add(TaskTranscriptItem.OperationFailure(it)) }
-        messages.sortedForTranscript().forEachIndexed { index, message ->
-            add(TaskTranscriptItem.Message(message = message, index = index))
-            if (activeResponse?.userMessageId == message.id) {
-                add(TaskTranscriptItem.ActiveResponse(activeResponse))
-            }
-        }
-        currentTask?.planningState?.noticeOrNull()?.let { add(TaskTranscriptItem.PlanningNotice(it)) }
-        pendingMessage?.let { add(TaskTranscriptItem.PendingMessage(it)) }
-        failedMessage?.let { add(TaskTranscriptItem.FailedMessage(it)) }
-        if (currentTask?.plans.orEmpty().isNotEmpty()) {
-            add(TaskTranscriptItem.Planning)
-        }
-    }
-
-private fun List<TaskMessage>.sortedForTranscript(): List<TaskMessage> =
-    sortedWith(
-        compareBy<TaskMessage> { it.turnIndex ?: Long.MAX_VALUE }
-            .thenBy { if (it.role == com.nexusflow.app.feature.task.domain.MessageRole.User) 0 else 1 }
-            .thenBy { it.id },
-    )
-
-private fun PlanningState.noticeOrNull(): PlanningState? =
-    when (this) {
-        PlanningState.NoCandidates,
-        PlanningState.NoFeasiblePlan,
-        PlanningState.Unavailable,
-        -> this
-        PlanningState.Idle,
-        PlanningState.Ready,
-        -> null
-    }
 
 private fun LazyListState.isNearBottom(): Boolean {
     val totalItemsCount = layoutInfo.totalItemsCount
@@ -266,6 +224,8 @@ private fun LazyListState.isNearBottom(): Boolean {
     val lastVisibleItemIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return false
     return lastVisibleItemIndex >= totalItemsCount - NEAR_BOTTOM_ITEM_THRESHOLD
 }
+
+private fun bottomAnchorIndex(items: List<TaskTranscriptItem>): Int = items.size + 1
 
 @Composable
 private fun JumpToLatestButton(
@@ -290,3 +250,4 @@ private fun JumpToLatestButton(
 }
 
 private const val NEAR_BOTTOM_ITEM_THRESHOLD = 2
+private val BottomAnchorHeight = 1.dp

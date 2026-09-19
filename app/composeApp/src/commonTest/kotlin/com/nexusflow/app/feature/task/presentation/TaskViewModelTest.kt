@@ -348,7 +348,7 @@ class TaskViewModelTest {
             advanceUntilIdle()
 
             val content = assertIs<TaskDetailContent.Success>(viewModel.state.value.content)
-            assertEquals(TaskDetailOperation.SendingMessage("message-1"), content.operation)
+            assertEquals(TaskDetailOperation.ReceivingResponse(run.id), content.operation)
             assertEquals("message-1", repository.sendConversationCommands.single().clientMessageId)
             assertEquals(ActiveResponseStatus.Queued, content.activeResponse?.status)
             assertEquals(run.id, content.activeResponse?.runId)

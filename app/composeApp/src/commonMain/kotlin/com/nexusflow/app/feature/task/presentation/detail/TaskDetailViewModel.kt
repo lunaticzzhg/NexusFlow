@@ -22,7 +22,6 @@ import com.nexusflow.app.feature.task.domain.SelectPlanCommand
 import com.nexusflow.app.feature.task.domain.SendConversationMessageCommand
 import com.nexusflow.app.feature.task.domain.TaskDetail
 import com.nexusflow.app.feature.task.domain.TaskRepository
-import com.nexusflow.app.feature.task.domain.isExpiredAt
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,6 +43,8 @@ internal class TaskDetailViewModel(
 ) : ViewModel() {
     private val _state = MutableStateFlow(TaskDetailUiState())
     val state: StateFlow<TaskDetailUiState> = _state.asStateFlow()
+    private val composer = TaskComposerStateHolder()
+    private val uiStateMapper = TaskDetailUiStateMapper()
     private val streamController =
         ResponseRunStreamController(
             repository = repository,
@@ -67,10 +68,9 @@ internal class TaskDetailViewModel(
                             TaskDetailUiState(
                                 detailContent(
                                     detail = event.snapshot.conversation,
-                                    draft = current.draft,
                                     operation =
                                         if (event.snapshot.run.status.isStreamOpen()) {
-                                            current.operation
+                                            TaskDetailOperation.ReceivingResponse(event.snapshot.run.id)
                                         } else {
                                             TaskDetailOperation.Idle
                                         },
@@ -103,6 +103,7 @@ internal class TaskDetailViewModel(
 
     private fun load() {
         val current = _state.value.content as? TaskDetailContent.Success
+        current?.let(composer::restoreFromProjection)
         if (current == null) {
             _state.value = TaskDetailUiState(TaskDetailContent.Loading)
         }
@@ -114,7 +115,6 @@ internal class TaskDetailViewModel(
                         TaskDetailUiState(
                             detailContent(
                                 detail = detail,
-                                draft = current?.draft.orEmpty(),
                                 streamState = streamController.state.value,
                             ),
                         )
@@ -124,7 +124,14 @@ internal class TaskDetailViewModel(
                         if (current == null) {
                             TaskDetailUiState(TaskDetailContent.Failure)
                         } else {
-                            TaskDetailUiState(current.copy(operation = TaskDetailOperation.Idle))
+                            TaskDetailUiState(
+                                detailContent(
+                                    detail = current.detail,
+                                    operation = TaskDetailOperation.Idle,
+                                    operationFailure = current.operationFailure,
+                                    streamState = streamController.state.value,
+                                ),
+                            )
                         }
                 },
             )
@@ -133,56 +140,57 @@ internal class TaskDetailViewModel(
 
     private fun updateDraft(text: String) {
         val current = _state.value.content as? TaskDetailContent.Success ?: return
+        composer.updateDraft(text)
         _state.value =
             TaskDetailUiState(
-                current.copy(
-                    draft = text,
+                detailContent(
+                    detail = current.detail,
+                    operation = current.operation,
                     operationFailure = null,
+                    streamState = streamController.state.value,
                 ),
             )
     }
 
     private fun sendMessage() {
         val current = _state.value.content as? TaskDetailContent.Success ?: return
-        val text = current.draft.trim()
-        if (text.isBlank() || current.operation != TaskDetailOperation.Idle) return
+        composer.restoreFromProjection(current)
+        val pending = composer.beginSend(clientMessageIdFactory(), current.operation) ?: return
         sendPendingMessage(
             current = current,
-            pending = PendingTaskMessage(clientMessageIdFactory(), text),
-            clearDraft = true,
+            pending = pending,
+            trigger = "user",
         )
     }
 
     private fun retryMessage() {
         val current = _state.value.content as? TaskDetailContent.Success ?: return
-        val pending = current.failedMessage ?: return
-        if (current.operation != TaskDetailOperation.Idle) return
+        composer.restoreFromProjection(current)
+        val pending = composer.beginRetry(current.operation) ?: return
         sendPendingMessage(
             current = current,
             pending = pending,
-            clearDraft = false,
+            trigger = "retry",
         )
     }
 
     private fun sendPendingMessage(
         current: TaskDetailContent.Success,
         pending: PendingTaskMessage,
-        clearDraft: Boolean,
+        trigger: String,
     ) {
         _state.value =
             TaskDetailUiState(
-                current.copy(
-                    draft = if (clearDraft) "" else current.draft,
+                detailContent(
+                    detail = current.detail,
                     operation = TaskDetailOperation.SendingMessage(pending.clientMessageId),
-                    pendingMessage = pending,
-                    failedMessage = null,
-                    operationFailure = null,
+                    streamState = streamController.state.value,
                 ),
             )
         viewModelScope.launch {
             traceManager.withNewResultTrace(
                 operation = "task_message_send",
-                trigger = if (clearDraft) "user" else "retry",
+                trigger = trigger,
             ) {
                 sendDetailMessage(
                     clientMessageId = pending.clientMessageId,
@@ -190,20 +198,19 @@ internal class TaskDetailViewModel(
                 )
             }.fold(
                 onSuccess = { detail ->
-                    val latest = _state.value.content as? TaskDetailContent.Success
                     val acceptedRun =
                         startAcceptedResponseRun(
                             detail = detail,
                             clientMessageId = pending.clientMessageId,
                         )
+                    composer.finishAccepted(pending)
                     _state.value =
                         TaskDetailUiState(
                             detailContent(
                                 detail = detail,
-                                draft = latest?.draft.orEmpty(),
                                 operation =
                                     if (acceptedRun != null) {
-                                        TaskDetailOperation.SendingMessage(pending.clientMessageId)
+                                        TaskDetailOperation.ReceivingResponse(acceptedRun.id)
                                     } else {
                                         TaskDetailOperation.Idle
                                     },
@@ -213,17 +220,18 @@ internal class TaskDetailViewModel(
                 },
                 onFailure = {
                     val latest = _state.value.content as? TaskDetailContent.Success ?: current
+                    composer.finishFailed(pending)
                     _state.value =
                         TaskDetailUiState(
-                            latest.copy(
+                            detailContent(
+                                detail = latest.detail,
                                 operation = TaskDetailOperation.Idle,
-                                pendingMessage = null,
-                                failedMessage = pending,
                                 operationFailure =
                                     TaskDetailOperationFailure(
                                         reason = TaskDetailFailureReason.MessageSendFailed,
                                         retryTarget = null,
                                     ),
+                                streamState = streamController.state.value,
                             ),
                         )
                 },
@@ -237,9 +245,11 @@ internal class TaskDetailViewModel(
         if (current.operation != TaskDetailOperation.Idle) return
         _state.value =
             TaskDetailUiState(
-                current.copy(
+                detailContent(
+                    detail = current.detail,
                     operation = TaskDetailOperation.RemovingRequirement(requirementId),
                     operationFailure = null,
+                    streamState = streamController.state.value,
                 ),
             )
         viewModelScope.launch {
@@ -249,31 +259,72 @@ internal class TaskDetailViewModel(
                         TaskDetailUiState(
                             detailContent(
                                 detail = current.detail.withTaskDetail(taskDetail),
-                                draft = current.draft,
                                 streamState = streamController.state.value,
                             ),
                         )
                 },
-                onFailure = { _state.value = TaskDetailUiState(current.withRequirementFailure()) },
+                onFailure = {
+                    _state.value =
+                        TaskDetailUiState(
+                            detailContent(
+                                detail = current.detail,
+                                operation = TaskDetailOperation.Idle,
+                                operationFailure =
+                                    TaskDetailOperationFailure(
+                                        reason = TaskDetailFailureReason.RequirementMutationFailed,
+                                        retryTarget = null,
+                                    ),
+                                streamState = streamController.state.value,
+                            ),
+                        )
+                },
             )
         }
     }
 
     private fun cancelResponseRun(runId: ResponseRunId) {
         val current = _state.value.content as? TaskDetailContent.Success ?: return
+        _state.value =
+            TaskDetailUiState(
+                detailContent(
+                    detail = current.detail,
+                    operation = TaskDetailOperation.CancellingResponse(runId),
+                    operationFailure = current.operationFailure,
+                    streamState = streamController.state.value,
+                ),
+            )
         viewModelScope.launch {
             repository.cancelResponseRun(current.detail.id, runId).fold(
                 onSuccess = { run ->
                     streamController.stop()
                     applyResponseRunUpdate(run)
                 },
-                onFailure = { applyStreamState(streamController.state.value) },
+                onFailure = {
+                    _state.value =
+                        TaskDetailUiState(
+                            detailContent(
+                                detail = current.detail,
+                                operation = TaskDetailOperation.Idle,
+                                operationFailure = current.operationFailure,
+                                streamState = streamController.state.value,
+                            ),
+                        )
+                },
             )
         }
     }
 
     private fun retryResponseRun(runId: ResponseRunId) {
         val current = _state.value.content as? TaskDetailContent.Success ?: return
+        _state.value =
+            TaskDetailUiState(
+                detailContent(
+                    detail = current.detail,
+                    operation = TaskDetailOperation.RetryingResponse(runId),
+                    operationFailure = current.operationFailure,
+                    streamState = streamController.state.value,
+                ),
+            )
         viewModelScope.launch {
             repository.retryResponseRun(current.detail.id, runId).fold(
                 onSuccess = { run ->
@@ -284,13 +335,23 @@ internal class TaskDetailViewModel(
                         TaskDetailUiState(
                             detailContent(
                                 detail = nextDetail,
-                                draft = latest.draft,
+                                operation = TaskDetailOperation.ReceivingResponse(run.id),
                                 operationFailure = latest.operationFailure,
                                 streamState = streamController.state.value,
                             ),
                         )
                 },
-                onFailure = { applyStreamState(streamController.state.value) },
+                onFailure = {
+                    _state.value =
+                        TaskDetailUiState(
+                            detailContent(
+                                detail = current.detail,
+                                operation = TaskDetailOperation.Idle,
+                                operationFailure = current.operationFailure,
+                                streamState = streamController.state.value,
+                            ),
+                        )
+                },
             )
         }
     }
@@ -299,7 +360,15 @@ internal class TaskDetailViewModel(
         val current = _state.value.content as? TaskDetailContent.Success ?: return
         val taskId = current.detail.currentTask?.id ?: return
         if (current.operation != TaskDetailOperation.Idle) return
-        _state.value = TaskDetailUiState(current.copy(operation = TaskDetailOperation.SelectingPlan(planId), operationFailure = null))
+        _state.value =
+            TaskDetailUiState(
+                detailContent(
+                    detail = current.detail,
+                    operation = TaskDetailOperation.SelectingPlan(planId),
+                    operationFailure = null,
+                    streamState = streamController.state.value,
+                ),
+            )
         viewModelScope.launch {
             repository.selectPlan(SelectPlanCommand(taskId, planId)).fold(
                 onSuccess = { taskDetail ->
@@ -307,7 +376,6 @@ internal class TaskDetailViewModel(
                         TaskDetailUiState(
                             detailContent(
                                 detail = current.detail.withTaskDetail(taskDetail),
-                                draft = current.draft,
                                 streamState = streamController.state.value,
                             ),
                         )
@@ -318,13 +386,15 @@ internal class TaskDetailViewModel(
                     } else {
                         _state.value =
                             TaskDetailUiState(
-                                current.copy(
+                                detailContent(
+                                    detail = current.detail,
                                     operation = TaskDetailOperation.Idle,
                                     operationFailure =
                                         TaskDetailOperationFailure(
                                             reason = TaskDetailFailureReason.SelectionFailed,
                                             retryTarget = TaskDetailRetryTarget.SelectPlan(planId),
                                         ),
+                                    streamState = streamController.state.value,
                                 ),
                             )
                     }
@@ -346,7 +416,6 @@ internal class TaskDetailViewModel(
                     TaskDetailUiState(
                         detailContent(
                             detail = current.detail.withTaskDetail(taskDetail),
-                            draft = current.draft,
                             operationFailure = failure,
                             streamState = streamController.state.value,
                         ),
@@ -355,9 +424,11 @@ internal class TaskDetailViewModel(
             onFailure = {
                 _state.value =
                     TaskDetailUiState(
-                        current.copy(
+                        detailContent(
+                            detail = current.detail,
                             operation = TaskDetailOperation.Idle,
                             operationFailure = failure,
+                            streamState = streamController.state.value,
                         ),
                     )
             },
@@ -393,32 +464,28 @@ internal class TaskDetailViewModel(
 
     private fun detailContent(
         detail: ConversationDetail,
-        draft: String = "",
         operation: TaskDetailOperation = TaskDetailOperation.Idle,
         operationFailure: TaskDetailOperationFailure? = null,
         streamState: ResponseRunStreamState = streamController.state.value,
     ): TaskDetailContent.Success =
-        TaskDetailContent.Success(
+        uiStateMapper.success(
             detail = detail,
-            draft = draft,
+            composer = composer.state,
             operation = operation,
-            activeResponse = detail.activeResponseUiState(streamState),
             operationFailure = operationFailure,
-            expiredPlanIds =
-                detail.currentTask
-                    ?.plans
-                    .orEmpty()
-                    .filter { it.isExpiredAt(nowProvider()) }
-                    .map { it.id }
-                    .toSet(),
+            streamState = streamState,
+            now = nowProvider(),
         )
 
     private fun applyStreamState(streamState: ResponseRunStreamState) {
         val current = _state.value.content as? TaskDetailContent.Success ?: return
         _state.value =
             TaskDetailUiState(
-                current.copy(
-                    activeResponse = current.detail.activeResponseUiState(streamState),
+                detailContent(
+                    detail = current.detail,
+                    operation = current.operation,
+                    operationFailure = current.operationFailure,
+                    streamState = streamState,
                 ),
             )
     }
@@ -430,7 +497,6 @@ internal class TaskDetailViewModel(
             TaskDetailUiState(
                 detailContent(
                     detail = nextDetail,
-                    draft = current.draft,
                     operationFailure = current.operationFailure,
                     streamState = streamController.state.value,
                 ),
@@ -480,36 +546,6 @@ private fun ConversationDetail.withResponseRun(run: ResponseRun): ConversationDe
             },
     )
 
-private fun ConversationDetail.activeResponseUiState(streamState: ResponseRunStreamState): ActiveResponseUiState? {
-    val run = visibleResponseRun(streamState) ?: return null
-    if (run.status == ResponseRunStatus.Completed && run.assistantMessageId != null) return null
-    val streamBelongsToRun = streamState.runId == run.id
-    val terminalStatus = streamState.terminalStatus.takeIf { streamBelongsToRun } ?: run.status
-    val partialText = streamState.partialText.takeIf { streamBelongsToRun }.orEmpty()
-    return ActiveResponseUiState(
-        runId = run.id,
-        userMessageId = run.userMessageId,
-        turnIndex = run.turnIndex,
-        status =
-            when {
-                terminalStatus == ResponseRunStatus.Cancelled -> ActiveResponseStatus.Cancelled
-                terminalStatus == ResponseRunStatus.TimedOut -> ActiveResponseStatus.TimedOut
-                terminalStatus == ResponseRunStatus.FailedRetryable || terminalStatus == ResponseRunStatus.Failed ->
-                    ActiveResponseStatus.Failed
-                partialText.isNotBlank() -> ActiveResponseStatus.Streaming
-                streamBelongsToRun && streamState.activities.isNotEmpty() -> ActiveResponseStatus.Thinking
-                else -> ActiveResponseStatus.Queued
-            },
-        partialText = partialText,
-        activities = if (streamBelongsToRun) streamState.activities else emptyList(),
-        canCancel = run.status.isStreamOpen(),
-        canRetry =
-            run.status == ResponseRunStatus.FailedRetryable ||
-                run.status == ResponseRunStatus.Failed ||
-                run.status == ResponseRunStatus.TimedOut,
-    )
-}
-
 private fun ConversationDetail.visibleResponseRun(streamState: ResponseRunStreamState): ResponseRun? =
     streamState.runId
         ?.let { activeRunId -> responseRuns.firstOrNull { it.id == activeRunId } }
@@ -534,16 +570,6 @@ private fun ResponseRunStatus.isStreamOpen(): Boolean =
         ResponseRunStatus.Cancelled,
         -> false
     }
-
-private fun TaskDetailContent.Success.withRequirementFailure(): TaskDetailContent.Success =
-    copy(
-        operation = TaskDetailOperation.Idle,
-        operationFailure =
-            TaskDetailOperationFailure(
-                reason = TaskDetailFailureReason.RequirementMutationFailed,
-                retryTarget = null,
-            ),
-    )
 
 private val NoopRealtimeSseSessionFactory =
     RealtimeSseSessionFactory(

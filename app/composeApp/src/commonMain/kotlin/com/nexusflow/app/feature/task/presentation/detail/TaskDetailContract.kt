@@ -31,9 +31,42 @@ sealed interface TaskDetailContent {
         val activeResponse: ActiveResponseUiState? = null,
         val operationFailure: TaskDetailOperationFailure? = null,
         val expiredPlanIds: Set<PlanId> = emptySet(),
+        val screen: TaskDetailScreenUiState = TaskDetailScreenUiState(),
     ) : TaskDetailContent
 
     data object Failure : TaskDetailContent
+}
+
+data class TaskDetailScreenUiState(
+    val transcript: TaskTranscriptUiState = TaskTranscriptUiState(),
+    val composer: TaskComposerUiState = TaskComposerUiState(),
+)
+
+data class TaskTranscriptUiState(
+    val conversationId: String = "",
+    val items: List<TaskTranscriptItem> = emptyList(),
+    val followSignal: TaskTranscriptFollowSignal? = null,
+)
+
+data class TaskTranscriptFollowSignal(
+    val runId: ResponseRunId,
+    val status: ActiveResponseStatus,
+    val partialTextHash: Int,
+    val activityHash: Int,
+)
+
+data class TaskComposerUiState(
+    val draft: String = "",
+    val primaryAction: TaskComposerPrimaryAction = TaskComposerPrimaryAction.Disabled,
+)
+
+enum class TaskComposerPrimaryAction {
+    Send,
+    Disabled,
+    Sending,
+    Receiving,
+    Cancelling,
+    Retrying,
 }
 
 data class PendingTaskMessage(
@@ -74,6 +107,18 @@ sealed interface TaskDetailOperation {
 
     data class SelectingPlan(
         val planId: PlanId,
+    ) : TaskDetailOperation
+
+    data class ReceivingResponse(
+        val runId: ResponseRunId,
+    ) : TaskDetailOperation
+
+    data class CancellingResponse(
+        val runId: ResponseRunId,
+    ) : TaskDetailOperation
+
+    data class RetryingResponse(
+        val runId: ResponseRunId,
     ) : TaskDetailOperation
 }
 

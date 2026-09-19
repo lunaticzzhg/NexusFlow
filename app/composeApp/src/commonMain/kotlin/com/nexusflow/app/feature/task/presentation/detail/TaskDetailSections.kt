@@ -345,9 +345,8 @@ internal fun PendingTaskMessageBubble(
 
 @Composable
 internal fun TaskComposer(
-    draft: String,
+    state: TaskComposerUiState,
     placeholder: String,
-    operation: TaskDetailOperation,
     onDraftChanged: (String) -> Unit,
     onSendMessage: () -> Unit,
 ) {
@@ -357,17 +356,17 @@ internal fun TaskComposer(
         modifier = Modifier.fillMaxWidth(),
     ) {
         OutlinedTextField(
-            value = draft,
+            value = state.draft,
             onValueChange = onDraftChanged,
             placeholder = { Text(placeholder) },
-            enabled = operation == TaskDetailOperation.Idle,
+            enabled = state.primaryAction == TaskComposerPrimaryAction.Send || state.primaryAction == TaskComposerPrimaryAction.Disabled,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
             keyboardActions = KeyboardActions(onSend = { onSendMessage() }),
             modifier = Modifier.weight(1f),
         )
         IconButton(
             onClick = onSendMessage,
-            enabled = draft.isNotBlank() && operation == TaskDetailOperation.Idle,
+            enabled = state.primaryAction == TaskComposerPrimaryAction.Send,
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Outlined.Send,
