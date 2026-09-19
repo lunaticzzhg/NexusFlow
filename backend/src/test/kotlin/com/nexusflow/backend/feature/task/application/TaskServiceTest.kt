@@ -1,6 +1,6 @@
 package com.nexusflow.backend.feature.task.application
 
-import com.nexusflow.backend.core.readtool.ReadToolCatalog
+import com.nexusflow.backend.feature.research.application.ReadToolCatalog
 import com.nexusflow.backend.feature.task.ControlledPlanningReadTool
 import com.nexusflow.backend.feature.task.RecordingPlanningResearch
 import com.nexusflow.backend.feature.task.ScriptedUnderstanding

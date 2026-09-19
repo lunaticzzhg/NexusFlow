@@ -1,6 +1,7 @@
 package com.nexusflow.backend.feature.task.domain
 
 import com.nexusflow.backend.feature.conversation.domain.ConversationId
+import com.nexusflow.backend.feature.conversation.domain.MessageId
 import java.time.Instant
 
 interface TaskRepository {

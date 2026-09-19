@@ -1,20 +1,21 @@
 package com.nexusflow.backend.feature.conversation.application
 
-import com.nexusflow.backend.feature.conversation.domain.ClaimNextResponseRunCommand
-import com.nexusflow.backend.feature.conversation.domain.ClaimedResponseRun
-import com.nexusflow.backend.feature.conversation.domain.ConsumeResponseRunIgnoreReason
-import com.nexusflow.backend.feature.conversation.domain.ConsumeResponseRunResult
-import com.nexusflow.backend.feature.conversation.domain.ConversationRepository
-import com.nexusflow.backend.feature.conversation.domain.HeartbeatResponseRunLeaseCommand
-import com.nexusflow.backend.feature.conversation.domain.MarkResponseRunRetryableCommand
-import com.nexusflow.backend.feature.conversation.domain.ResponseRun
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunFailureCategory
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunResult
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunResultPayload
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunResultType
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunStatus
-import com.nexusflow.backend.feature.conversation.domain.StoreResponseRunResult
-import com.nexusflow.backend.feature.conversation.domain.StoreResponseRunResultCommand
+import com.nexusflow.backend.feature.responserun.domain.ClaimNextResponseRunCommand
+import com.nexusflow.backend.feature.responserun.domain.ClaimedResponseRun
+import com.nexusflow.backend.feature.responserun.domain.ConsumeResponseRunIgnoreReason
+import com.nexusflow.backend.feature.responserun.domain.ConsumeResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.HeartbeatResponseRunLeaseCommand
+import com.nexusflow.backend.feature.responserun.domain.MarkResponseRunRetryableCommand
+import com.nexusflow.backend.feature.responserun.domain.ResponseRun
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunFailureCategory
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunResultPayload
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunResultType
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunResultStore
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStatus
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStore
+import com.nexusflow.backend.feature.responserun.domain.StoreResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.StoreResponseRunResultCommand
 import com.nexusflow.contracts.backendai.common.AiCapabilityException
 import com.nexusflow.observability.RandomTraceIdGenerator
 import com.nexusflow.observability.StructuredLogger
@@ -41,7 +42,8 @@ import java.time.Duration.between
 import java.util.UUID
 
 class ResponseRunWorker(
-    private val repository: ConversationRepository,
+    private val responseRunStore: ResponseRunStore,
+    private val resultStore: ResponseRunResultStore,
     private val processor: ConversationTurnProcessor,
     private val resultConsumer: ResponseRunResultConsumer,
     private val config: ResponseRunWorkerConfig,
@@ -64,7 +66,7 @@ class ResponseRunWorker(
     }
 
     suspend fun runOnce(): Boolean {
-        val claimed = repository.claimNextResponseRun(
+        val claimed = responseRunStore.claimNextResponseRun(
             ClaimNextResponseRunCommand(
                 workerId = workerId,
                 now = clock.instant(),
@@ -91,7 +93,7 @@ class ResponseRunWorker(
             val heartbeat = launch {
                 while (isActive) {
                     delay(config.heartbeatInterval.toMillis())
-                    val renewed = repository.heartbeatResponseRunLease(
+                    val renewed = responseRunStore.heartbeatResponseRunLease(
                         HeartbeatResponseRunLeaseCommand(
                             responseRunId = claimed.run.id,
                             attempt = claimed.run.attempt,
@@ -144,7 +146,7 @@ class ResponseRunWorker(
                         "duration_ms" value between(startedAt, finishedAt).toMillis()
                     },
                 )
-                val stored = repository.storeResponseRunResult(
+                val stored = resultStore.storeResponseRunResult(
                     StoreResponseRunResultCommand(
                         responseRunId = claimed.run.id,
                         attempt = claimed.run.attempt,
@@ -170,7 +172,7 @@ class ResponseRunWorker(
                                 "store_outcome" value "stale_attempt"
                             },
                         )
-                        repository.findResponseRun(claimed.run.id)?.let {
+                        responseRunStore.findResponseRun(claimed.run.id)?.let {
                             logStateObserved(it)
                             realtimeHub?.recordRun(it)
                         }
@@ -181,7 +183,7 @@ class ResponseRunWorker(
             } catch (error: Throwable) {
                 val now = clock.instant()
                 val failureCategory = error.toFailureCategory()
-                val retryable = repository.markResponseRunRetryable(
+                val retryable = responseRunStore.markResponseRunRetryable(
                     MarkResponseRunRetryableCommand(
                         responseRunId = claimed.run.id,
                         attempt = claimed.run.attempt,
@@ -200,12 +202,12 @@ class ResponseRunWorker(
                             "retry_at" value now.plus(config.retryBackoff).toString()
                         },
                     )
-                    repository.findResponseRun(claimed.run.id)?.let {
+                    responseRunStore.findResponseRun(claimed.run.id)?.let {
                         logStateObserved(it)
                         realtimeHub?.recordRun(it, "Response run will retry")
                     }
                 } else {
-                    repository.findResponseRun(claimed.run.id)?.let {
+                    responseRunStore.findResponseRun(claimed.run.id)?.let {
                         logTerminal(it)
                         logStateObserved(it)
                         realtimeHub?.recordRun(it)
@@ -233,14 +235,14 @@ class ResponseRunWorker(
                     event = "response_run_result_consumed",
                     fields = resultLogFields(claimed.run, result, "consumed"),
                 )
-                val current = repository.findResponseRun(claimed.run.id)
+                val current = responseRunStore.findResponseRun(claimed.run.id)
                     ?: error("response run missing after consumed result")
                 logStateObserved(current)
                 realtimeHub?.recordRun(current)
                 requireTerminalConvergence(current, result)
             }
             is ConsumeResponseRunResult.AlreadyConsumed -> {
-                val current = repository.findResponseRun(claimed.run.id)
+                val current = responseRunStore.findResponseRun(claimed.run.id)
                     ?: error("response run missing after already-consumed result")
                 logger?.info(
                     component = LOG_COMPONENT,
@@ -262,7 +264,7 @@ class ResponseRunWorker(
         result: ResponseRunResult,
         reason: ConsumeResponseRunIgnoreReason,
     ) {
-        val current = repository.findResponseRun(claimed.run.id)
+        val current = responseRunStore.findResponseRun(claimed.run.id)
         val fields = resultLogFields(claimed.run, result, "ignored") {
             "ignore_reason" value reason.logValue()
             "current_status" value current?.status?.logValue()

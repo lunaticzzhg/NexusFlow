@@ -1,16 +1,12 @@
 package com.nexusflow.ai.answer
 
-import com.nexusflow.ai.provider.InvalidStructuredOutputException as ProviderInvalidStructuredOutputException
-import com.nexusflow.ai.provider.ProviderRateLimitedException as ProviderRateLimitedModelException
-import com.nexusflow.ai.provider.ProviderRefusedException as ProviderRefusedModelException
-import com.nexusflow.ai.provider.ProviderTimeoutException as ProviderTimeoutModelException
-import com.nexusflow.ai.provider.ProviderUnauthorizedException as ProviderUnauthorizedModelException
-import com.nexusflow.ai.provider.ProviderUnavailableException as ProviderUnavailableModelException
-import com.nexusflow.ai.provider.StructuredModelException
 import com.nexusflow.ai.provider.StructuredModelProvider
 import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.ai.provider.StructuredModelRequestMetadata
 import com.nexusflow.ai.provider.StructuredOutputSchema
+import com.nexusflow.ai.runtime.StructuredCapabilityInvalidOutputException
+import com.nexusflow.ai.runtime.StructuredCapabilityOperation
+import com.nexusflow.ai.runtime.StructuredCapabilityRunner
 import com.nexusflow.contracts.backendai.answer.AnswerEvidencePayload
 import com.nexusflow.contracts.backendai.answer.AnswerInformationNeedPayload
 import com.nexusflow.contracts.backendai.answer.AnswerModelMetadata
@@ -20,18 +16,10 @@ import com.nexusflow.contracts.backendai.answer.ComposeConversationAnswerRequest
 import com.nexusflow.contracts.backendai.answer.ComposeConversationAnswerResult
 import com.nexusflow.contracts.backendai.answer.ConversationAnsweringCapability
 import com.nexusflow.contracts.backendai.answer.ResearchIssuePayload
-import com.nexusflow.contracts.backendai.common.CapabilityRateLimitedException
-import com.nexusflow.contracts.backendai.common.CapabilityRefusedException
-import com.nexusflow.contracts.backendai.common.CapabilityTimeoutException
-import com.nexusflow.contracts.backendai.common.CapabilityUnauthorizedException
-import com.nexusflow.contracts.backendai.common.CapabilityUnavailableException
-import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
 import com.nexusflow.contracts.backendai.common.StructuredModelCapability
 import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
 import com.nexusflow.contracts.backendai.conversation.InformationNeedMode
 import com.nexusflow.observability.StructuredLogger
-import com.nexusflow.observability.logFields
-import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -41,50 +29,22 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 
 class StructuredConversationAnswerer(
-    private val provider: StructuredModelProvider,
-    private val logger: StructuredLogger? = null,
+    provider: StructuredModelProvider,
+    logger: StructuredLogger? = null,
     private val json: Json = Json {
         ignoreUnknownKeys = false
         explicitNulls = false
         encodeDefaults = true
     },
 ) : ConversationAnsweringCapability {
-    override suspend fun answer(request: ComposeConversationAnswerRequest): ComposeConversationAnswerResult {
-        var attempt = 1
-        while (true) {
-            try {
-                return requestOnce(request, attempt)
-            } catch (error: RepairableAnswerException) {
-                if (attempt == MAX_ATTEMPTS) {
-                    throw InvalidCapabilityResultException(error.message ?: "Conversation answer response is invalid", error)
-                }
-                logRetry(nextAttempt = attempt + 1)
-                attempt += 1
-            }
-        }
-    }
+    private val runner = StructuredCapabilityRunner(provider, logger)
 
-    private fun logRetry(nextAttempt: Int) {
-        logger?.warn(
-            component = "ai",
-            event = "ai_request_retry",
-            fields =
-                logFields {
-                    "operation" value "conversation_answer"
-                    "next_attempt" value nextAttempt
-                    "failure_category" value "answer_invalid"
-                },
-        )
-    }
-
-    private suspend fun requestOnce(
-        request: ComposeConversationAnswerRequest,
-        attempt: Int,
-    ): ComposeConversationAnswerResult {
-        val userPayload = request.toPayload()
-        val requestDiagnostics = request.toRequestDiagnostics(userPayload)
-        val result = try {
-            provider.generate(
+    override suspend fun answer(request: ComposeConversationAnswerRequest): ComposeConversationAnswerResult =
+        runner.execute(
+            operation = CONVERSATION_ANSWER_OPERATION,
+            request = { attempt ->
+                val userPayload = request.toPayload()
+                val requestDiagnostics = request.toRequestDiagnostics(userPayload)
                 StructuredModelRequest(
                     systemPrompt = answerSystemPrompt(attempt),
                     userPayload = userPayload,
@@ -96,20 +56,17 @@ class StructuredConversationAnswerer(
                         attemptNumber = attempt,
                         diagnostics = requestDiagnostics,
                     ),
-                ),
-            )
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: StructuredModelException) {
-            throw error.toAnswerCapabilityException()
-        }
-        val payload = try {
-            json.decodeFromString<ConversationAnswerPayload>(result.outputText)
-        } catch (error: SerializationException) {
-            throw RepairableAnswerException("Conversation answer response was not valid structured output", error)
-        }
-        return payload.toResult(request, result.metadata.toAnswerModelMetadata())
-    }
+                )
+            },
+            decode = { result ->
+                val payload = try {
+                    json.decodeFromString<ConversationAnswerPayload>(result.outputText)
+                } catch (error: SerializationException) {
+                    throw RepairableAnswerException("Conversation answer response was not valid structured output", error)
+                }
+                payload.toResult(request, result.metadata.toAnswerModelMetadata())
+            },
+        )
 
     private fun ConversationAnswerPayload.toResult(
         request: ComposeConversationAnswerRequest,
@@ -253,20 +210,17 @@ class StructuredConversationAnswerer(
             usage = usage,
         )
 
-    private fun StructuredModelException.toAnswerCapabilityException(): RuntimeException =
-        when (this) {
-            is ProviderUnauthorizedModelException -> CapabilityUnauthorizedException(this)
-            is ProviderRateLimitedModelException -> CapabilityRateLimitedException(this)
-            is ProviderTimeoutModelException -> CapabilityTimeoutException(this)
-            is ProviderRefusedModelException -> CapabilityRefusedException()
-            is ProviderUnavailableModelException -> CapabilityUnavailableException(this)
-            is ProviderInvalidStructuredOutputException -> InvalidCapabilityResultException(message ?: "Invalid structured output", this)
-            else -> CapabilityUnavailableException(this)
-        }
 }
 
 typealias StructuredQuestionAnswerer = StructuredConversationAnswerer
 
 private const val MAX_ATTEMPTS = 2
 
-private class RepairableAnswerException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+private val CONVERSATION_ANSWER_OPERATION = StructuredCapabilityOperation(
+    name = "conversation_answer",
+    invalidFailureCategory = "answer_invalid",
+    maxAttempts = MAX_ATTEMPTS,
+)
+
+private class RepairableAnswerException(message: String, cause: Throwable? = null) :
+    StructuredCapabilityInvalidOutputException(message, cause)

@@ -1,19 +1,16 @@
 package com.nexusflow.backend.feature.conversation.application
 
+import com.nexusflow.backend.feature.conversation.domain.ConversationAnswerResultCommitter
 import com.nexusflow.backend.feature.conversation.domain.ConsumeConversationAnswerResultCommand
-import com.nexusflow.backend.feature.conversation.domain.ConsumePlanningResultCommand
-import com.nexusflow.backend.feature.conversation.domain.ConsumePlanningUnderstandingCommand
-import com.nexusflow.backend.feature.conversation.domain.ConsumeResponseRunResult
-import com.nexusflow.backend.feature.conversation.domain.ConversationRepository
-import com.nexusflow.backend.feature.conversation.domain.PlanningResponseRunRepository
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunFailureCategory
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunResult
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunResultPayload
-import com.nexusflow.backend.feature.conversation.domain.FactValuePayload
-import com.nexusflow.backend.feature.conversation.domain.OpportunityPayload
-import com.nexusflow.backend.feature.conversation.domain.PlanPayload
-import com.nexusflow.backend.feature.conversation.domain.RequirementValuePayload
-import com.nexusflow.backend.feature.conversation.domain.RequirementWritePayload
+import com.nexusflow.backend.feature.responserun.domain.ConsumeResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunFailureCategory
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunResultPayload
+import com.nexusflow.backend.feature.responserun.domain.FactValuePayload
+import com.nexusflow.backend.feature.responserun.domain.OpportunityPayload
+import com.nexusflow.backend.feature.responserun.domain.PlanPayload
+import com.nexusflow.backend.feature.responserun.domain.RequirementValuePayload
+import com.nexusflow.backend.feature.responserun.domain.RequirementWritePayload
 import com.nexusflow.backend.feature.task.domain.ActivityModeValue
 import com.nexusflow.backend.feature.task.domain.AvailabilityFact
 import com.nexusflow.backend.feature.task.domain.CommutePreferenceValue
@@ -32,8 +29,11 @@ import com.nexusflow.backend.feature.task.domain.Plan
 import com.nexusflow.backend.feature.task.domain.PlanDirection
 import com.nexusflow.backend.feature.task.domain.PlanEstimatedCost
 import com.nexusflow.backend.feature.task.domain.PlanId
+import com.nexusflow.backend.feature.task.domain.PlanningResultCommitter
 import com.nexusflow.backend.feature.task.domain.PlanSourceRef
 import com.nexusflow.backend.feature.task.domain.PlanTimelineItem
+import com.nexusflow.backend.feature.task.domain.ConsumePlanningResultCommand
+import com.nexusflow.backend.feature.task.domain.ConsumePlanningUnderstandingCommand
 import com.nexusflow.backend.feature.task.domain.RequirementEvaluation
 import com.nexusflow.backend.feature.task.domain.RequirementEvaluationResult
 import com.nexusflow.backend.feature.task.domain.RequirementId
@@ -49,14 +49,14 @@ import java.time.Instant
 import java.util.UUID
 
 class ResponseRunResultConsumer(
-    private val repository: ConversationRepository,
-    private val planningResponseRunRepository: PlanningResponseRunRepository,
+    private val conversationAnswerCommitter: ConversationAnswerResultCommitter,
+    private val planningResultCommitter: PlanningResultCommitter,
     private val clock: Clock = Clock.systemUTC(),
 ) {
     suspend fun consume(result: ResponseRunResult): ConsumeResponseRunResult =
         when (val payload = result.payload) {
             is ResponseRunResultPayload.ConversationAnswer ->
-                repository.consumeConversationAnswerResult(
+                conversationAnswerCommitter.consumeConversationAnswerResult(
                     ConsumeConversationAnswerResultCommand(
                         result = result,
                         payload = payload,
@@ -71,7 +71,7 @@ class ResponseRunResultConsumer(
         result: ResponseRunResult,
         payload: ResponseRunResultPayload.PlanningUnderstanding,
     ): ConsumeResponseRunResult =
-        planningResponseRunRepository.consumePlanningUnderstanding(
+        planningResultCommitter.consumePlanningUnderstanding(
             ConsumePlanningUnderstandingCommand(
                 result = result,
                 payload = payload,
@@ -86,7 +86,7 @@ class ResponseRunResultConsumer(
         result: ResponseRunResult,
         payload: ResponseRunResultPayload.PlanningResult,
     ): ConsumeResponseRunResult =
-        planningResponseRunRepository.consumePlanningResult(
+        planningResultCommitter.consumePlanningResult(
             ConsumePlanningResultCommand(
                 result = result,
                 payload = payload,

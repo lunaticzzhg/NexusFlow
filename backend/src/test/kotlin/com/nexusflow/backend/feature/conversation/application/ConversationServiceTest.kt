@@ -1,7 +1,7 @@
 package com.nexusflow.backend.feature.conversation.application
 
-import com.nexusflow.backend.core.readtool.ReadToolCatalog
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunStatus
+import com.nexusflow.backend.feature.research.application.ReadToolCatalog
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStatus
 import com.nexusflow.backend.feature.task.ControlledPlanningReadTool
 import com.nexusflow.backend.feature.task.RecordingConversationDecision
 import com.nexusflow.backend.feature.task.ScriptedUnderstanding
@@ -13,7 +13,7 @@ import com.nexusflow.backend.feature.task.postgresDataSource
 import com.nexusflow.backend.feature.task.taskActor
 import com.nexusflow.backend.feature.task.understandingOutcome
 import com.nexusflow.backend.feature.task.application.PlanningOutcome
-import com.nexusflow.backend.feature.task.domain.MessageRole
+import com.nexusflow.backend.feature.conversation.domain.MessageRole
 import com.nexusflow.contracts.backendai.understanding.TurnIntent
 import com.nexusflow.contracts.backendai.understanding.UserMessageUnderstanding
 import com.nexusflow.observability.TraceContextElement

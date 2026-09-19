@@ -1,4 +1,4 @@
-package com.nexusflow.backend.feature.task.infrastructure.source.liveevent
+package com.nexusflow.backend.feature.research.infrastructure.source.liveevent
 
 import com.nexusflow.backend.core.config.MusicBrainzRuntimeConfig
 import com.nexusflow.backend.core.config.TheSportsDbRuntimeConfig
@@ -14,10 +14,10 @@ import com.nexusflow.backend.feature.task.domain.AvailabilityFact
 import com.nexusflow.backend.feature.task.domain.SourceAuthority
 import com.nexusflow.backend.feature.task.domain.source.GeneralSportsEventQuery
 import com.nexusflow.backend.feature.task.domain.source.LiveMusicEventQuery
-import com.nexusflow.backend.feature.task.infrastructure.source.musicbrainz.MusicBrainzLiveMusicEventSource
-import com.nexusflow.backend.feature.task.infrastructure.source.thesportsdb.TheSportsDbEventSource
-import com.nexusflow.backend.feature.task.infrastructure.source.ticketmaster.TicketmasterLiveMusicEventSource
-import com.nexusflow.backend.feature.task.infrastructure.source.ticketmaster.TicketmasterSportsEventSource
+import com.nexusflow.backend.feature.research.infrastructure.source.musicbrainz.MusicBrainzLiveMusicEventSource
+import com.nexusflow.backend.feature.research.infrastructure.source.thesportsdb.TheSportsDbEventSource
+import com.nexusflow.backend.feature.research.infrastructure.source.ticketmaster.TicketmasterLiveMusicEventSource
+import com.nexusflow.backend.feature.research.infrastructure.source.ticketmaster.TicketmasterSportsEventSource
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope

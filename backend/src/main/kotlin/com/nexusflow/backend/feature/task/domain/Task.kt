@@ -14,9 +14,6 @@ value class UserId(val value: UUID)
 value class TaskId(val value: UUID)
 
 @JvmInline
-value class MessageId(val value: UUID)
-
-@JvmInline
 value class RequirementId(val value: UUID)
 
 @JvmInline

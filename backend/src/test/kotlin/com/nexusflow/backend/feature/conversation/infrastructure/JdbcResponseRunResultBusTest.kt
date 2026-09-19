@@ -10,37 +10,40 @@ import com.nexusflow.backend.feature.conversation.application.ConversationTurnTe
 import com.nexusflow.backend.feature.conversation.application.ResponseRunResultConsumer
 import com.nexusflow.backend.feature.conversation.application.ResponseRunWorker
 import com.nexusflow.backend.feature.conversation.application.ResponseRunWorkerConfig
-import com.nexusflow.backend.feature.task.application.ConversationAnswerService
+import com.nexusflow.backend.feature.conversation.application.answer.ConversationAnswerService
 import com.nexusflow.backend.feature.task.application.PlanningService
-import com.nexusflow.backend.feature.conversation.domain.ClaimNextResponseRunCommand
-import com.nexusflow.backend.feature.conversation.domain.ClaimedResponseRun
-import com.nexusflow.backend.feature.conversation.domain.ConsumeResponseRunIgnoreReason
-import com.nexusflow.backend.feature.conversation.domain.ConsumeResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.ClaimNextResponseRunCommand
+import com.nexusflow.backend.feature.responserun.domain.ClaimedResponseRun
+import com.nexusflow.backend.feature.responserun.domain.ConsumeResponseRunIgnoreReason
+import com.nexusflow.backend.feature.responserun.domain.ConsumeResponseRunResult
 import com.nexusflow.backend.feature.conversation.domain.ConversationId
 import com.nexusflow.backend.feature.conversation.domain.CreateConversationCommand
 import com.nexusflow.backend.feature.conversation.domain.CreateConversationResult
-import com.nexusflow.backend.feature.conversation.domain.FailResponseRunAttemptCommand
-import com.nexusflow.backend.feature.conversation.domain.MarkResponseRunRetryableCommand
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunFailureCategory
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunId
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunResult
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunResultPayload
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunStage
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunStatus
-import com.nexusflow.backend.feature.conversation.domain.StoreResponseRunResult
-import com.nexusflow.backend.feature.conversation.domain.StoreResponseRunResultCommand
-import com.nexusflow.backend.core.readtool.ReadToolCatalog
-import com.nexusflow.backend.core.readtool.ReadToolActivityKind
-import com.nexusflow.backend.core.readtool.ReadToolExecutor
-import com.nexusflow.backend.core.readtool.ReadToolOutcome
+import com.nexusflow.backend.feature.responserun.domain.FailResponseRunAttemptCommand
+import com.nexusflow.backend.feature.responserun.domain.MarkResponseRunRetryableCommand
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunFailureCategory
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunId
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunResultPayload
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStage
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStatus
+import com.nexusflow.backend.feature.responserun.domain.StoreResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.StoreResponseRunResultCommand
+import com.nexusflow.backend.feature.responserun.infrastructure.JdbcResponseRunRepository
+import com.nexusflow.backend.feature.responserun.domain.RequirementValuePayload
+import com.nexusflow.backend.feature.responserun.domain.RequirementWritePayload
+import com.nexusflow.backend.feature.research.application.ReadToolCatalog
+import com.nexusflow.backend.feature.research.application.ReadToolActivityKind
+import com.nexusflow.backend.feature.research.application.ReadToolExecutor
+import com.nexusflow.backend.feature.research.application.ReadToolOutcome
 import com.nexusflow.backend.feature.task.ControlledPlanningReadTool
 import com.nexusflow.backend.feature.task.RecordingConversationDecision
 import com.nexusflow.backend.feature.task.RecordingQuestionAnswering
 import com.nexusflow.backend.feature.task.RecordingPlanningResearch
 import com.nexusflow.backend.feature.task.ScriptedUnderstanding
 import com.nexusflow.backend.feature.task.TaskFlowIds
-import com.nexusflow.backend.feature.task.application.readtool.MovieShowtimesKey
-import com.nexusflow.backend.feature.task.application.readtool.SportsFixturesKey
+import com.nexusflow.backend.feature.research.application.readtool.MovieShowtimesKey
+import com.nexusflow.backend.feature.research.application.readtool.SportsFixturesKey
 import com.nexusflow.backend.feature.task.activityDomainChange
 import com.nexusflow.backend.feature.task.budgetChange
 import com.nexusflow.backend.feature.task.cleanMigrateAndSeed
@@ -48,8 +51,8 @@ import com.nexusflow.backend.feature.task.conversationAnswerService
 import com.nexusflow.backend.feature.task.createConversationServices
 import com.nexusflow.backend.feature.task.directConversationDecision
 import com.nexusflow.backend.feature.task.mixedWeatherAndActivityDecision
-import com.nexusflow.backend.feature.task.domain.MessageId
-import com.nexusflow.backend.feature.task.domain.MessageRole
+import com.nexusflow.backend.feature.conversation.domain.MessageId
+import com.nexusflow.backend.feature.conversation.domain.MessageRole
 import com.nexusflow.backend.feature.task.domain.ApplyConversationUnderstandingCommand
 import com.nexusflow.backend.feature.task.domain.ApplyUnderstandingResult
 import com.nexusflow.backend.feature.task.domain.CreateLinkedTaskPersistenceCommand
@@ -109,6 +112,8 @@ import kotlin.test.assertTrue
 class JdbcResponseRunResultBusTest {
     private lateinit var dataSource: HikariDataSource
     private lateinit var repository: JdbcConversationRepository
+    private lateinit var turnStartCommitter: JdbcConversationTurnStartCommitter
+    private lateinit var responseRunRepository: JdbcResponseRunRepository
     private lateinit var taskRepository: JdbcTaskRepository
     private lateinit var consumer: ResponseRunResultConsumer
 
@@ -117,8 +122,10 @@ class JdbcResponseRunResultBusTest {
         dataSource = postgresDataSource("Response run result bus")
         cleanMigrateAndSeed(dataSource)
         repository = JdbcConversationRepository(dataSource)
+        turnStartCommitter = JdbcConversationTurnStartCommitter(dataSource)
+        responseRunRepository = JdbcResponseRunRepository(dataSource)
         taskRepository = JdbcTaskRepository(dataSource)
-        consumer = ResponseRunResultConsumer(repository, taskRepository, TaskFlowIds.FixedClock)
+        consumer = ResponseRunResultConsumer(JdbcConversationAnswerCommitter(dataSource), taskRepository, TaskFlowIds.FixedClock)
     }
 
     @AfterTest
@@ -137,7 +144,7 @@ class JdbcResponseRunResultBusTest {
 
             assertIs<ConsumeResponseRunResult.Consumed>(consumer.consume(result))
             assertIs<StoreResponseRunResult.Existing>(
-                repository.storeResponseRunResult(
+                responseRunRepository.storeResponseRunResult(
                     StoreResponseRunResultCommand(
                         responseRunId = claim.run.id,
                         attempt = claim.run.attempt,
@@ -151,7 +158,7 @@ class JdbcResponseRunResultBusTest {
             val detail = repository.findConversationDetail(owner(), created.conversationId)
             assertEquals(listOf(MessageRole.User, MessageRole.Assistant), detail?.messages?.map { it.role })
             assertEquals(1, detail?.messages?.count { it.role == MessageRole.Assistant })
-            assertEquals(ResponseRunStatus.Completed, repository.findResponseRun(created.runId)?.status)
+            assertEquals(ResponseRunStatus.Completed, responseRunRepository.findResponseRun(created.runId)?.status)
         }
 
     @Test
@@ -173,8 +180,8 @@ class JdbcResponseRunResultBusTest {
 
             val detail = repository.findConversationDetail(owner(), created.conversationId)
             assertEquals(listOf(MessageRole.User), detail?.messages?.map { it.role })
-            assertEquals(reclaimed.run.attempt, repository.findResponseRun(created.runId)?.attempt)
-            assertEquals(ResponseRunStatus.Processing, repository.findResponseRun(created.runId)?.status)
+            assertEquals(reclaimed.run.attempt, responseRunRepository.findResponseRun(created.runId)?.attempt)
+            assertEquals(ResponseRunStatus.Processing, responseRunRepository.findResponseRun(created.runId)?.status)
         }
 
     @Test
@@ -185,7 +192,7 @@ class JdbcResponseRunResultBusTest {
             val result = storeAnswerResult(created, claim)
             assertEquals(
                 true,
-                repository.failResponseRunAttempt(
+                responseRunRepository.failResponseRunAttempt(
                     FailResponseRunAttemptCommand(
                         responseRunId = claim.run.id,
                         attempt = claim.run.attempt,
@@ -200,7 +207,7 @@ class JdbcResponseRunResultBusTest {
 
             val detail = repository.findConversationDetail(owner(), created.conversationId)
             assertEquals(listOf(MessageRole.User), detail?.messages?.map { it.role })
-            assertEquals(ResponseRunStatus.Failed, repository.findResponseRun(created.runId)?.status)
+            assertEquals(ResponseRunStatus.Failed, responseRunRepository.findResponseRun(created.runId)?.status)
         }
 
     @Test
@@ -211,7 +218,7 @@ class JdbcResponseRunResultBusTest {
             val result = storeAnswerResult(created, claim)
             assertEquals(
                 true,
-                repository.markResponseRunRetryable(
+                responseRunRepository.markResponseRunRetryable(
                     MarkResponseRunRetryableCommand(
                         responseRunId = claim.run.id,
                         attempt = claim.run.attempt,
@@ -271,9 +278,9 @@ class JdbcResponseRunResultBusTest {
             val detail = repository.findConversationDetail(owner(), created.conversationId)
             assertEquals(listOf(MessageRole.User, MessageRole.Assistant), detail?.messages?.map { it.role })
             assertEquals(existingAssistantId, detail?.messages?.single { it.role == MessageRole.Assistant }?.id)
-            assertEquals(ResponseRunStatus.Completed, repository.findResponseRun(created.runId)?.status)
-            assertEquals(existingAssistantId, repository.findResponseRun(created.runId)?.assistantMessageId)
-            assertNotNull(repository.findResponseRunResult(created.runId, claim.run.attempt)?.consumedAt)
+            assertEquals(ResponseRunStatus.Completed, responseRunRepository.findResponseRun(created.runId)?.status)
+            assertEquals(existingAssistantId, responseRunRepository.findResponseRun(created.runId)?.assistantMessageId)
+            assertNotNull(responseRunRepository.findResponseRunResult(created.runId, claim.run.attempt)?.consumedAt)
             Unit
         }
 
@@ -283,7 +290,7 @@ class JdbcResponseRunResultBusTest {
             val created = createConversation("00000000-0000-0000-0000-000000004033")
             val claim = assertNotNull(claim())
             val result = assertIs<StoreResponseRunResult.Stored>(
-                repository.storeResponseRunResult(
+                responseRunRepository.storeResponseRunResult(
                     StoreResponseRunResultCommand(
                         responseRunId = claim.run.id,
                         attempt = claim.run.attempt,
@@ -303,12 +310,139 @@ class JdbcResponseRunResultBusTest {
         }
 
     @Test
+    fun `characterization planning understanding consumption creates task and queues planning stage`() =
+        runBlocking {
+            val created = createConversation(
+                idSeed = "00000000-0000-0000-0000-000000004036",
+                text = "Plan a movie night",
+            )
+            val claim = assertNotNull(claim())
+            val result = assertIs<StoreResponseRunResult.Stored>(
+                responseRunRepository.storeResponseRunResult(
+                    StoreResponseRunResultCommand(
+                        responseRunId = claim.run.id,
+                        attempt = claim.run.attempt,
+                        payload = ResponseRunResultPayload.PlanningUnderstanding(
+                            conversationId = created.conversationId.value.toString(),
+                            userMessageId = created.userMessageId.value.toString(),
+                            aiRequestId = created.aiRequestId,
+                            taskId = null,
+                            taskCreationRequestId = "characterization-planning-understanding",
+                            intent = "Plan a characterized movie night",
+                            expectedTaskRevision = null,
+                            intentPatch = "Plan a characterized movie night",
+                            requirements = listOf(
+                                RequirementWritePayload(
+                                    id = "00000000-0000-0000-0000-000000004136",
+                                    kind = RequirementKind.ActivityDomain.name,
+                                    value = RequirementValuePayload.ActivityDomain("movie"),
+                                    strength = RequirementStrength.Must.name,
+                                ),
+                            ),
+                            clarificationText = null,
+                            planningRequested = true,
+                        ),
+                        now = TaskFlowIds.Now.plusSeconds(1),
+                    ),
+                ),
+            ).result
+
+            assertIs<ConsumeResponseRunResult.Consumed>(consumer.consume(result))
+
+            val run = assertNotNull(responseRunRepository.findResponseRun(created.runId))
+            assertEquals(ResponseRunStatus.Queued, run.status)
+            assertEquals(ResponseRunStage.Planning, run.stage)
+            assertNotNull(run.expectedTaskId)
+            assertEquals(2, run.expectedTaskRevision)
+            assertNotNull(responseRunRepository.findResponseRunResult(created.runId, claim.run.attempt)?.consumedAt)
+            val detail = assertNotNull(repository.findConversationDetail(owner(), created.conversationId))
+            assertNotNull(detail.messages.single { it.id == created.userMessageId }.understoodAt)
+            val task = assertNotNull(taskRepository.findCurrentTaskForConversation(owner(), created.conversationId))
+            assertEquals(run.expectedTaskId, task.task.id)
+            assertEquals("Plan a characterized movie night", task.task.intent)
+            assertEquals(2, task.task.revision)
+            assertEquals(RequirementKind.ActivityDomain, task.requirements.single().kind)
+            assertEquals(RequirementValue.ActivityDomain("movie"), task.requirements.single().value)
+        }
+
+    @Test
+    fun `characterization planning understanding consumption updates existing linked task and queues planning stage`() =
+        runBlocking {
+            val created = createConversation(
+                idSeed = "00000000-0000-0000-0000-000000004037",
+                text = "Update the movie night plan",
+            )
+            val taskId = TaskId(UUID.fromString("00000000-0000-0000-0000-000000004237"))
+            assertIs<CreateLinkedTaskPersistenceResult.Created>(
+                taskRepository.createLinkedTask(
+                    CreateLinkedTaskPersistenceCommand(
+                        owner = owner(),
+                        conversationId = created.conversationId,
+                        taskId = taskId,
+                        creationRequestId = "existing-linked-task-understanding",
+                        intent = "Plan the original movie night",
+                        now = TaskFlowIds.Now,
+                    ),
+                ),
+            )
+            val taskCountBefore = taskRepository.listTaskSummaries(owner()).size
+            val claim = assertNotNull(claim())
+            val result = assertIs<StoreResponseRunResult.Stored>(
+                responseRunRepository.storeResponseRunResult(
+                    StoreResponseRunResultCommand(
+                        responseRunId = claim.run.id,
+                        attempt = claim.run.attempt,
+                        payload = ResponseRunResultPayload.PlanningUnderstanding(
+                            conversationId = created.conversationId.value.toString(),
+                            userMessageId = created.userMessageId.value.toString(),
+                            aiRequestId = created.aiRequestId,
+                            taskId = taskId.value.toString(),
+                            taskCreationRequestId = "existing-linked-task-understanding-result",
+                            intent = "Plan the updated movie night",
+                            expectedTaskRevision = 1,
+                            intentPatch = "Plan the updated movie night",
+                            requirements = listOf(
+                                RequirementWritePayload(
+                                    id = "00000000-0000-0000-0000-000000004238",
+                                    kind = RequirementKind.Location.name,
+                                    value = RequirementValuePayload.Location("Nanshan"),
+                                    strength = RequirementStrength.Must.name,
+                                ),
+                            ),
+                            clarificationText = null,
+                            planningRequested = true,
+                        ),
+                        now = TaskFlowIds.Now.plusSeconds(1),
+                    ),
+                ),
+            ).result
+
+            assertIs<ConsumeResponseRunResult.Consumed>(consumer.consume(result))
+
+            val run = assertNotNull(responseRunRepository.findResponseRun(created.runId))
+            assertEquals(ResponseRunStatus.Queued, run.status)
+            assertEquals(ResponseRunStage.Planning, run.stage)
+            assertEquals(taskId, run.expectedTaskId)
+            assertEquals(2, run.expectedTaskRevision)
+            assertNotNull(responseRunRepository.findResponseRunResult(created.runId, claim.run.attempt)?.consumedAt)
+            val detail = assertNotNull(repository.findConversationDetail(owner(), created.conversationId))
+            assertNotNull(detail.messages.single { it.id == created.userMessageId }.understoodAt)
+            assertEquals(taskCountBefore, taskRepository.listTaskSummaries(owner()).size)
+            val task = assertNotNull(taskRepository.findCurrentTaskForConversation(owner(), created.conversationId))
+            assertEquals(taskId, task.task.id)
+            assertEquals("Plan the updated movie night", task.task.intent)
+            assertEquals(2, task.task.revision)
+            assertEquals(RequirementKind.Location, task.requirements.single().kind)
+            assertEquals(RequirementValue.Location("Nanshan"), task.requirements.single().value)
+        }
+
+    @Test
     fun `worker retries when existing result fails consumer invariant`() =
         runBlocking {
             val created = createConversation("00000000-0000-0000-0000-000000004034")
             forceRunState(created.runId, attempt = 1, status = ResponseRunStatus.Queued)
             assertIs<StoreResponseRunResult.Stored>(
-                repository.storeResponseRunResult(
+                responseRunRepository.storeResponseRunResult(
                     StoreResponseRunResultCommand(
                         responseRunId = created.runId,
                         attempt = 1,
@@ -338,10 +472,10 @@ class JdbcResponseRunResultBusTest {
 
             assertEquals(true, worker(processor).runOnce())
 
-            val run = repository.findResponseRun(created.runId)
+            val run = responseRunRepository.findResponseRun(created.runId)
             assertEquals(ResponseRunStatus.FailedRetryable, run?.status)
             assertEquals(ResponseRunFailureCategory.InternalInvariant, run?.failureCategory)
-            assertNull(repository.findResponseRunResult(created.runId, 1)?.consumedAt)
+            assertNull(responseRunRepository.findResponseRunResult(created.runId, 1)?.consumedAt)
             assertEquals(listOf(MessageRole.User), repository.findConversationDetail(owner(), created.conversationId)?.messages?.map { it.role })
         }
 
@@ -360,7 +494,7 @@ class JdbcResponseRunResultBusTest {
 
             assertEquals(
                 StoreResponseRunResult.StaleAttempt,
-                repository.storeResponseRunResult(
+                responseRunRepository.storeResponseRunResult(
                     StoreResponseRunResultCommand(
                         responseRunId = created.runId,
                         attempt = firstClaim.run.attempt,
@@ -374,7 +508,7 @@ class JdbcResponseRunResultBusTest {
                 ),
             )
             val current = assertIs<StoreResponseRunResult.Stored>(
-                repository.storeResponseRunResult(
+                responseRunRepository.storeResponseRunResult(
                     StoreResponseRunResultCommand(
                         responseRunId = created.runId,
                         attempt = reclaimed.run.attempt,
@@ -388,7 +522,7 @@ class JdbcResponseRunResultBusTest {
                 ),
             ).result
 
-            assertNull(repository.findResponseRunResult(created.runId, firstClaim.run.attempt))
+            assertNull(responseRunRepository.findResponseRunResult(created.runId, firstClaim.run.attempt))
             assertEquals("Current answer", (current.payload as ResponseRunResultPayload.ConversationAnswer).text)
         }
 
@@ -402,7 +536,7 @@ class JdbcResponseRunResultBusTest {
 
             assertEquals(
                 false,
-                repository.failResponseRunAttempt(
+                responseRunRepository.failResponseRunAttempt(
                     FailResponseRunAttemptCommand(
                         responseRunId = claim.run.id,
                         attempt = claim.run.attempt,
@@ -411,7 +545,7 @@ class JdbcResponseRunResultBusTest {
                     ),
                 ),
             )
-            assertEquals(ResponseRunStatus.Completed, repository.findResponseRun(created.runId)?.status)
+            assertEquals(ResponseRunStatus.Completed, responseRunRepository.findResponseRun(created.runId)?.status)
             assertEquals(1, repository.findConversationDetail(owner(), created.conversationId)?.messages?.count { it.role == MessageRole.Assistant })
         }
 
@@ -452,7 +586,8 @@ class JdbcResponseRunResultBusTest {
                 timeZoneId = "Asia/Shanghai",
             )
             val worker = ResponseRunWorker(
-                repository = repository,
+                responseRunStore = responseRunRepository,
+                resultStore = responseRunRepository,
                 processor = processor,
                 resultConsumer = consumer,
                 config = ResponseRunWorkerConfig(
@@ -474,8 +609,8 @@ class JdbcResponseRunResultBusTest {
             assertEquals("Worker answer", detail?.messages?.single { it.role == MessageRole.Assistant }?.content)
             assertEquals(1, understanding.calls.size)
             assertEquals(1, decision.requests.size)
-            assertEquals(ResponseRunStatus.Completed, repository.findResponseRun(created.runId)?.status)
-            assertNotNull(repository.findResponseRunResult(created.runId, 1)?.consumedAt)
+            assertEquals(ResponseRunStatus.Completed, responseRunRepository.findResponseRun(created.runId)?.status)
+            assertNotNull(responseRunRepository.findResponseRunResult(created.runId, 1)?.consumedAt)
             Unit
         }
 
@@ -489,7 +624,7 @@ class JdbcResponseRunResultBusTest {
             val decision = RecordingConversationDecision({ directConversationDecision("Traced worker answer") })
             val answerService = conversationAnswerService(decision)
             val created = assertIs<CreateConversationResult.Created>(
-                repository.createConversation(
+                turnStartCommitter.createConversation(
                     CreateConversationCommand(
                         owner = owner(),
                         conversationId = ConversationId(UUID.fromString("00000000-0000-0000-0000-0000000040a1")),
@@ -523,7 +658,8 @@ class JdbcResponseRunResultBusTest {
                 minimumLevel = LogLevel.INFO,
             )
             val worker = ResponseRunWorker(
-                repository = repository,
+                responseRunStore = responseRunRepository,
+                resultStore = responseRunRepository,
                 processor = processor,
                 resultConsumer = consumer,
                 config = ResponseRunWorkerConfig(
@@ -577,7 +713,8 @@ class JdbcResponseRunResultBusTest {
                 timeZoneId = "Asia/Shanghai",
             )
             val worker = ResponseRunWorker(
-                repository = repository,
+                responseRunStore = responseRunRepository,
+                resultStore = responseRunRepository,
                 processor = processor,
                 resultConsumer = consumer,
                 config = ResponseRunWorkerConfig(
@@ -594,7 +731,7 @@ class JdbcResponseRunResultBusTest {
 
             val workerJob = launch { worker.runOnce() }
             withTimeout(1_000) {
-                while (repository.findResponseRun(created.runId)?.leaseOwner != "worker-lease-lost") {
+                while (responseRunRepository.findResponseRun(created.runId)?.leaseOwner != "worker-lease-lost") {
                     delay(5)
                 }
             }
@@ -604,10 +741,10 @@ class JdbcResponseRunResultBusTest {
                 workerJob.join()
             }
 
-            val run = assertNotNull(repository.findResponseRun(created.runId))
+            val run = assertNotNull(responseRunRepository.findResponseRun(created.runId))
             assertEquals(ResponseRunStatus.FailedRetryable, run.status)
             assertEquals(ResponseRunFailureCategory.WorkerLost, run.failureCategory)
-            assertNull(repository.findResponseRunResult(created.runId, 1))
+            assertNull(responseRunRepository.findResponseRunResult(created.runId, 1))
         }
 
     @Test
@@ -668,7 +805,7 @@ class JdbcResponseRunResultBusTest {
 
             assertEquals(true, worker.runOnce())
 
-            val run = assertNotNull(repository.findResponseRun(accepted.detail.responseRuns.single().id))
+            val run = assertNotNull(responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id))
             assertEquals(ResponseRunStatus.Completed, run.status)
             assertEquals(1, tool.requests.size)
             val answerRequest = answering.requests.single()
@@ -728,7 +865,7 @@ class JdbcResponseRunResultBusTest {
             delay(25)
             eventJob.cancelAndJoin()
 
-            val run = assertNotNull(repository.findResponseRun(accepted.detail.responseRuns.single().id))
+            val run = assertNotNull(responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id))
             assertEquals(ResponseRunStatus.Completed, run.status)
             val detail = assertNotNull(repository.findConversationDetail(owner(), accepted.detail.conversation.id))
             val durableAnswer = detail.messages.single { it.role == MessageRole.Assistant }.content
@@ -773,7 +910,7 @@ class JdbcResponseRunResultBusTest {
 
             assertEquals(true, worker(processor, realtimeHub).runOnce())
 
-            val run = assertNotNull(repository.findResponseRun(accepted.detail.responseRuns.single().id))
+            val run = assertNotNull(responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id))
             assertEquals(ResponseRunStatus.FailedRetryable, run.status)
             assertEquals(ResponseRunFailureCategory.ProviderTemporary, run.failureCategory)
             val detail = assertNotNull(repository.findConversationDetail(owner(), accepted.detail.conversation.id))
@@ -828,7 +965,7 @@ class JdbcResponseRunResultBusTest {
 
             assertEquals(true, worker.runOnce())
 
-            val run = assertNotNull(repository.findResponseRun(accepted.detail.responseRuns.single().id))
+            val run = assertNotNull(responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id))
             assertEquals(ResponseRunStatus.Completed, run.status)
             assertNull(run.failureCategory)
             val answerRequest = answering.requests.single()
@@ -866,12 +1003,12 @@ class JdbcResponseRunResultBusTest {
 
             assertEquals(true, worker.runOnce())
 
-            val run = assertNotNull(repository.findResponseRun(runId))
+            val run = assertNotNull(responseRunRepository.findResponseRun(runId))
             assertEquals(ResponseRunStatus.Queued, run.status)
             assertEquals(ResponseRunStage.Planning, run.stage)
             assertNotNull(run.expectedTaskId)
             assertEquals(2, run.expectedTaskRevision)
-            assertNotNull(repository.findResponseRunResult(runId, 1)?.consumedAt)
+            assertNotNull(responseRunRepository.findResponseRunResult(runId, 1)?.consumedAt)
             val task = assertNotNull(taskRepository.findCurrentTaskForConversation(owner(), accepted.detail.conversation.id))
             assertEquals("Plan a movie night", task.task.intent)
             assertEquals(RequirementKind.ActivityDomain, task.requirements.single().kind)
@@ -901,18 +1038,18 @@ class JdbcResponseRunResultBusTest {
             val worker = worker(processor)
 
             assertEquals(true, worker.runOnce())
-            assertEquals(ResponseRunStatus.Queued, repository.findResponseRun(accepted.detail.responseRuns.single().id)?.status)
-            assertEquals(ResponseRunStage.Planning, repository.findResponseRun(accepted.detail.responseRuns.single().id)?.stage)
-            assertEquals(1, repository.findResponseRun(accepted.detail.responseRuns.single().id)?.attempt)
+            assertEquals(ResponseRunStatus.Queued, responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id)?.status)
+            assertEquals(ResponseRunStage.Planning, responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id)?.stage)
+            assertEquals(1, responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id)?.attempt)
             assertEquals(true, worker.runOnce())
 
-            val run = assertNotNull(repository.findResponseRun(accepted.detail.responseRuns.single().id))
+            val run = assertNotNull(responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id))
             assertEquals(ResponseRunStatus.Completed, run.status)
             assertEquals(ResponseRunStage.Planning, run.stage)
             val task = assertNotNull(taskRepository.findCurrentTaskForConversation(owner(), accepted.detail.conversation.id))
             assertEquals(1, task.plans.size)
             assertEquals(1, services.planComposer.contexts.size)
-            assertNotNull(repository.findResponseRunResult(run.id, 1)?.consumedAt)
+            assertNotNull(responseRunRepository.findResponseRunResult(run.id, 1)?.consumedAt)
             Unit
         }
 
@@ -966,7 +1103,7 @@ class JdbcResponseRunResultBusTest {
                 ),
             )
             val result = assertIs<StoreResponseRunResult.Stored>(
-                repository.storeResponseRunResult(
+                responseRunRepository.storeResponseRunResult(
                     StoreResponseRunResultCommand(
                         responseRunId = claim.run.id,
                         attempt = claim.run.attempt,
@@ -978,11 +1115,11 @@ class JdbcResponseRunResultBusTest {
 
             assertIs<ConsumeResponseRunResult.Consumed>(consumer.consume(result))
 
-            val run = assertNotNull(repository.findResponseRun(created.runId))
+            val run = assertNotNull(responseRunRepository.findResponseRun(created.runId))
             assertEquals(ResponseRunStatus.Failed, run.status)
             assertEquals(ResponseRunStage.Turn, run.stage)
             assertEquals(ResponseRunFailureCategory.AiInvalidResult, run.failureCategory)
-            assertNotNull(repository.findResponseRunResult(created.runId, claim.run.attempt)?.consumedAt)
+            assertNotNull(responseRunRepository.findResponseRunResult(created.runId, claim.run.attempt)?.consumedAt)
             Unit
         }
 
@@ -1005,7 +1142,7 @@ class JdbcResponseRunResultBusTest {
             )
             val processor = planningProcessor(understanding, services.planningService)
             assertEquals(true, worker(processor).runOnce())
-            assertEquals(ResponseRunStatus.Queued, repository.findResponseRun(accepted.detail.responseRuns.single().id)?.status)
+            assertEquals(ResponseRunStatus.Queued, responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id)?.status)
             val planningClaim = assertNotNull(claim())
             val planningPayload = processor.process(planningClaim)
             val task = assertNotNull(taskRepository.findCurrentTaskForConversation(owner(), accepted.detail.conversation.id))
@@ -1023,7 +1160,7 @@ class JdbcResponseRunResultBusTest {
                     ),
                 ),
             )
-            val stored = repository.storeResponseRunResult(
+            val stored = responseRunRepository.storeResponseRunResult(
                 StoreResponseRunResultCommand(
                     responseRunId = planningClaim.run.id,
                     attempt = planningClaim.run.attempt,
@@ -1041,7 +1178,7 @@ class JdbcResponseRunResultBusTest {
 
             val latest = assertNotNull(taskRepository.findTaskDetail(owner(), task.task.id))
             assertEquals(emptyList(), latest.plans)
-            assertEquals(ResponseRunStatus.Completed, repository.findResponseRun(planningClaim.run.id)?.status)
+            assertEquals(ResponseRunStatus.Completed, responseRunRepository.findResponseRun(planningClaim.run.id)?.status)
             Unit
         }
 
@@ -1072,10 +1209,10 @@ class JdbcResponseRunResultBusTest {
             val worker = worker(planningProcessor(understanding, services.planningService))
 
             assertEquals(true, worker.runOnce())
-            assertEquals(ResponseRunStatus.Queued, repository.findResponseRun(accepted.detail.responseRuns.single().id)?.status)
+            assertEquals(ResponseRunStatus.Queued, responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id)?.status)
             assertEquals(true, worker.runOnce())
 
-            val run = assertNotNull(repository.findResponseRun(accepted.detail.responseRuns.single().id))
+            val run = assertNotNull(responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id))
             assertEquals(ResponseRunStatus.Completed, run.status)
             assertNull(run.failureCategory)
             val task = assertNotNull(taskRepository.findCurrentTaskForConversation(owner(), accepted.detail.conversation.id))
@@ -1108,7 +1245,7 @@ class JdbcResponseRunResultBusTest {
             assertEquals(true, worker.runOnce())
             assertEquals(true, worker.runOnce())
 
-            val run = assertNotNull(repository.findResponseRun(accepted.detail.responseRuns.single().id))
+            val run = assertNotNull(responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id))
             assertEquals(ResponseRunStatus.Completed, run.status)
             assertNull(run.failureCategory)
             val task = assertNotNull(taskRepository.findCurrentTaskForConversation(owner(), accepted.detail.conversation.id))
@@ -1157,7 +1294,7 @@ class JdbcResponseRunResultBusTest {
             assertEquals(true, worker.runOnce())
             assertEquals(true, worker.runOnce())
 
-            val run = assertNotNull(repository.findResponseRun(accepted.detail.responseRuns.single().id))
+            val run = assertNotNull(responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id))
             assertEquals(ResponseRunStatus.Completed, run.status)
             assertNull(run.failureCategory)
             val task = assertNotNull(taskRepository.findCurrentTaskForConversation(owner(), accepted.detail.conversation.id))
@@ -1172,7 +1309,7 @@ class JdbcResponseRunResultBusTest {
         now: Instant = TaskFlowIds.Now,
         leaseDuration: Duration = Duration.ofSeconds(30),
         maxAttempts: Int = 3,
-    ) = repository.claimNextResponseRun(
+    ) = responseRunRepository.claimNextResponseRun(
         ClaimNextResponseRunCommand(
             workerId = workerId,
             now = now,
@@ -1218,7 +1355,8 @@ class JdbcResponseRunResultBusTest {
         realtimeHub: ResponseRunRealtimeHub? = null,
     ): ResponseRunWorker =
         ResponseRunWorker(
-            repository = repository,
+            responseRunStore = responseRunRepository,
+            resultStore = responseRunRepository,
             processor = processor,
             resultConsumer = consumer,
             config = ResponseRunWorkerConfig(
@@ -1259,7 +1397,7 @@ class JdbcResponseRunResultBusTest {
         created: CreatedRun,
         claim: ClaimedResponseRun,
     ): ResponseRunResult {
-        val stored = repository.storeResponseRunResult(
+        val stored = responseRunRepository.storeResponseRunResult(
             StoreResponseRunResultCommand(
                 responseRunId = claim.run.id,
                 attempt = claim.run.attempt,
@@ -1277,8 +1415,8 @@ class JdbcResponseRunResultBusTest {
         val detail = repository.findConversationDetail(owner(), created.conversationId)
         assertEquals(listOf(MessageRole.User), detail?.messages?.map { it.role })
         assertNull(detail?.messages?.single()?.understoodAt)
-        assertEquals(expectedStatus, repository.findResponseRun(created.runId)?.status)
-        assertNull(repository.findResponseRunResult(created.runId, 1)?.consumedAt)
+        assertEquals(expectedStatus, responseRunRepository.findResponseRun(created.runId)?.status)
+        assertNull(responseRunRepository.findResponseRunResult(created.runId, 1)?.consumedAt)
     }
 
     private fun forceRunQueued(runId: ResponseRunId) {
@@ -1370,7 +1508,7 @@ class JdbcResponseRunResultBusTest {
         val userMessageId = MessageId(UUID.randomUUID())
         val runId = ResponseRunId(UUID.randomUUID())
         val aiRequestId = "ai-$idSeed"
-        val created = repository.createConversation(
+        val created = turnStartCommitter.createConversation(
             CreateConversationCommand(
                 owner = owner(),
                 conversationId = conversationId,

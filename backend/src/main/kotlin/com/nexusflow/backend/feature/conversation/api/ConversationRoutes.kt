@@ -14,10 +14,10 @@ import com.nexusflow.backend.feature.conversation.application.ResponseRunService
 import com.nexusflow.backend.feature.conversation.application.ResponseRunSnapshot
 import com.nexusflow.backend.feature.conversation.domain.ConversationDetail
 import com.nexusflow.backend.feature.conversation.domain.ConversationMessage
-import com.nexusflow.backend.feature.conversation.domain.ResponseRun
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunFailureCategory
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunStage
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunStatus
+import com.nexusflow.backend.feature.responserun.domain.ResponseRun
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunFailureCategory
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStage
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStatus
 import com.nexusflow.backend.feature.task.api.toConversationCurrentTaskResponse
 import com.nexusflow.backend.feature.task.application.InvalidTaskOperationException
 import com.nexusflow.backend.feature.task.application.InvalidTaskRequestException
@@ -25,7 +25,7 @@ import com.nexusflow.backend.feature.task.application.MissingTaskScopeException
 import com.nexusflow.backend.feature.task.application.TaskConflictException
 import com.nexusflow.backend.feature.task.application.TaskDependencyUnavailableException
 import com.nexusflow.backend.feature.task.application.TaskNotFoundException
-import com.nexusflow.backend.feature.task.domain.MessageRole
+import com.nexusflow.backend.feature.conversation.domain.MessageRole
 import com.nexusflow.contracts.appbackend.conversation.ConversationDetailResponse
 import com.nexusflow.contracts.appbackend.conversation.ConversationMessageResponse
 import com.nexusflow.contracts.appbackend.conversation.ConversationResponse

@@ -1,7 +1,8 @@
 package com.nexusflow.backend.feature.conversation.domain
 
-import com.nexusflow.backend.feature.task.domain.MessageId
-import com.nexusflow.backend.feature.task.domain.MessageRole
+import com.nexusflow.backend.feature.responserun.domain.ResponseRun
+import com.nexusflow.backend.feature.conversation.domain.MessageId
+import com.nexusflow.backend.feature.conversation.domain.MessageRole
 import com.nexusflow.backend.feature.task.domain.TaskOwner
 import java.time.Instant
 import java.util.UUID

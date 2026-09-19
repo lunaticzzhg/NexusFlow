@@ -41,20 +41,20 @@ import com.nexusflow.contracts.backendai.understanding.UnderstandMessageRequest
 import com.nexusflow.contracts.backendai.understanding.UnderstandingMetadata
 import com.nexusflow.contracts.backendai.understanding.UnderstandMessageResult
 import com.nexusflow.contracts.backendai.understanding.UserMessageUnderstanding
-import com.nexusflow.backend.core.readtool.ReadToolCatalog
-import com.nexusflow.backend.core.readtool.ReadTool
-import com.nexusflow.backend.core.readtool.ReadToolActivityKind
-import com.nexusflow.backend.core.readtool.ReadToolCall
-import com.nexusflow.backend.core.readtool.ReadToolDefinition
-import com.nexusflow.backend.core.readtool.ReadToolEvidence
-import com.nexusflow.backend.core.readtool.ReadToolEvidencePayload
-import com.nexusflow.backend.core.readtool.ReadToolExecutionContext
-import com.nexusflow.backend.core.readtool.ReadToolFact
-import com.nexusflow.backend.core.readtool.ReadToolFactKind
-import com.nexusflow.backend.core.readtool.ReadToolFactValue
-import com.nexusflow.backend.core.readtool.ReadToolExecutor
-import com.nexusflow.backend.core.readtool.ReadToolKey
-import com.nexusflow.backend.core.readtool.ReadToolOutcome
+import com.nexusflow.backend.feature.research.application.ReadToolCatalog
+import com.nexusflow.backend.feature.research.application.ReadTool
+import com.nexusflow.backend.feature.research.application.ReadToolActivityKind
+import com.nexusflow.backend.feature.research.application.ReadToolCall
+import com.nexusflow.backend.feature.research.application.ReadToolDefinition
+import com.nexusflow.backend.feature.research.application.ReadToolEvidence
+import com.nexusflow.backend.feature.research.application.ReadToolEvidencePayload
+import com.nexusflow.backend.feature.research.application.ReadToolExecutionContext
+import com.nexusflow.backend.feature.research.application.ReadToolFact
+import com.nexusflow.backend.feature.research.application.ReadToolFactKind
+import com.nexusflow.backend.feature.research.application.ReadToolFactValue
+import com.nexusflow.backend.feature.research.application.ReadToolExecutor
+import com.nexusflow.backend.feature.research.application.ReadToolKey
+import com.nexusflow.backend.feature.research.application.ReadToolOutcome
 import com.nexusflow.backend.core.identity.ActorContext
 import com.nexusflow.backend.core.aicontext.ModelContextAssembler
 import com.nexusflow.backend.core.aicontext.ModelContextCatalog
@@ -63,13 +63,16 @@ import com.nexusflow.backend.feature.conversation.application.ConversationTurnPr
 import com.nexusflow.backend.feature.conversation.application.ResponseRunResultConsumer
 import com.nexusflow.backend.feature.conversation.application.ResponseRunWorker
 import com.nexusflow.backend.feature.conversation.application.ResponseRunWorkerConfig
+import com.nexusflow.backend.feature.conversation.infrastructure.JdbcConversationAnswerCommitter
 import com.nexusflow.backend.feature.conversation.infrastructure.JdbcConversationRepository
-import com.nexusflow.backend.feature.task.application.ConversationAnswerService
+import com.nexusflow.backend.feature.conversation.infrastructure.JdbcConversationTurnStartCommitter
+import com.nexusflow.backend.feature.responserun.infrastructure.JdbcResponseRunRepository
+import com.nexusflow.backend.feature.conversation.application.answer.ConversationAnswerService
 import com.nexusflow.backend.feature.task.application.PlanningService
 import com.nexusflow.backend.feature.task.application.TaskService
-import com.nexusflow.backend.feature.task.application.readtool.MovieDiscoveryKey
-import com.nexusflow.backend.feature.task.application.readtool.MovieShowtimesKey
-import com.nexusflow.backend.feature.task.application.readtool.WebSearchKey
+import com.nexusflow.backend.feature.research.application.readtool.MovieDiscoveryKey
+import com.nexusflow.backend.feature.research.application.readtool.MovieShowtimesKey
+import com.nexusflow.backend.feature.research.application.readtool.WebSearchKey
 import com.nexusflow.backend.feature.task.domain.ActivityModeValue
 import com.nexusflow.backend.feature.task.domain.AvailabilityFact
 import com.nexusflow.backend.feature.task.domain.DurationFact
@@ -199,6 +202,8 @@ internal fun createConversationServices(
 ): ConversationServices {
     val repository = JdbcTaskRepository(dataSource)
     val conversationRepository = JdbcConversationRepository(dataSource)
+    val conversationTurnStartCommitter = JdbcConversationTurnStartCommitter(dataSource)
+    val responseRunRepository = JdbcResponseRunRepository(dataSource)
     val planningService = PlanningService(
         repository = repository,
         planValidator = PlanValidator(),
@@ -214,6 +219,7 @@ internal fun createConversationServices(
     )
     val conversationService = ConversationService(
         conversationRepository = conversationRepository,
+        conversationTurnStartCommitter = conversationTurnStartCommitter,
         taskRepository = repository,
         planningService = planningService,
         understanding = understanding,
@@ -223,7 +229,8 @@ internal fun createConversationServices(
         logger = logger,
     )
     val responseRunWorker = ResponseRunWorker(
-        repository = conversationRepository,
+        responseRunStore = responseRunRepository,
+        resultStore = responseRunRepository,
         processor = ConversationTurnProcessor(
             conversationRepository = conversationRepository,
             taskRepository = repository,
@@ -234,7 +241,7 @@ internal fun createConversationServices(
             uuidFactory = taskIds::next,
             timeZoneId = "Asia/Shanghai",
         ),
-        resultConsumer = ResponseRunResultConsumer(conversationRepository, repository, clock),
+        resultConsumer = ResponseRunResultConsumer(JdbcConversationAnswerCommitter(dataSource), repository, clock),
         config = ResponseRunWorkerConfig(
             enabled = true,
             pollInterval = Duration.ofMillis(10),

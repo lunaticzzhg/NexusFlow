@@ -1,4 +1,4 @@
-package com.nexusflow.backend.feature.task.infrastructure.source.movie
+package com.nexusflow.backend.feature.research.infrastructure.source.movie
 
 import com.nexusflow.backend.core.config.OmdbRuntimeConfig
 import com.nexusflow.backend.core.config.TmdbRuntimeConfig
@@ -13,9 +13,9 @@ import com.nexusflow.backend.feature.task.domain.SourceAuthority
 import com.nexusflow.backend.feature.task.domain.source.MovieDiscoveryMode
 import com.nexusflow.backend.feature.task.domain.source.MovieDiscoveryQuery
 import com.nexusflow.backend.feature.task.domain.source.MovieMetadataQuery
-import com.nexusflow.backend.feature.task.infrastructure.source.omdb.OmdbMovieMetadataSource
-import com.nexusflow.backend.feature.task.infrastructure.source.tmdb.TmdbMovieDiscoverySource
-import com.nexusflow.backend.feature.task.infrastructure.source.tmdb.TmdbMovieMetadataSource
+import com.nexusflow.backend.feature.research.infrastructure.source.omdb.OmdbMovieMetadataSource
+import com.nexusflow.backend.feature.research.infrastructure.source.tmdb.TmdbMovieDiscoverySource
+import com.nexusflow.backend.feature.research.infrastructure.source.tmdb.TmdbMovieMetadataSource
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope

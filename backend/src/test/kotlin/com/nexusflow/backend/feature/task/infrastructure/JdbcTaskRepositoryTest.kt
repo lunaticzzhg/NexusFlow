@@ -7,13 +7,13 @@ import com.nexusflow.backend.feature.task.postgresDataSource
 import com.nexusflow.backend.feature.conversation.domain.ConversationId
 import com.nexusflow.backend.feature.conversation.domain.CreateConversationCommand
 import com.nexusflow.backend.feature.conversation.domain.CreateConversationResult
-import com.nexusflow.backend.feature.conversation.infrastructure.JdbcConversationRepository
+import com.nexusflow.backend.feature.conversation.infrastructure.JdbcConversationTurnStartCommitter
 import com.nexusflow.backend.feature.task.domain.ApplyConversationUnderstandingCommand
 import com.nexusflow.backend.feature.task.domain.ApplyUnderstandingResult
 import com.nexusflow.backend.feature.task.domain.AssistantMessageWrite
 import com.nexusflow.backend.feature.task.domain.CreateLinkedTaskPersistenceCommand
 import com.nexusflow.backend.feature.task.domain.CreateLinkedTaskPersistenceResult
-import com.nexusflow.backend.feature.task.domain.MessageId
+import com.nexusflow.backend.feature.conversation.domain.MessageId
 import com.nexusflow.backend.feature.task.domain.OpportunityFactKey
 import com.nexusflow.backend.feature.task.domain.PersistPlansCommand
 import com.nexusflow.backend.feature.task.domain.PersistPlansResult
@@ -59,14 +59,14 @@ import kotlin.test.assertNotNull
 class JdbcTaskRepositoryTest {
     private lateinit var dataSource: HikariDataSource
     private lateinit var repository: JdbcTaskRepository
-    private lateinit var conversationRepository: JdbcConversationRepository
+    private lateinit var conversationTurnStartCommitter: JdbcConversationTurnStartCommitter
 
     @BeforeTest
     fun setUp() {
         dataSource = postgresDataSource("Task repository")
         cleanMigrateAndSeed(dataSource)
         repository = JdbcTaskRepository(dataSource)
-        conversationRepository = JdbcConversationRepository(dataSource)
+        conversationTurnStartCommitter = JdbcConversationTurnStartCommitter(dataSource)
     }
 
     @AfterTest
@@ -96,7 +96,7 @@ class JdbcTaskRepositoryTest {
             val candidate = opportunity("00000000-0000-0000-0000-000000000005")
                 .copy(sources = listOf(candidateSource))
 
-            val conversation = conversationRepository.createConversation(
+            val conversation = conversationTurnStartCommitter.createConversation(
                 CreateConversationCommand(
                     owner = owner,
                     conversationId = conversationId,
@@ -229,7 +229,7 @@ class JdbcTaskRepositoryTest {
             val candidate = opportunity("00000000-0000-0000-0000-000000000205")
 
             assertIs<CreateConversationResult.Created>(
-                conversationRepository.createConversation(
+                conversationTurnStartCommitter.createConversation(
                     CreateConversationCommand(
                         owner = owner,
                         conversationId = conversationId,

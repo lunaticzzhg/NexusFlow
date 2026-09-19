@@ -9,30 +9,31 @@ import com.nexusflow.backend.feature.conversation.application.ResponseRunRealtim
 import com.nexusflow.backend.feature.conversation.application.ResponseRunService
 import com.nexusflow.backend.feature.conversation.domain.AppendConversationUserMessageCommand
 import com.nexusflow.backend.feature.conversation.domain.AppendConversationUserMessageResult
-import com.nexusflow.backend.feature.conversation.domain.CancelResponseRunCommand
-import com.nexusflow.backend.feature.conversation.domain.CancelResponseRunResult
-import com.nexusflow.backend.feature.conversation.domain.ClaimNextResponseRunCommand
-import com.nexusflow.backend.feature.conversation.domain.ClaimedResponseRun
-import com.nexusflow.backend.feature.conversation.domain.CompleteResponseRunAttemptCommand
+import com.nexusflow.backend.feature.responserun.domain.CancelResponseRunCommand
+import com.nexusflow.backend.feature.responserun.domain.CancelResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.ClaimNextResponseRunCommand
+import com.nexusflow.backend.feature.responserun.domain.ClaimedResponseRun
+import com.nexusflow.backend.feature.responserun.domain.CompleteResponseRunAttemptCommand
 import com.nexusflow.backend.feature.conversation.domain.ConversationDetail
 import com.nexusflow.backend.feature.conversation.domain.ConversationId
 import com.nexusflow.backend.feature.conversation.domain.ConversationRepository
+import com.nexusflow.backend.feature.conversation.domain.ConversationTurnStartCommitter
 import com.nexusflow.backend.feature.conversation.domain.CreateConversationCommand
 import com.nexusflow.backend.feature.conversation.domain.CreateConversationResult
-import com.nexusflow.backend.feature.conversation.domain.FailResponseRunAttemptCommand
-import com.nexusflow.backend.feature.conversation.domain.HeartbeatResponseRunLeaseCommand
-import com.nexusflow.backend.feature.conversation.domain.MarkResponseRunRetryableCommand
-import com.nexusflow.backend.feature.conversation.domain.ResponseRun
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunFailureCategory
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunId
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunResult
-import com.nexusflow.backend.feature.conversation.domain.RetryResponseRunCommand
-import com.nexusflow.backend.feature.conversation.domain.RetryResponseRunResult
-import com.nexusflow.backend.feature.conversation.domain.StoreResponseRunResult
-import com.nexusflow.backend.feature.conversation.domain.StoreResponseRunResultCommand
+import com.nexusflow.backend.feature.responserun.domain.FailResponseRunAttemptCommand
+import com.nexusflow.backend.feature.responserun.domain.HeartbeatResponseRunLeaseCommand
+import com.nexusflow.backend.feature.responserun.domain.MarkResponseRunRetryableCommand
+import com.nexusflow.backend.feature.responserun.domain.ResponseRun
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunFailureCategory
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunId
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.RetryResponseRunCommand
+import com.nexusflow.backend.feature.responserun.domain.RetryResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.StoreResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.StoreResponseRunResultCommand
 import com.nexusflow.backend.feature.conversation.infrastructure.JdbcConversationRepository
-import com.nexusflow.backend.feature.conversation.domain.ConsumeConversationAnswerResultCommand
-import com.nexusflow.backend.feature.conversation.domain.ConsumeResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.ConsumeResponseRunResult
+import com.nexusflow.backend.feature.responserun.infrastructure.JdbcResponseRunRepository
 import com.nexusflow.backend.feature.task.RecordingConversationDecision
 import com.nexusflow.backend.feature.task.ScriptedUnderstanding
 import com.nexusflow.backend.feature.task.TaskFlowIds
@@ -202,8 +203,9 @@ class ConversationRoutesTest {
             cleanMigrateAndSeed(dataSource)
             val services = createConversationServices(dataSource = dataSource, understanding = null)
             val conversationRepository = JdbcConversationRepository(dataSource)
+            val responseRunRepository = JdbcResponseRunRepository(dataSource)
             val realtimeHub = ResponseRunRealtimeHub(TaskFlowIds.FixedClock)
-            val responseRunService = ResponseRunService(conversationRepository, services.repository, realtimeHub, TaskFlowIds.FixedClock)
+            val responseRunService = ResponseRunService(conversationRepository, responseRunRepository, services.repository, realtimeHub, TaskFlowIds.FixedClock)
 
             testApplication {
                 application {
@@ -218,7 +220,7 @@ class ConversationRoutesTest {
                     CreateConversationRequest("route-snapshot-create", "你好", "Asia/Shanghai"),
                 )
                 val runId = created.data.conversation.responseRuns.single().id
-                val run = assertNotNull(conversationRepository.findResponseRun(ResponseRunId(UUID.fromString(runId))))
+                val run = assertNotNull(responseRunRepository.findResponseRun(ResponseRunId(UUID.fromString(runId))))
                 realtimeHub.delta(run, "partial")
 
                 val snapshot = getJson<ResponseRunSnapshotResponse>(
@@ -244,8 +246,10 @@ class ConversationRoutesTest {
             cleanMigrateAndSeed(dataSource)
             val services = createConversationServices(dataSource = dataSource, understanding = null)
             val conversationRepository = JdbcConversationRepository(dataSource)
+            val responseRunRepository = JdbcResponseRunRepository(dataSource)
             val responseRunService = ResponseRunService(
                 conversationRepository,
+                responseRunRepository,
                 services.repository,
                 ResponseRunRealtimeHub(TaskFlowIds.FixedClock),
                 TaskFlowIds.FixedClock,
@@ -305,9 +309,11 @@ class ConversationRoutesTest {
             cleanMigrateAndSeed(dataSource)
             val services = createConversationServices(dataSource = dataSource, understanding = null)
             val conversationRepository = JdbcConversationRepository(dataSource)
+            val responseRunRepository = JdbcResponseRunRepository(dataSource)
             val realtimeHub = ResponseRunRealtimeHub(TaskFlowIds.FixedClock)
             val responseRunService = ResponseRunService(
                 conversationRepository,
+                responseRunRepository,
                 services.repository,
                 realtimeHub,
                 TaskFlowIds.FixedClock,
@@ -329,7 +335,7 @@ class ConversationRoutesTest {
                     CreateConversationRequest("route-sse-replay-create", "你好", "Asia/Shanghai"),
                 )
                 val runId = created.data.conversation.responseRuns.single().id
-                val run = assertNotNull(conversationRepository.findResponseRun(ResponseRunId(UUID.fromString(runId))))
+                val run = assertNotNull(responseRunRepository.findResponseRun(ResponseRunId(UUID.fromString(runId))))
                 realtimeHub.delta(run, "first")
                 realtimeHub.delta(run, "second")
 
@@ -359,14 +365,85 @@ class ConversationRoutesTest {
     }
 
     @Test
+    fun `response run sse characterization ignores stale attempt last event id and replays buffer`() {
+        val dataSource = postgresDataSource("Response run sse stale replay route")
+        try {
+            cleanMigrateAndSeed(dataSource)
+            val services = createConversationServices(dataSource = dataSource, understanding = null)
+            val conversationRepository = JdbcConversationRepository(dataSource)
+            val responseRunRepository = JdbcResponseRunRepository(dataSource)
+            val realtimeHub = ResponseRunRealtimeHub(TaskFlowIds.FixedClock)
+            val responseRunService = ResponseRunService(
+                conversationRepository,
+                responseRunRepository,
+                services.repository,
+                realtimeHub,
+                TaskFlowIds.FixedClock,
+            )
+            val logger = RecordingStructuredLogger()
+
+            testApplication {
+                application {
+                    configureHttpPlatform()
+                    routing {
+                        conversationRoutes(services.conversationService, HeaderActorResolver, responseRunService, logger)
+                    }
+                }
+                val sseClient = createClient {
+                    install(SSE)
+                }
+                val created = postJson<CreateConversationRequest, CreateConversationResponse>(
+                    "/v1/conversations",
+                    CreateConversationRequest("route-sse-stale-replay-create", "你好", "Asia/Shanghai"),
+                )
+                val runId = created.data.conversation.responseRuns.single().id
+                val run = assertNotNull(responseRunRepository.findResponseRun(ResponseRunId(UUID.fromString(runId))))
+                realtimeHub.delta(run, "first")
+                realtimeHub.delta(run, "second")
+
+                sseClient.sse("/v1/conversations/${created.data.conversation.id}/response-runs/$runId/events", {
+                    headers.append("X-Orbit-Tenant", TaskFlowIds.TenantOne.toString())
+                    headers.append("X-Orbit-User", TaskFlowIds.UserOne.toString())
+                    headers.append("X-Orbit-Scopes", "orbit.tasks.read orbit.tasks.write")
+                    headers.append("Last-Event-ID", "$runId:${run.attempt + 1}:1")
+                }) {
+                    val events = incoming.take(3).toList()
+                    val snapshot = JsonFormat.decodeFromString<ResponseRunEventEnvelope>(events[0].data!!)
+                    val firstReplay = JsonFormat.decodeFromString<ResponseRunEventEnvelope>(events[1].data!!)
+                    val secondReplay = JsonFormat.decodeFromString<ResponseRunEventEnvelope>(events[2].data!!)
+
+                    assertEquals(ResponseRunEventPayload.Snapshot::class, snapshot.payload::class)
+                    assertEquals(2, snapshot.seq)
+                    assertEquals(listOf(1L, 2L), listOf(firstReplay.seq, secondReplay.seq))
+                    assertEquals(
+                        listOf(ResponseRunEventPayload.Delta("first"), ResponseRunEventPayload.Delta("second")),
+                        listOf(firstReplay.payload, secondReplay.payload),
+                    )
+                    assertEquals(
+                        listOf("$runId:${run.attempt}:2", "$runId:${run.attempt}:1", "$runId:${run.attempt}:2"),
+                        events.map { it.id },
+                    )
+                }
+                val connected = logger.entries.single { it.event == "response_run_sse_connected" }
+                assertEquals("$runId:${run.attempt + 1}:1", connected.fields["last_event_id"])
+                assertNull(connected.fields["after_seq"])
+            }
+        } finally {
+            dataSource.close()
+        }
+    }
+
+    @Test
     fun `response run routes enforce owner without leaking foreign run existence`() {
         val dataSource = postgresDataSource("Response run route access")
         try {
             cleanMigrateAndSeed(dataSource)
             val services = createConversationServices(dataSource = dataSource, understanding = null)
             val conversationRepository = JdbcConversationRepository(dataSource)
+            val responseRunRepository = JdbcResponseRunRepository(dataSource)
             val responseRunService = ResponseRunService(
                 conversationRepository,
+                responseRunRepository,
                 services.repository,
                 ResponseRunRealtimeHub(TaskFlowIds.FixedClock),
                 TaskFlowIds.FixedClock,
@@ -404,8 +481,10 @@ class ConversationRoutesTest {
             cleanMigrateAndSeed(dataSource)
             val services = createConversationServices(dataSource = dataSource, understanding = null)
             val conversationRepository = JdbcConversationRepository(dataSource)
+            val responseRunRepository = JdbcResponseRunRepository(dataSource)
             val responseRunService = ResponseRunService(
                 conversationRepository,
+                responseRunRepository,
                 services.repository,
                 ResponseRunRealtimeHub(TaskFlowIds.FixedClock),
                 TaskFlowIds.FixedClock,
@@ -439,7 +518,7 @@ class ConversationRoutesTest {
                 )
                 val retryRunId = ResponseRunId(UUID.fromString(retryConversation.data.conversation.responseRuns.single().id))
                 val claim = assertNotNull(
-                    conversationRepository.claimNextResponseRun(
+                    responseRunRepository.claimNextResponseRun(
                         ClaimNextResponseRunCommand(
                             workerId = "route-test-worker",
                             now = TaskFlowIds.Now,
@@ -451,7 +530,7 @@ class ConversationRoutesTest {
                 assertEquals(retryRunId, claim.run.id)
                 assertEquals(
                     true,
-                    conversationRepository.markResponseRunRetryable(
+                    responseRunRepository.markResponseRunRetryable(
                         MarkResponseRunRetryableCommand(
                             responseRunId = retryRunId,
                             attempt = claim.run.attempt,
@@ -475,7 +554,7 @@ class ConversationRoutesTest {
                 assertEquals(HttpStatusCode.UnprocessableEntity, retryCancelled.status)
 
                 val retriedClaim = assertNotNull(
-                    conversationRepository.claimNextResponseRun(
+                    responseRunRepository.claimNextResponseRun(
                         ClaimNextResponseRunCommand(
                             workerId = "route-test-worker-two",
                             now = TaskFlowIds.Now.plusSeconds(31),
@@ -487,7 +566,7 @@ class ConversationRoutesTest {
                 assertEquals(retryRunId, retriedClaim.run.id)
                 assertEquals(
                     true,
-                    conversationRepository.completeResponseRunAttempt(
+                    responseRunRepository.completeResponseRunAttempt(
                         CompleteResponseRunAttemptCommand(
                             responseRunId = retryRunId,
                             attempt = retriedClaim.run.attempt,
@@ -515,7 +594,8 @@ class ConversationRoutesTest {
                 understanding = null,
             )
             val failingService = ConversationService(
-                conversationRepository = FailingConversationRepository,
+                conversationRepository = JdbcConversationRepository(dataSource),
+                conversationTurnStartCommitter = FailingConversationTurnStartCommitter,
                 taskRepository = dependencies.repository,
                 planningService = dependencies.planningService,
             )
@@ -599,67 +679,12 @@ class ConversationRoutesTest {
             )
     }
 
-    private object FailingConversationRepository : ConversationRepository {
+    private object FailingConversationTurnStartCommitter : ConversationTurnStartCommitter {
         override suspend fun createConversation(command: CreateConversationCommand): CreateConversationResult =
             throw SQLException("primary commit failed")
 
-        override suspend fun findConversationDetail(
-            owner: com.nexusflow.backend.feature.task.domain.TaskOwner,
-            conversationId: ConversationId,
-        ): ConversationDetail? = throw SQLException("primary read failed")
-
-        override suspend fun findConversationDetailForResponseRun(responseRunId: ResponseRunId): ConversationDetail? =
-            throw SQLException("primary read failed")
-
         override suspend fun appendUserMessage(command: AppendConversationUserMessageCommand): AppendConversationUserMessageResult =
             throw SQLException("primary commit failed")
-
-        override suspend fun claimNextResponseRun(command: ClaimNextResponseRunCommand): ClaimedResponseRun? =
-            throw SQLException("primary claim failed")
-
-        override suspend fun heartbeatResponseRunLease(command: HeartbeatResponseRunLeaseCommand): Boolean =
-            throw SQLException("primary heartbeat failed")
-
-        override suspend fun completeResponseRunAttempt(command: CompleteResponseRunAttemptCommand): Boolean =
-            throw SQLException("primary finalize failed")
-
-        override suspend fun failResponseRunAttempt(command: FailResponseRunAttemptCommand): Boolean =
-            throw SQLException("primary finalize failed")
-
-        override suspend fun markResponseRunRetryable(command: MarkResponseRunRetryableCommand): Boolean =
-            throw SQLException("primary retry failed")
-
-        override suspend fun findResponseRun(responseRunId: ResponseRunId): ResponseRun? =
-            throw SQLException("primary read failed")
-
-        override suspend fun cancelResponseRun(command: CancelResponseRunCommand): CancelResponseRunResult =
-            throw SQLException("primary cancel failed")
-
-        override suspend fun retryResponseRun(command: RetryResponseRunCommand): RetryResponseRunResult =
-            throw SQLException("primary retry failed")
-
-        override suspend fun storeResponseRunResult(command: StoreResponseRunResultCommand): StoreResponseRunResult =
-            throw SQLException("primary result failed")
-
-        override suspend fun findResponseRunResult(
-            responseRunId: ResponseRunId,
-            attempt: Int,
-        ): ResponseRunResult? = throw SQLException("primary result read failed")
-
-        override suspend fun findConsumableResponseRunForResult(result: ResponseRunResult): ResponseRun? =
-            throw SQLException("primary result read failed")
-
-        override suspend fun consumeConversationAnswerResult(
-            command: ConsumeConversationAnswerResultCommand,
-        ): ConsumeResponseRunResult = throw SQLException("primary result consume failed")
-
-        override suspend fun queuePlanningStageFromResult(
-            command: com.nexusflow.backend.feature.conversation.domain.QueuePlanningStageFromResultCommand,
-        ): ConsumeResponseRunResult = throw SQLException("primary result consume failed")
-
-        override suspend fun completePlanningResult(
-            command: com.nexusflow.backend.feature.conversation.domain.CompletePlanningResultCommand,
-        ): ConsumeResponseRunResult = throw SQLException("primary result consume failed")
     }
 
     private class RecordingStructuredLogger : StructuredLogger {

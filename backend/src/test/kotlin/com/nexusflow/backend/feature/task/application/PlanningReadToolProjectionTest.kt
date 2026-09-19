@@ -1,12 +1,12 @@
 package com.nexusflow.backend.feature.task.application
 
-import com.nexusflow.backend.core.readtool.ReadToolCatalog
-import com.nexusflow.backend.core.readtool.ReadToolEvidence
-import com.nexusflow.backend.core.readtool.ReadToolEvidencePayload
-import com.nexusflow.backend.core.readtool.ReadToolFact
-import com.nexusflow.backend.core.readtool.ReadToolFactKind
-import com.nexusflow.backend.core.readtool.ReadToolFactValue
-import com.nexusflow.backend.core.readtool.ReadToolOutcome
+import com.nexusflow.backend.feature.research.application.ReadToolCatalog
+import com.nexusflow.backend.feature.research.application.ReadToolEvidence
+import com.nexusflow.backend.feature.research.application.ReadToolEvidencePayload
+import com.nexusflow.backend.feature.research.application.ReadToolFact
+import com.nexusflow.backend.feature.research.application.ReadToolFactKind
+import com.nexusflow.backend.feature.research.application.ReadToolFactValue
+import com.nexusflow.backend.feature.research.application.ReadToolOutcome
 import com.nexusflow.backend.feature.task.ControlledPlanningReadTool
 import com.nexusflow.backend.feature.task.ScriptedUnderstanding
 import com.nexusflow.backend.feature.task.activityDomainChange
@@ -18,9 +18,9 @@ import com.nexusflow.backend.feature.task.locationChange
 import com.nexusflow.backend.feature.task.postgresDataSource
 import com.nexusflow.backend.feature.task.taskActor
 import com.nexusflow.backend.feature.task.understandingOutcome
-import com.nexusflow.backend.feature.task.application.readtool.MovieShowtimesKey
-import com.nexusflow.backend.feature.task.application.readtool.WeatherForecastKey
-import com.nexusflow.backend.feature.task.application.readtool.WebSearchKey
+import com.nexusflow.backend.feature.research.application.readtool.MovieShowtimesKey
+import com.nexusflow.backend.feature.research.application.readtool.WeatherForecastKey
+import com.nexusflow.backend.feature.research.application.readtool.WebSearchKey
 import com.nexusflow.contracts.backendai.understanding.ConstraintDeltaOperation
 import com.nexusflow.contracts.backendai.understanding.ConstraintDeltaProposal
 import com.nexusflow.contracts.backendai.understanding.RequirementKind as AiRequirementKind

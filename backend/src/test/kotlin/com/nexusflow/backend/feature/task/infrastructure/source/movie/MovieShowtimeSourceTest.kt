@@ -1,4 +1,4 @@
-package com.nexusflow.backend.feature.task.infrastructure.source.movie
+package com.nexusflow.backend.feature.research.infrastructure.source.movie
 
 import com.nexusflow.backend.core.config.ChinaOfficialCinemaRuntimeConfig
 import com.nexusflow.backend.core.external.ExternalSourceHttpClient

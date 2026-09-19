@@ -1,4 +1,4 @@
-package com.nexusflow.backend.feature.task.infrastructure.source.football
+package com.nexusflow.backend.feature.research.infrastructure.source.football
 
 import com.nexusflow.backend.core.config.ApiFootballRuntimeConfig
 import com.nexusflow.backend.core.config.FootballDataRuntimeConfig
@@ -12,8 +12,8 @@ import com.nexusflow.backend.core.external.SourceCacheStore
 import com.nexusflow.backend.feature.task.domain.SourceAuthority
 import com.nexusflow.backend.feature.task.domain.source.FixtureStatus
 import com.nexusflow.backend.feature.task.domain.source.FootballFixtureQuery
-import com.nexusflow.backend.feature.task.infrastructure.source.apifootball.ApiFootballFixtureSource
-import com.nexusflow.backend.feature.task.infrastructure.source.footballdata.FootballDataFixtureSource
+import com.nexusflow.backend.feature.research.infrastructure.source.apifootball.ApiFootballFixtureSource
+import com.nexusflow.backend.feature.research.infrastructure.source.footballdata.FootballDataFixtureSource
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope

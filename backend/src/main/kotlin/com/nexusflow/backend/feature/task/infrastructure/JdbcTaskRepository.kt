@@ -5,14 +5,16 @@ import com.nexusflow.backend.feature.task.domain.ApplyConversationUnderstandingC
 import com.nexusflow.backend.feature.task.domain.ApplyUnderstandingResult
 import com.nexusflow.backend.feature.task.domain.AvailabilityFact
 import com.nexusflow.backend.feature.task.domain.CommutePreferenceValue
+import com.nexusflow.backend.feature.task.domain.ConsumePlanningResultCommand
+import com.nexusflow.backend.feature.task.domain.ConsumePlanningUnderstandingCommand
 import com.nexusflow.backend.feature.task.domain.CreateLinkedTaskPersistenceCommand
 import com.nexusflow.backend.feature.task.domain.CreateLinkedTaskPersistenceResult
 import com.nexusflow.backend.feature.task.domain.DeleteRequirementCommand
 import com.nexusflow.backend.feature.task.domain.DurationFact
 import com.nexusflow.backend.feature.task.domain.FactValue
 import com.nexusflow.backend.feature.task.domain.LocationFact
-import com.nexusflow.backend.feature.task.domain.MessageId
-import com.nexusflow.backend.feature.task.domain.MessageRole
+import com.nexusflow.backend.feature.conversation.domain.MessageId
+import com.nexusflow.backend.feature.conversation.domain.MessageRole
 import com.nexusflow.backend.feature.task.domain.MoneyFact
 import com.nexusflow.backend.feature.task.domain.Opportunity
 import com.nexusflow.backend.feature.task.domain.OpportunityFacts
@@ -24,6 +26,7 @@ import com.nexusflow.backend.feature.task.domain.Plan
 import com.nexusflow.backend.feature.task.domain.PlanDirection
 import com.nexusflow.backend.feature.task.domain.PlanEstimatedCost
 import com.nexusflow.backend.feature.task.domain.PlanId
+import com.nexusflow.backend.feature.task.domain.PlanningResultCommitter
 import com.nexusflow.backend.feature.task.domain.PlanSourceRef
 import com.nexusflow.backend.feature.task.domain.PlanTimelineItem
 import com.nexusflow.backend.feature.task.domain.Requirement
@@ -52,19 +55,16 @@ import com.nexusflow.backend.feature.conversation.domain.ConversationId
 import com.nexusflow.backend.feature.conversation.domain.Conversation
 import com.nexusflow.backend.feature.conversation.domain.ConversationDetail
 import com.nexusflow.backend.feature.conversation.domain.ConversationMessage
-import com.nexusflow.backend.feature.conversation.domain.ConsumePlanningResultCommand
-import com.nexusflow.backend.feature.conversation.domain.ConsumePlanningUnderstandingCommand
-import com.nexusflow.backend.feature.conversation.domain.ConsumeResponseRunIgnoreReason
-import com.nexusflow.backend.feature.conversation.domain.ConsumeResponseRunResult
-import com.nexusflow.backend.feature.conversation.domain.PlanningResponseRunRepository
-import com.nexusflow.backend.feature.conversation.domain.ResponseRun
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunFailureCategory
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunId
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunResult
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunResultPayload
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunResultType
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunStage
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunStatus
+import com.nexusflow.backend.feature.responserun.domain.ConsumeResponseRunIgnoreReason
+import com.nexusflow.backend.feature.responserun.domain.ConsumeResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.ResponseRun
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunFailureCategory
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunId
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunResultPayload
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunResultType
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStage
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
@@ -86,7 +86,7 @@ class JdbcTaskRepository(
         ignoreUnknownKeys = true
         explicitNulls = false
     },
-) : TaskRepository, PlanningResponseRunRepository {
+) : TaskRepository, PlanningResultCommitter {
     override suspend fun createLinkedTask(command: CreateLinkedTaskPersistenceCommand): CreateLinkedTaskPersistenceResult =
         blocking {
             inTransaction { connection ->

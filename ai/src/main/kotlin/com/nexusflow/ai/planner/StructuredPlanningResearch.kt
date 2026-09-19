@@ -1,23 +1,12 @@
 package com.nexusflow.ai.planner
 
-import com.nexusflow.ai.provider.InvalidStructuredOutputException as ProviderInvalidStructuredOutputException
-import com.nexusflow.ai.provider.ProviderRateLimitedException as ProviderRateLimitedModelException
-import com.nexusflow.ai.provider.ProviderRefusedException as ProviderRefusedModelException
-import com.nexusflow.ai.provider.ProviderTimeoutException as ProviderTimeoutModelException
-import com.nexusflow.ai.provider.ProviderUnauthorizedException as ProviderUnauthorizedModelException
-import com.nexusflow.ai.provider.ProviderUnavailableException as ProviderUnavailableModelException
-import com.nexusflow.ai.provider.StructuredModelException
 import com.nexusflow.ai.provider.StructuredModelProvider
 import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.ai.provider.StructuredModelRequestMetadata
 import com.nexusflow.ai.provider.StructuredOutputSchema
-import com.nexusflow.contracts.backendai.common.AiCapabilityException
-import com.nexusflow.contracts.backendai.common.CapabilityRateLimitedException
-import com.nexusflow.contracts.backendai.common.CapabilityRefusedException
-import com.nexusflow.contracts.backendai.common.CapabilityTimeoutException
-import com.nexusflow.contracts.backendai.common.CapabilityUnauthorizedException
-import com.nexusflow.contracts.backendai.common.CapabilityUnavailableException
-import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
+import com.nexusflow.ai.runtime.StructuredCapabilityInvalidOutputException
+import com.nexusflow.ai.runtime.StructuredCapabilityOperation
+import com.nexusflow.ai.runtime.StructuredCapabilityRunner
 import com.nexusflow.contracts.backendai.common.StructuredModelCapability
 import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
 import com.nexusflow.contracts.backendai.planning.PlanModelMetadata
@@ -26,8 +15,6 @@ import com.nexusflow.contracts.backendai.planning.PlanningResearchRequest
 import com.nexusflow.contracts.backendai.planning.PlanningResearchResult
 import com.nexusflow.contracts.backendai.planning.PlanningRequirement
 import com.nexusflow.observability.StructuredLogger
-import com.nexusflow.observability.logFields
-import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -37,58 +24,22 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 
 class StructuredPlanningResearch(
-    private val provider: StructuredModelProvider,
-    private val logger: StructuredLogger? = null,
+    provider: StructuredModelProvider,
+    logger: StructuredLogger? = null,
     private val json: Json = Json {
         ignoreUnknownKeys = false
         explicitNulls = false
         encodeDefaults = true
     },
 ) : PlanningResearchCapability {
-    override suspend fun research(request: PlanningResearchRequest): PlanningResearchResult {
-        var attempt = 1
-        while (true) {
-            try {
-                return requestOnce(request, attempt)
-            } catch (error: RepairablePlanningResearchException) {
-                if (attempt == MAX_ATTEMPTS) {
-                    throw InvalidCapabilityResultException(
-                        message = error.message ?: "Planning research response is invalid",
-                        cause = error,
-                        failureStage = error.stage.logValue,
-                    )
-                }
-                logRetry(nextAttempt = attempt + 1, failureStage = error.stage.logValue)
-                attempt += 1
-            }
-        }
-    }
+    private val runner = StructuredCapabilityRunner(provider, logger)
 
-    private fun logRetry(
-        nextAttempt: Int,
-        failureStage: String,
-    ) {
-        logger?.warn(
-            component = "ai",
-            event = "ai_request_retry",
-            fields =
-                logFields {
-                    "operation" value "planning_research"
-                    "next_attempt" value nextAttempt
-                    "failure_category" value "invalid_planning_research"
-                    "failure_stage" value failureStage
-                },
-        )
-    }
-
-    private suspend fun requestOnce(
-        request: PlanningResearchRequest,
-        attempt: Int,
-    ): PlanningResearchResult {
-        val userPayload = request.toPayload()
-        val requestDiagnostics = request.toRequestDiagnostics(userPayload)
-        val result = try {
-            provider.generate(
+    override suspend fun research(request: PlanningResearchRequest): PlanningResearchResult =
+        runner.execute(
+            operation = PLANNING_RESEARCH_OPERATION,
+            request = { attempt ->
+                val userPayload = request.toPayload()
+                val requestDiagnostics = request.toRequestDiagnostics(userPayload)
                 StructuredModelRequest(
                     systemPrompt = planningResearchSystemPrompt(attempt),
                     userPayload = userPayload,
@@ -104,27 +55,24 @@ class StructuredPlanningResearch(
                         attemptNumber = attempt,
                         diagnostics = requestDiagnostics,
                     ),
-                ),
-            )
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: StructuredModelException) {
-            throw error.toPlanningResearchException()
-        }
-        val payload = try {
-            json.decodeFromString<PlanningResearchPayload>(result.outputText)
-        } catch (error: SerializationException) {
-            throw RepairablePlanningResearchException(
-                PlanningResearchFailureStage.JsonDecode,
-                "Planning research response was not valid structured output",
-                error,
-            )
-        }
-        return payload.toPlanningResearchResult(
-            request = request,
-            metadata = result.metadata.toPlanModelMetadata(),
+                )
+            },
+            decode = { result ->
+                val payload = try {
+                    json.decodeFromString<PlanningResearchPayload>(result.outputText)
+                } catch (error: SerializationException) {
+                    throw RepairablePlanningResearchException(
+                        PlanningResearchFailureStage.JsonDecode,
+                        "Planning research response was not valid structured output",
+                        error,
+                    )
+                }
+                payload.toPlanningResearchResult(
+                    request = request,
+                    metadata = result.metadata.toPlanModelMetadata(),
+                )
+            },
         )
-    }
 
     private fun PlanningResearchPayload.toPlanningResearchResult(
         request: PlanningResearchRequest,
@@ -241,23 +189,17 @@ class StructuredPlanningResearch(
             diagnostics = requestDiagnostics,
         )
 
-    private fun StructuredModelException.toPlanningResearchException(): AiCapabilityException =
-        when (this) {
-            is ProviderUnauthorizedModelException -> CapabilityUnauthorizedException(this)
-            is ProviderRateLimitedModelException -> CapabilityRateLimitedException(this)
-            is ProviderTimeoutModelException -> CapabilityTimeoutException(this)
-            is ProviderRefusedModelException -> CapabilityRefusedException()
-            is ProviderUnavailableModelException -> CapabilityUnavailableException(this)
-            is ProviderInvalidStructuredOutputException -> InvalidCapabilityResultException(
-                message = message ?: "Invalid output",
-                cause = this,
-                failureStage = PlanningResearchFailureStage.ProviderInvalidStructuredOutput.logValue,
-            )
-            else -> CapabilityUnavailableException(this)
-        }
 }
 
 private const val MAX_ATTEMPTS = 2
+
+private val PLANNING_RESEARCH_OPERATION = StructuredCapabilityOperation(
+    name = "planning_research",
+    invalidFailureCategory = "invalid_planning_research",
+    maxAttempts = MAX_ATTEMPTS,
+    providerInvalidOutputFailureStage = PlanningResearchFailureStage.ProviderInvalidStructuredOutput.logValue,
+    providerInvalidOutputFallbackMessage = "Invalid output",
+)
 
 private enum class PlanningResearchFailureStage(val logValue: String) {
     JsonDecode("json_decode"),
@@ -272,4 +214,8 @@ private class RepairablePlanningResearchException(
     val stage: PlanningResearchFailureStage,
     message: String,
     cause: Throwable? = null,
-) : RuntimeException(message, cause)
+) : StructuredCapabilityInvalidOutputException(
+    message = message,
+    cause = cause,
+    failureStage = stage.logValue,
+)

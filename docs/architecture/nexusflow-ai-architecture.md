@@ -153,6 +153,8 @@ metadata      = local-only request identity, prompt version, capability, attempt
 
 Capability code owns typed Kotlin payloads and semantic output validation. It serializes typed DTOs to `JsonObject` before creating `StructuredModelRequest`. Provider adapters serialize that JSON once at the transport boundary and must not learn Context key semantics.
 
+每个 capability 必须声明 typed input、typed output、prompt version、output schema、semantic validator 和 failure policy。Prompt 只描述模型行为和字段语义；schema 只证明结构可解析；semantic validator 才能判断输出是否能作为 candidate 交给 Backend guardrails。没有 typed contract 的 prompt 不能成为 production capability。
+
 `systemPrompt` may describe field semantics and trust precedence, but must not duplicate runtime values already present in `userPayload`. Opaque Backend IDs such as task/request/trace IDs stay in metadata unless the model has a specific semantic need.
 
 ### 4.5 External / MCP Distillation Boundary
@@ -187,6 +189,8 @@ AI proposes bounded read-only research
 -> Backend evidence or Opportunity projection with provenance
 -> AI answers or plans over that bounded evidence
 ```
+
+Research fact authority belongs to the source owner and Backend projection, not the model. Every model-visible research fact must carry enough provenance for Backend/debugging to identify source, freshness and trust category. Missing evidence is `UNKNOWN`; incompatible evidence from comparable sources is `CONFLICT`; AI must surface or preserve those states instead of inventing source-owned facts, prices, times, availability, identities or citations.
 
 This boundary is not a generic Agent Runtime, arbitrary tool loop, production MCP runtime, side-effect executor, provider-owned tool call, or permission grant. AI never receives credentials and never directly connects to MCP/API transports. Existing HTTP sources may be adapted behind the same read-only boundary; real MCP transport may be added only against an actual connector contract and must preserve source-owned projection before model exposure.
 
@@ -224,6 +228,8 @@ Application-facing Planner inputs/outputs 使用 typed Kotlin model，例如 `da
 ## 6. Deterministic Guardrails
 
 MUST requirements 必须由 deterministic code 执行，不能交给 prompt instruction。
+
+Prompt 不拥有 business authority。Prompt instruction、model self-critique、tool description 或 provider safety output 都不能批准 action、改变权限、推进 state、确认幂等或声明 durable fact。所有 business authority validation 必须在 Backend deterministic code 中完成，AI output 只能进入 typed candidate / rejection / degraded answer path。
 
 包括但不限于：
 
@@ -272,6 +278,15 @@ Grounded Plan 必须引用 Backend 提供的 verified candidate / Opportunity sn
 
 AI runtime 必须遵循结构化并发和 cancellation propagation。Timeout、retry、provider unavailable、invalid structured output 和 policy rejection 是不同 outcome category，不能都揉成“模型失败”。
 
+AI failure taxonomy 至少区分：
+
+- business outcome：模型未被调用或调用后得到合法但业务不可执行/无需执行的结论；
+- retryable dependency failure：provider timeout、rate limit、temporary unavailable、transport failure；
+- invalid AI result：schema parse failure、semantic validation failure、illegal/stale proposal、unsupported provenance；
+- internal invariant failure：capability contract、runtime state、guardrail wiring 或 Backend/AI boundary 被破坏。
+
+这些分类必须进入 typed failure，不得只用 exception message 或 provider finish reason 表达。
+
 一旦 runtime 存在，必须明确：
 
 ```text
@@ -281,6 +296,8 @@ provider call cancellation 是否传播？
 invalid output 如何 terminal？
 stale planning result 如何被 Backend 拒绝？
 ```
+
+Capability runtime 统一拥有 provider invocation、timeout、bounded retry、structured repair attempt、safe logging 和 metrics。单个 capability 只拥有 prompt/payload construction、decode 和 semantic validation；不得在每个 capability 内散落 provider retry、timeout、raw logging 或 metrics 规则。
 
 不要提前建立 RetryManager、FallbackRouter、ModelRegistry、agent loop 或 provider routing framework。只有真实可达 failure、第二 provider/runtime variation 或 durable planning workflow 出现时，才引入对应 owner。
 
@@ -312,6 +329,8 @@ AI quality verification 与 deterministic correctness 分开：
 - Backend integration tests：Backend 是否拒绝 stale/unauthorized/invalid proposal；
 - AI eval cases：semantic quality、reason correctness、risk tags、invariant preservation；
 - observability checks：不记录 secret 或完整敏感内容。
+
+每个 AI capability 必须定义 LLM hop budget。能由 deterministic code、现有 typed context、缓存的 source-owned projection 或简单 formatter 完成的 fast path，不得新增 LLM hop。新增或改变 prompt、schema、semantic validator、repair behavior 或 research grounding 规则时，必须补充对应 AI eval / golden cases 或说明为什么当前能力没有可运行 eval gate。
 
 当多个 plan 都合法时，避免 exact-string tests。更重要的是 invariant 稳定：不得越过预算、冲突时间、禁用时段、审批策略、权限和副作用边界。
 

@@ -70,7 +70,10 @@ AuthRoutes
 ### 核心规则
 
 - Backend persistence/domain state 是跨信任边界后的 authoritative durable business truth。
+- Backend 是 durable business authority：permissions、approval、state transition、idempotency、audit、persistence 和 side effect 的最终判断都在 Backend；AI 只能提供 proposal / reasoning / answer candidate。
 - 一个 mutable business fact 只有一个 writable owner。
+- 一个 mutable durable state 必须有明确 store owner。能写入、推进或 terminal 该 state 的代码路径必须收敛到 owner 或其明确授权的 application boundary。
+- 跨 writable owner 的原子提交必须有明确 Committer，负责 precondition、写入顺序、CAS / expected version、conflict/stale 解释和 rollback 语义；不得让两个 owner 各自提交后再用约定维持不变量。
 - Route 拥有协议适配，不拥有业务 sequencing。
 - Application Service 通常拥有 request-to-terminal 的业务 flow、decision、authorization application 和 failure terminal。
 - Repository / infrastructure 拥有持久化机制、外部 SDK 协议和 atomic write mechanics，不拥有产品 policy。
@@ -176,6 +179,8 @@ late result
 → ?
 ```
 
+状态推进必须优先使用 store-owned CAS / expected version / conditional transition。`affectedRows == 0` 不是泛化的“不存在”，必须在 owner 边界映射为 typed conflict / stale / already-terminal / unauthorized-or-hidden / invariant failure 中的一个语义 outcome。调用方不得基于 raw affected-row count 自行猜测业务结论。
+
 已发布或已使用的 Flyway migration 不可修改，只能通过新 migration 演进 schema。新增或变更 `NOT NULL`、`FOREIGN KEY`、`UNIQUE`、`CHECK`、column type、default 或 index 前，必须同时考虑 fresh empty database 和含旧数据的 existing database；必要时采用 staged / expand-contract：
 
 ```text
@@ -199,10 +204,22 @@ Coroutine、process worker、timer 或 in-memory queue 不是 authoritative dura
 durable state 写在哪里？
 谁 start / retry / recover / lease / terminal？
 operation identity 是什么？
+state / transition / terminal set 是什么？
 process crash 后如何恢复？
 duplicate / stale / late result 如何拒绝？
+timeout / cancel 如何进入 terminal 或可恢复状态？
 外部 effect 的幂等边界在哪里？
 ```
+
+durable workflow 必须先定义 state machine，再实现 worker、timer、realtime 或 provider integration。至少要明确 legal transitions、terminal states、retry budget、idempotency key、timeout owner、cancel owner、stale-result rejection 和 recovery entry。缺少这些定义时，不得用 coroutine lifecycle 或 retry loop 代替 durable state。
+
+HTTP、Durable Async 和 Realtime 是三个不同边界：
+
+- HTTP 返回 request 接收、同步完成、当前状态或 durable operation identity；
+- Durable Async 负责持久状态推进、retry/recover、terminal 和外部 effect 幂等；
+- Realtime 只发布已提交状态的观察结果，不拥有 terminal。
+
+任何 realtime terminal / completion event 必须发生在 durable commit 之后；如果 commit 失败，不能先向客户端宣布成功再依赖后续补偿修正。
 
 短 HTTP 请求不需要 Worker/Coordinator。只有后台继续运行、跨进程恢复、有限 retry、租约、外部副作用补偿或 terminal ownership 真实出现时，才建立对应 owner。
 
@@ -249,6 +266,15 @@ Backend 拥有 request、operation、entity、approval version、idempotency key
 Route 负责协议输入输出和已知 application/domain failure 到 HTTP 的映射。HTTP status、Problem JSON、protocol exception 和 request decode failure 不进入 domain state。
 
 Application Service 应返回或抛出语义清楚的 application/domain failure。不要在每一层复制 try/catch/error normalization。Transport 错误、provider 错误和 domain rejection 应在边界处逐层转义，避免把 raw exception message 泄漏给用户或日志。
+
+Backend durable/API 边界必须使用 typed result / typed error，而不是 raw exception、provider string 或布尔值表达结论。最小分类必须区分：
+
+- business outcome：合法的业务终态或拒绝，例如 no-match、needs-approval、conflict、cancelled、already-terminal；
+- retryable dependency failure：provider、network、rate limit、temporary storage unavailability 等可重试依赖失败；
+- invalid AI result：schema、semantic validation、stale context、illegal action 或 provenance 不满足；
+- internal invariant failure：不应出现的 owner、state machine、persistence 或 permission invariant 破坏。
+
+Provider failure 不等于 business outcome；invalid AI result 不等于用户请求失败；internal invariant failure 不得被降级成普通 no-op。Route 只负责把 typed category 映射到协议响应，不能在 HTTP 层重新解释业务状态。
 
 Application Service 必须先标出 primary action 与 primary durable commit boundary。正常业务 terminal（例如 empty/no-match、need-clarification、hard feasibility rejection）不得通过 dependency exception 表达；partial success 应保留已验证的合法结果。Primary durable commit 成功后，后置 AI/provider enrichment 或 planning failure 不得把主动作重新映射为 HTTP 失败，只能作为 response outcome、processing state 或后续可重试状态返回。只有主动作本身无法完成、主动作前依赖不可用、业务冲突、非法请求或未预期 invariant failure，才映射为对应 4xx/5xx。
 

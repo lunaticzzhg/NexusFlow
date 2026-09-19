@@ -2,19 +2,20 @@ package com.nexusflow.backend.feature.conversation.infrastructure
 
 import com.nexusflow.backend.feature.conversation.domain.AppendConversationUserMessageCommand
 import com.nexusflow.backend.feature.conversation.domain.AppendConversationUserMessageResult
-import com.nexusflow.backend.feature.conversation.domain.ClaimNextResponseRunCommand
-import com.nexusflow.backend.feature.conversation.domain.CompleteResponseRunAttemptCommand
+import com.nexusflow.backend.feature.responserun.domain.ClaimNextResponseRunCommand
+import com.nexusflow.backend.feature.responserun.domain.CompleteResponseRunAttemptCommand
 import com.nexusflow.backend.feature.conversation.domain.ConversationId
 import com.nexusflow.backend.feature.conversation.domain.CreateConversationCommand
 import com.nexusflow.backend.feature.conversation.domain.CreateConversationResult
-import com.nexusflow.backend.feature.conversation.domain.HeartbeatResponseRunLeaseCommand
-import com.nexusflow.backend.feature.conversation.domain.MarkResponseRunRetryableCommand
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunFailureCategory
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunId
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunStatus
+import com.nexusflow.backend.feature.responserun.domain.HeartbeatResponseRunLeaseCommand
+import com.nexusflow.backend.feature.responserun.domain.MarkResponseRunRetryableCommand
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunFailureCategory
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunId
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStatus
+import com.nexusflow.backend.feature.responserun.infrastructure.JdbcResponseRunRepository
 import com.nexusflow.backend.feature.task.TaskFlowIds
 import com.nexusflow.backend.feature.task.cleanMigrateAndSeed
-import com.nexusflow.backend.feature.task.domain.MessageId
+import com.nexusflow.backend.feature.conversation.domain.MessageId
 import com.nexusflow.backend.feature.task.domain.TaskOwner
 import com.nexusflow.backend.feature.task.domain.TenantId
 import com.nexusflow.backend.feature.task.domain.UserId
@@ -35,13 +36,15 @@ import kotlin.test.assertNull
 
 class JdbcResponseRunLifecycleTest {
     private lateinit var dataSource: HikariDataSource
-    private lateinit var repository: JdbcConversationRepository
+    private lateinit var conversationTurnStartCommitter: JdbcConversationTurnStartCommitter
+    private lateinit var repository: JdbcResponseRunRepository
 
     @BeforeTest
     fun setUp() {
         dataSource = postgresDataSource("Response run lifecycle")
         cleanMigrateAndSeed(dataSource)
-        repository = JdbcConversationRepository(dataSource)
+        conversationTurnStartCommitter = JdbcConversationTurnStartCommitter(dataSource)
+        repository = JdbcResponseRunRepository(dataSource)
     }
 
     @AfterTest
@@ -263,7 +266,7 @@ class JdbcResponseRunLifecycleTest {
     ): CreatedRun {
         val conversationId = ConversationId(uuid(idSeed))
         val runId = ResponseRunId(UUID.randomUUID())
-        val created = repository.createConversation(
+        val created = conversationTurnStartCommitter.createConversation(
             CreateConversationCommand(
                 owner = owner(),
                 conversationId = conversationId,
@@ -286,7 +289,7 @@ class JdbcResponseRunLifecycleTest {
         idSeed: String,
     ): ResponseRunId {
         val runId = ResponseRunId(UUID.randomUUID())
-        val appended = repository.appendUserMessage(
+        val appended = conversationTurnStartCommitter.appendUserMessage(
             AppendConversationUserMessageCommand(
                 owner = owner(),
                 conversationId = conversationId,

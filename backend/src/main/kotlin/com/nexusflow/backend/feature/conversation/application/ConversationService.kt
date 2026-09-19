@@ -7,18 +7,19 @@ import com.nexusflow.backend.feature.conversation.domain.AppendConversationUserM
 import com.nexusflow.backend.feature.conversation.domain.ConversationDetail
 import com.nexusflow.backend.feature.conversation.domain.ConversationId
 import com.nexusflow.backend.feature.conversation.domain.ConversationRepository
+import com.nexusflow.backend.feature.conversation.domain.ConversationTurnStartCommitter
 import com.nexusflow.backend.feature.conversation.domain.CreateConversationCommand
 import com.nexusflow.backend.feature.conversation.domain.CreateConversationResult
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunId
-import com.nexusflow.backend.feature.task.application.ConversationAnswerService
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunId
+import com.nexusflow.backend.feature.conversation.application.answer.ConversationAnswerService
 import com.nexusflow.backend.feature.task.application.InvalidTaskRequestException
 import com.nexusflow.backend.feature.task.application.MissingTaskScopeException
 import com.nexusflow.backend.feature.task.application.PlanningOutcome
 import com.nexusflow.backend.feature.task.application.PlanningService
 import com.nexusflow.backend.feature.task.application.TaskConflictException
 import com.nexusflow.backend.feature.task.application.TaskNotFoundException
-import com.nexusflow.backend.feature.task.domain.MessageId
-import com.nexusflow.backend.feature.task.domain.MessageRole
+import com.nexusflow.backend.feature.conversation.domain.MessageId
+import com.nexusflow.backend.feature.conversation.domain.MessageRole
 import com.nexusflow.backend.feature.task.domain.TaskDetail
 import com.nexusflow.backend.feature.task.domain.TaskOwner
 import com.nexusflow.backend.feature.task.domain.TaskRepository
@@ -34,6 +35,7 @@ import java.util.UUID
 
 class ConversationService(
     private val conversationRepository: ConversationRepository,
+    private val conversationTurnStartCommitter: ConversationTurnStartCommitter,
     private val taskRepository: TaskRepository,
     @Suppress("UNUSED_PARAMETER") planningService: PlanningService,
     @Suppress("UNUSED_PARAMETER") understanding: UserMessageUnderstanding? = null,
@@ -58,7 +60,7 @@ class ConversationService(
         val now = clock.instant()
         val originTraceId = BackendTraceContext.currentTraceId()?.value
         val detail = when (
-            val result = conversationRepository.createConversation(
+            val result = conversationTurnStartCommitter.createConversation(
                 CreateConversationCommand(
                     owner = owner,
                     conversationId = ConversationId(uuidFactory()),
@@ -106,7 +108,7 @@ class ConversationService(
         val now = clock.instant()
         val originTraceId = BackendTraceContext.currentTraceId()?.value
         val detail = when (
-            val result = conversationRepository.appendUserMessage(
+            val result = conversationTurnStartCommitter.appendUserMessage(
                 AppendConversationUserMessageCommand(
                     owner = owner,
                     conversationId = parsedConversationId,

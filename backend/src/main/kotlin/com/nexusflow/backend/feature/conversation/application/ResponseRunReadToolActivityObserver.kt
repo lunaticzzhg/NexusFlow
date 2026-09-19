@@ -1,11 +1,11 @@
 package com.nexusflow.backend.feature.conversation.application
 
-import com.nexusflow.backend.core.readtool.ReadToolActivityKind
-import com.nexusflow.backend.core.readtool.ReadToolCall
-import com.nexusflow.backend.core.readtool.ReadToolDefinition
-import com.nexusflow.backend.core.readtool.ReadToolExecutionObserver
-import com.nexusflow.backend.core.readtool.ReadToolOutcome
-import com.nexusflow.backend.feature.conversation.domain.ResponseRun
+import com.nexusflow.backend.feature.research.application.ReadToolActivityKind
+import com.nexusflow.backend.feature.research.application.ReadToolCall
+import com.nexusflow.backend.feature.research.application.ReadToolDefinition
+import com.nexusflow.backend.feature.research.application.ReadToolExecutionObserver
+import com.nexusflow.backend.feature.research.application.ReadToolOutcome
+import com.nexusflow.backend.feature.responserun.domain.ResponseRun
 
 class ResponseRunReadToolActivityObserver(
     private val realtimeHub: ResponseRunRealtimeHub,

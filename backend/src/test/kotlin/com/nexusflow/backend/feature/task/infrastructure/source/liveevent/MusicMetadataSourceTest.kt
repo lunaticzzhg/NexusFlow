@@ -1,4 +1,4 @@
-package com.nexusflow.backend.feature.task.infrastructure.source.liveevent
+package com.nexusflow.backend.feature.research.infrastructure.source.liveevent
 
 import com.nexusflow.backend.core.config.MusicBrainzRuntimeConfig
 import com.nexusflow.backend.core.external.ExternalSourceHttpClient
@@ -11,7 +11,7 @@ import com.nexusflow.backend.core.external.SourceCacheStore
 import com.nexusflow.backend.feature.task.domain.SourceAuthority
 import com.nexusflow.backend.feature.task.domain.source.MusicMetadataQuery
 import com.nexusflow.backend.feature.task.domain.source.MusicMetadataSearchType
-import com.nexusflow.backend.feature.task.infrastructure.source.musicbrainz.MusicBrainzMetadataSource
+import com.nexusflow.backend.feature.research.infrastructure.source.musicbrainz.MusicBrainzMetadataSource
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope

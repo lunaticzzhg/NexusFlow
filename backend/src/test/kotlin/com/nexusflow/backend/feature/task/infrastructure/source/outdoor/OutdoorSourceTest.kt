@@ -1,4 +1,4 @@
-package com.nexusflow.backend.feature.task.infrastructure.source.outdoor
+package com.nexusflow.backend.feature.research.infrastructure.source.outdoor
 
 import com.nexusflow.backend.core.config.MetNoRuntimeConfig
 import com.nexusflow.backend.core.config.NominatimRuntimeConfig

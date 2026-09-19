@@ -1,23 +1,12 @@
 package com.nexusflow.ai.conversation
 
-import com.nexusflow.ai.provider.InvalidStructuredOutputException as ProviderInvalidStructuredOutputException
-import com.nexusflow.ai.provider.ProviderRateLimitedException as ProviderRateLimitedModelException
-import com.nexusflow.ai.provider.ProviderRefusedException as ProviderRefusedModelException
-import com.nexusflow.ai.provider.ProviderTimeoutException as ProviderTimeoutModelException
-import com.nexusflow.ai.provider.ProviderUnauthorizedException as ProviderUnauthorizedModelException
-import com.nexusflow.ai.provider.ProviderUnavailableException as ProviderUnavailableModelException
-import com.nexusflow.ai.provider.StructuredModelException
 import com.nexusflow.ai.provider.StructuredModelProvider
 import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.ai.provider.StructuredModelRequestMetadata
 import com.nexusflow.ai.provider.StructuredOutputSchema
-import com.nexusflow.contracts.backendai.common.AiCapabilityException
-import com.nexusflow.contracts.backendai.common.CapabilityRateLimitedException
-import com.nexusflow.contracts.backendai.common.CapabilityRefusedException
-import com.nexusflow.contracts.backendai.common.CapabilityTimeoutException
-import com.nexusflow.contracts.backendai.common.CapabilityUnauthorizedException
-import com.nexusflow.contracts.backendai.common.CapabilityUnavailableException
-import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
+import com.nexusflow.ai.runtime.StructuredCapabilityInvalidOutputException
+import com.nexusflow.ai.runtime.StructuredCapabilityOperation
+import com.nexusflow.ai.runtime.StructuredCapabilityRunner
 import com.nexusflow.contracts.backendai.common.StructuredModelCapability
 import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
 import com.nexusflow.contracts.backendai.conversation.ConversationDecisionCapability
@@ -31,8 +20,6 @@ import com.nexusflow.contracts.backendai.conversation.InformationNeedProposal
 import com.nexusflow.contracts.backendai.conversation.ReadOnlyToolCallProposal
 import com.nexusflow.contracts.backendai.conversation.ReadOnlyToolDefinitionPayload
 import com.nexusflow.observability.StructuredLogger
-import com.nexusflow.observability.logFields
-import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -42,58 +29,22 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 
 class StructuredConversationDecision(
-    private val provider: StructuredModelProvider,
-    private val logger: StructuredLogger? = null,
+    provider: StructuredModelProvider,
+    logger: StructuredLogger? = null,
     private val json: Json = Json {
         ignoreUnknownKeys = false
         explicitNulls = false
         encodeDefaults = true
     },
 ) : ConversationDecisionCapability {
-    override suspend fun decide(request: ConversationDecisionRequest): ConversationDecisionResult {
-        var attempt = 1
-        while (true) {
-            try {
-                return requestOnce(request, attempt)
-            } catch (error: RepairableConversationDecisionException) {
-                if (attempt == MAX_ATTEMPTS) {
-                    throw InvalidCapabilityResultException(
-                        message = error.message ?: "Conversation decision response is invalid",
-                        cause = error,
-                        failureStage = error.stage.logValue,
-                    )
-                }
-                logRetry(nextAttempt = attempt + 1, failureStage = error.stage.logValue)
-                attempt += 1
-            }
-        }
-    }
+    private val runner = StructuredCapabilityRunner(provider, logger)
 
-    private fun logRetry(
-        nextAttempt: Int,
-        failureStage: String,
-    ) {
-        logger?.warn(
-            component = "ai",
-            event = "ai_request_retry",
-            fields =
-                logFields {
-                    "operation" value "conversation_decision"
-                    "next_attempt" value nextAttempt
-                    "failure_category" value "invalid_conversation_decision"
-                    "failure_stage" value failureStage
-                },
-        )
-    }
-
-    private suspend fun requestOnce(
-        request: ConversationDecisionRequest,
-        attempt: Int,
-    ): ConversationDecisionResult {
-        val userPayload = request.toPayload()
-        val requestDiagnostics = request.toRequestDiagnostics(userPayload)
-        val result = try {
-            provider.generate(
+    override suspend fun decide(request: ConversationDecisionRequest): ConversationDecisionResult =
+        runner.execute(
+            operation = CONVERSATION_DECISION_OPERATION,
+            request = { attempt ->
+                val userPayload = request.toPayload()
+                val requestDiagnostics = request.toRequestDiagnostics(userPayload)
                 StructuredModelRequest(
                     systemPrompt = conversationDecisionSystemPrompt(attempt),
                     userPayload = userPayload,
@@ -109,27 +60,24 @@ class StructuredConversationDecision(
                         attemptNumber = attempt,
                         diagnostics = requestDiagnostics,
                     ),
-                ),
-            )
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: StructuredModelException) {
-            throw error.toConversationDecisionException()
-        }
-        val payload = try {
-            json.decodeFromString<ConversationDecisionPayload>(result.outputText)
-        } catch (error: SerializationException) {
-            throw RepairableConversationDecisionException(
-                ConversationDecisionFailureStage.JsonDecode,
-                "Conversation decision response was not valid structured output",
-                error,
-            )
-        }
-        return payload.toDecisionResult(
-            request = request,
-            metadata = result.metadata.toConversationDecisionMetadata(),
+                )
+            },
+            decode = { result ->
+                val payload = try {
+                    json.decodeFromString<ConversationDecisionPayload>(result.outputText)
+                } catch (error: SerializationException) {
+                    throw RepairableConversationDecisionException(
+                        ConversationDecisionFailureStage.JsonDecode,
+                        "Conversation decision response was not valid structured output",
+                        error,
+                    )
+                }
+                payload.toDecisionResult(
+                    request = request,
+                    metadata = result.metadata.toConversationDecisionMetadata(),
+                )
+            },
         )
-    }
 
     private fun ConversationDecisionPayload.toDecisionResult(
         request: ConversationDecisionRequest,
@@ -333,25 +281,19 @@ class StructuredConversationDecision(
             diagnostics = requestDiagnostics,
         )
 
-    private fun StructuredModelException.toConversationDecisionException(): AiCapabilityException =
-        when (this) {
-            is ProviderUnauthorizedModelException -> CapabilityUnauthorizedException(this)
-            is ProviderRateLimitedModelException -> CapabilityRateLimitedException(this)
-            is ProviderTimeoutModelException -> CapabilityTimeoutException(this)
-            is ProviderRefusedModelException -> CapabilityRefusedException()
-            is ProviderUnavailableModelException -> CapabilityUnavailableException(this)
-            is ProviderInvalidStructuredOutputException -> InvalidCapabilityResultException(
-                message = message ?: "Invalid output",
-                cause = this,
-                failureStage = ConversationDecisionFailureStage.ProviderInvalidStructuredOutput.logValue,
-            )
-            else -> CapabilityUnavailableException(this)
-        }
 }
 
 private const val MAX_ATTEMPTS = 2
 private const val MAX_NEED_ID_CHARS = 80
 private const val MAX_NEED_QUESTION_CHARS = 500
+
+private val CONVERSATION_DECISION_OPERATION = StructuredCapabilityOperation(
+    name = "conversation_decision",
+    invalidFailureCategory = "invalid_conversation_decision",
+    maxAttempts = MAX_ATTEMPTS,
+    providerInvalidOutputFailureStage = ConversationDecisionFailureStage.ProviderInvalidStructuredOutput.logValue,
+    providerInvalidOutputFallbackMessage = "Invalid output",
+)
 
 private enum class ConversationDecisionFailureStage(val logValue: String) {
     JsonDecode("json_decode"),
@@ -370,4 +312,8 @@ private class RepairableConversationDecisionException(
     val stage: ConversationDecisionFailureStage,
     message: String,
     cause: Throwable? = null,
-) : RuntimeException(message, cause)
+) : StructuredCapabilityInvalidOutputException(
+    message = message,
+    cause = cause,
+    failureStage = stage.logValue,
+)

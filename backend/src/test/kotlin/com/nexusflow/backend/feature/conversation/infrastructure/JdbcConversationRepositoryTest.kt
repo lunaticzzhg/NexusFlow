@@ -2,17 +2,18 @@ package com.nexusflow.backend.feature.conversation.infrastructure
 
 import com.nexusflow.backend.feature.conversation.domain.AppendConversationUserMessageCommand
 import com.nexusflow.backend.feature.conversation.domain.AppendConversationUserMessageResult
-import com.nexusflow.backend.feature.conversation.domain.ClaimNextResponseRunCommand
+import com.nexusflow.backend.feature.responserun.domain.ClaimNextResponseRunCommand
 import com.nexusflow.backend.feature.conversation.domain.ConversationId
 import com.nexusflow.backend.feature.conversation.domain.CreateConversationCommand
 import com.nexusflow.backend.feature.conversation.domain.CreateConversationResult
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunId
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunStage
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunStatus
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunId
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStage
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStatus
+import com.nexusflow.backend.feature.responserun.infrastructure.JdbcResponseRunRepository
 import com.nexusflow.backend.feature.task.TaskFlowIds
 import com.nexusflow.backend.feature.task.cleanMigrateAndSeed
-import com.nexusflow.backend.feature.task.domain.MessageId
-import com.nexusflow.backend.feature.task.domain.MessageRole
+import com.nexusflow.backend.feature.conversation.domain.MessageId
+import com.nexusflow.backend.feature.conversation.domain.MessageRole
 import com.nexusflow.backend.feature.task.domain.TaskOwner
 import com.nexusflow.backend.feature.task.domain.TenantId
 import com.nexusflow.backend.feature.task.domain.UserId
@@ -43,12 +44,16 @@ import kotlin.test.assertTrue
 class JdbcConversationRepositoryTest {
     private lateinit var dataSource: HikariDataSource
     private lateinit var repository: JdbcConversationRepository
+    private lateinit var turnStartCommitter: JdbcConversationTurnStartCommitter
+    private lateinit var responseRunRepository: JdbcResponseRunRepository
 
     @BeforeTest
     fun setUp() {
         dataSource = postgresDataSource("Conversation repository")
         cleanMigrateAndSeed(dataSource)
         repository = JdbcConversationRepository(dataSource)
+        turnStartCommitter = JdbcConversationTurnStartCommitter(dataSource)
+        responseRunRepository = JdbcResponseRunRepository(dataSource)
     }
 
     @AfterTest
@@ -74,7 +79,7 @@ class JdbcConversationRepositoryTest {
             val conversationId = conversationId("00000000-0000-0000-0000-000000001001")
             val firstMessageId = messageId("00000000-0000-0000-0000-000000001002")
 
-            val created = repository.createConversation(
+            val created = turnStartCommitter.createConversation(
                 CreateConversationCommand(
                     owner = owner,
                     conversationId = conversationId,
@@ -116,7 +121,7 @@ class JdbcConversationRepositoryTest {
     fun `response run origin trace is saved and preserved after claim`() =
         runBlocking {
             val originTraceId = "1234567890abcdef1234567890abcdef"
-            val created = repository.createConversation(
+            val created = turnStartCommitter.createConversation(
                 CreateConversationCommand(
                     owner = owner(),
                     conversationId = conversationId("00000000-0000-0000-0000-0000000010a1"),
@@ -134,10 +139,10 @@ class JdbcConversationRepositoryTest {
             val runId = detail.responseRuns.single().id
 
             assertEquals(originTraceId, detail.responseRuns.single().originTraceId)
-            assertEquals(originTraceId, repository.findResponseRun(runId)?.originTraceId)
+            assertEquals(originTraceId, responseRunRepository.findResponseRun(runId)?.originTraceId)
 
             val claimed = assertNotNull(
-                repository.claimNextResponseRun(
+                responseRunRepository.claimNextResponseRun(
                     ClaimNextResponseRunCommand(
                         workerId = "trace-test-worker",
                         now = TaskFlowIds.Now.plusSeconds(1),
@@ -149,7 +154,7 @@ class JdbcConversationRepositoryTest {
 
             assertEquals(runId, claimed.run.id)
             assertEquals(originTraceId, claimed.run.originTraceId)
-            assertEquals(originTraceId, repository.findResponseRun(runId)?.originTraceId)
+            assertEquals(originTraceId, responseRunRepository.findResponseRun(runId)?.originTraceId)
         }
 
     @Test
@@ -158,7 +163,7 @@ class JdbcConversationRepositoryTest {
             val owner = owner()
             val conversationId = conversationId("00000000-0000-0000-0000-000000001061")
 
-            val created = repository.createConversation(
+            val created = turnStartCommitter.createConversation(
                 CreateConversationCommand(
                     owner = owner,
                     conversationId = conversationId,
@@ -172,7 +177,7 @@ class JdbcConversationRepositoryTest {
             )
             assertIs<CreateConversationResult.Created>(created)
 
-            val replay = repository.createConversation(
+            val replay = turnStartCommitter.createConversation(
                 CreateConversationCommand(
                     owner = owner,
                     conversationId = conversationId("00000000-0000-0000-0000-000000001063"),
@@ -197,7 +202,7 @@ class JdbcConversationRepositoryTest {
         runBlocking {
             val owner = owner()
             assertIs<CreateConversationResult.Created>(
-                repository.createConversation(
+                turnStartCommitter.createConversation(
                     CreateConversationCommand(
                         owner = owner,
                         conversationId = conversationId("00000000-0000-0000-0000-000000001071"),
@@ -211,7 +216,7 @@ class JdbcConversationRepositoryTest {
                 ),
             )
 
-            val conflict = repository.createConversation(
+            val conflict = turnStartCommitter.createConversation(
                 CreateConversationCommand(
                     owner = owner,
                     conversationId = conversationId("00000000-0000-0000-0000-000000001073"),
@@ -235,7 +240,7 @@ class JdbcConversationRepositoryTest {
         runBlocking {
             val owner = owner()
             assertIs<CreateConversationResult.Created>(
-                repository.createConversation(
+                turnStartCommitter.createConversation(
                     CreateConversationCommand(
                         owner = owner,
                         conversationId = conversationId("00000000-0000-0000-0000-000000001081"),
@@ -249,7 +254,7 @@ class JdbcConversationRepositoryTest {
                 ),
             )
 
-            val conflict = repository.createConversation(
+            val conflict = turnStartCommitter.createConversation(
                 CreateConversationCommand(
                     owner = owner,
                     conversationId = conversationId("00000000-0000-0000-0000-000000001083"),
@@ -275,7 +280,7 @@ class JdbcConversationRepositoryTest {
             val otherOwner = TaskOwner(TenantId(TaskFlowIds.TenantOne), UserId(TaskFlowIds.UserTwo))
 
             assertIs<CreateConversationResult.Created>(
-                repository.createConversation(
+                turnStartCommitter.createConversation(
                     CreateConversationCommand(
                         owner = owner,
                         conversationId = conversationId("00000000-0000-0000-0000-000000001091"),
@@ -289,7 +294,7 @@ class JdbcConversationRepositoryTest {
                 ),
             )
             assertIs<CreateConversationResult.Created>(
-                repository.createConversation(
+                turnStartCommitter.createConversation(
                     CreateConversationCommand(
                         owner = otherOwner,
                         conversationId = conversationId("00000000-0000-0000-0000-000000001093"),
@@ -312,7 +317,7 @@ class JdbcConversationRepositoryTest {
         runBlocking {
             val owner = owner()
             val conversationId = createConversation(owner, "00000000-0000-0000-0000-000000001011")
-            val firstAppend = repository.appendUserMessage(
+            val firstAppend = turnStartCommitter.appendUserMessage(
                 AppendConversationUserMessageCommand(
                     owner = owner,
                     conversationId = conversationId,
@@ -325,7 +330,7 @@ class JdbcConversationRepositoryTest {
             )
             assertIs<AppendConversationUserMessageResult.Appended>(firstAppend)
 
-            val replay = repository.appendUserMessage(
+            val replay = turnStartCommitter.appendUserMessage(
                 AppendConversationUserMessageCommand(
                     owner = owner,
                     conversationId = conversationId,
@@ -341,7 +346,7 @@ class JdbcConversationRepositoryTest {
             assertEquals(1, replayDetail.messages.count { it.clientMessageId == "client-replay" })
             assertEquals(1, replayDetail.responseRuns.count { it.userMessageId == appended.message.id })
 
-            val conflict = repository.appendUserMessage(
+            val conflict = turnStartCommitter.appendUserMessage(
                 AppendConversationUserMessageCommand(
                     owner = owner,
                     conversationId = conversationId,
@@ -365,7 +370,7 @@ class JdbcConversationRepositoryTest {
 
             listOf(1, 2).map { index ->
                 async {
-                    repository.appendUserMessage(
+                    turnStartCommitter.appendUserMessage(
                         AppendConversationUserMessageCommand(
                             owner = owner,
                             conversationId = conversationId,
@@ -393,7 +398,7 @@ class JdbcConversationRepositoryTest {
             val owner = owner()
             val firstMessageId = messageId("00000000-0000-0000-0000-000000001016")
             assertIs<CreateConversationResult.Created>(
-                repository.createConversation(
+                turnStartCommitter.createConversation(
                     CreateConversationCommand(
                         owner = owner,
                         conversationId = conversationId("00000000-0000-0000-0000-000000001017"),
@@ -410,7 +415,7 @@ class JdbcConversationRepositoryTest {
             val failedConversationId = conversationId("00000000-0000-0000-0000-000000001018")
             val failedRunId = ResponseRunId(uuid("00000000-0000-0000-0000-000000001019"))
             assertFailsWith<SQLException> {
-                repository.createConversation(
+                turnStartCommitter.createConversation(
                     CreateConversationCommand(
                         owner = owner,
                         conversationId = failedConversationId,
@@ -438,7 +443,7 @@ class JdbcConversationRepositoryTest {
             val failedRunId = ResponseRunId(uuid("00000000-0000-0000-0000-000000001030"))
 
             assertFailsWith<SQLException> {
-                repository.appendUserMessage(
+                turnStartCommitter.appendUserMessage(
                     AppendConversationUserMessageCommand(
                         owner = owner,
                         conversationId = conversationId,
@@ -517,7 +522,7 @@ class JdbcConversationRepositoryTest {
             val conversationId = createConversation(owner, "00000000-0000-0000-0000-000000001041")
 
             assertNull(repository.findConversationDetail(otherOwner, conversationId))
-            val crossOwnerAppend = repository.appendUserMessage(
+            val crossOwnerAppend = turnStartCommitter.appendUserMessage(
                 AppendConversationUserMessageCommand(
                     owner = otherOwner,
                     conversationId = conversationId,
@@ -755,7 +760,7 @@ class JdbcConversationRepositoryTest {
         id: String,
     ): ConversationId {
         val conversationId = conversationId(id)
-        val created = repository.createConversation(
+        val created = turnStartCommitter.createConversation(
             CreateConversationCommand(
                 owner = owner,
                 conversationId = conversationId,

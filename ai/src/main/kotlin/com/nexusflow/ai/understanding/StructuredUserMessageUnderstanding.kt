@@ -1,17 +1,12 @@
 package com.nexusflow.ai.understanding
 
-import com.nexusflow.ai.provider.StructuredModelException
 import com.nexusflow.ai.provider.StructuredModelProvider
 import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.ai.provider.StructuredModelRequestMetadata
 import com.nexusflow.ai.provider.StructuredOutputSchema
-import com.nexusflow.contracts.backendai.common.AiCapabilityException
-import com.nexusflow.contracts.backendai.common.CapabilityRateLimitedException
-import com.nexusflow.contracts.backendai.common.CapabilityRefusedException
-import com.nexusflow.contracts.backendai.common.CapabilityTimeoutException
-import com.nexusflow.contracts.backendai.common.CapabilityUnauthorizedException
-import com.nexusflow.contracts.backendai.common.CapabilityUnavailableException
-import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
+import com.nexusflow.ai.runtime.StructuredCapabilityInvalidOutputException
+import com.nexusflow.ai.runtime.StructuredCapabilityOperation
+import com.nexusflow.ai.runtime.StructuredCapabilityRunner
 import com.nexusflow.contracts.backendai.common.StructuredModelCapability
 import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
 import com.nexusflow.contracts.backendai.understanding.ActivityModeValue
@@ -32,8 +27,6 @@ import com.nexusflow.contracts.backendai.understanding.UnderstandingMetadata
 import com.nexusflow.contracts.backendai.understanding.UnderstandMessageResult
 import com.nexusflow.contracts.backendai.understanding.UserMessageUnderstanding
 import com.nexusflow.observability.StructuredLogger
-import com.nexusflow.observability.logFields
-import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -42,66 +35,24 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.datetime.Instant as ContractInstant
-import com.nexusflow.ai.provider.InvalidStructuredOutputException as ProviderInvalidStructuredOutputException
-import com.nexusflow.ai.provider.ProviderRateLimitedException as ProviderRateLimitedModelException
-import com.nexusflow.ai.provider.ProviderRefusedException as ProviderRefusedModelException
-import com.nexusflow.ai.provider.ProviderTimeoutException as ProviderTimeoutModelException
-import com.nexusflow.ai.provider.ProviderUnauthorizedException as ProviderUnauthorizedModelException
-import com.nexusflow.ai.provider.ProviderUnavailableException as ProviderUnavailableModelException
 
 class StructuredUserMessageUnderstanding(
-    private val provider: StructuredModelProvider,
-    private val logger: StructuredLogger? = null,
+    provider: StructuredModelProvider,
+    logger: StructuredLogger? = null,
     private val json: Json = Json {
         ignoreUnknownKeys = false
         explicitNulls = false
         encodeDefaults = true
     },
 ) : UserMessageUnderstanding {
-    override suspend fun understand(context: UnderstandMessageRequest): UnderstandMessageResult {
-        var attempt = 1
-        while (true) {
-            try {
-                return requestOnce(context, attempt)
-            } catch (error: RepairableUnderstandingOutputException) {
-                if (attempt == MAX_ATTEMPTS) {
-                    throw InvalidCapabilityResultException(
-                        message = error.message ?: "Invalid structured output",
-                        cause = error,
-                        failureStage = error.stage.logValue,
-                    )
-                }
-                logRetry(nextAttempt = attempt + 1, failureStage = error.stage.logValue)
-                attempt += 1
-            }
-        }
-    }
+    private val runner = StructuredCapabilityRunner(provider, logger)
 
-    private fun logRetry(
-        nextAttempt: Int,
-        failureStage: String,
-    ) {
-        logger?.warn(
-            component = "ai",
-            event = "ai_request_retry",
-            fields =
-                logFields {
-                    "operation" value "understanding"
-                    "next_attempt" value nextAttempt
-                    "failure_category" value "invalid_structured_output"
-                    "failure_stage" value failureStage
-                },
-        )
-    }
-
-    private suspend fun requestOnce(
-        context: UnderstandMessageRequest,
-        attempt: Int,
-    ): UnderstandMessageResult {
-        val userPayload = context.toPromptPayload()
-        val requestDiagnostics = context.toRequestDiagnostics(userPayload)
-        val result = try {
-            provider.generate(
+    override suspend fun understand(context: UnderstandMessageRequest): UnderstandMessageResult =
+        runner.execute(
+            operation = UNDERSTANDING_OPERATION,
+            request = { attempt ->
+                val userPayload = context.toPromptPayload()
+                val requestDiagnostics = context.toRequestDiagnostics(userPayload)
                 StructuredModelRequest(
                     systemPrompt = understandingSystemPrompt(attempt),
                     userPayload = userPayload,
@@ -117,37 +68,32 @@ class StructuredUserMessageUnderstanding(
                         attemptNumber = attempt,
                         diagnostics = requestDiagnostics,
                     ),
-                ),
-            )
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: StructuredModelException) {
-            throw error.toUnderstandingException()
-        }
-
-        val payload = try {
-            json.decodeFromString<StructuredUnderstandingPayload>(result.outputText)
-        } catch (error: SerializationException) {
-            throw RepairableUnderstandingOutputException(
-                UnderstandingOutputFailureStage.JsonDecode,
-                "Understanding response payload was not valid structured output",
-                error,
-            )
-        }
-
-        return payload.toOutcome(
-            context = context,
-            metadata = UnderstandingMetadata(
-                provider = result.metadata.provider,
-                model = result.metadata.model,
-                promptVersion = UNDERSTAND_USER_MESSAGE_PROMPT_VERSION,
-                providerRequestId = result.metadata.providerRequestId,
-                attemptCount = result.metadata.attemptCount,
-                usage = result.metadata.usage,
-                diagnostics = result.metadata.requestDiagnostics,
-            ),
+                )
+            },
+            decode = { result ->
+                val payload = try {
+                    json.decodeFromString<StructuredUnderstandingPayload>(result.outputText)
+                } catch (error: SerializationException) {
+                    throw RepairableUnderstandingOutputException(
+                        UnderstandingOutputFailureStage.JsonDecode,
+                        "Understanding response payload was not valid structured output",
+                        error,
+                    )
+                }
+                payload.toOutcome(
+                    context = context,
+                    metadata = UnderstandingMetadata(
+                        provider = result.metadata.provider,
+                        model = result.metadata.model,
+                        promptVersion = UNDERSTAND_USER_MESSAGE_PROMPT_VERSION,
+                        providerRequestId = result.metadata.providerRequestId,
+                        attemptCount = result.metadata.attemptCount,
+                        usage = result.metadata.usage,
+                        diagnostics = result.metadata.requestDiagnostics,
+                    ),
+                )
+            },
         )
-    }
 
     private fun StructuredUnderstandingPayload.toOutcome(
         context: UnderstandMessageRequest,
@@ -537,21 +483,6 @@ class StructuredUserMessageUnderstanding(
             )
         }
 
-    private fun StructuredModelException.toUnderstandingException(): AiCapabilityException =
-        when (this) {
-            is ProviderUnauthorizedModelException -> CapabilityUnauthorizedException(this)
-            is ProviderRateLimitedModelException -> CapabilityRateLimitedException(this)
-            is ProviderTimeoutModelException -> CapabilityTimeoutException(this)
-            is ProviderRefusedModelException -> CapabilityRefusedException()
-            is ProviderUnavailableModelException -> CapabilityUnavailableException(this)
-            is ProviderInvalidStructuredOutputException -> InvalidCapabilityResultException(
-                message = message ?: "Invalid output",
-                cause = this,
-                failureStage = UnderstandingOutputFailureStage.ProviderInvalidStructuredOutput.logValue,
-            )
-            else -> CapabilityUnavailableException(this)
-        }
-
     private fun understandingSystemPrompt(attempt: Int): String {
         val repairInstruction = if (attempt > 1) {
             "\nRepair only the JSON structure and typed fields. Do not add facts that are not explicit in the current message."
@@ -675,6 +606,14 @@ private val RequirementStrength.providerName: String
 private const val MAX_ATTEMPTS = 2
 private const val MAX_NEW_CONTEXT_SELECTIONS = 6
 
+private val UNDERSTANDING_OPERATION = StructuredCapabilityOperation(
+    name = "understanding",
+    invalidFailureCategory = "invalid_structured_output",
+    maxAttempts = MAX_ATTEMPTS,
+    providerInvalidOutputFailureStage = UnderstandingOutputFailureStage.ProviderInvalidStructuredOutput.logValue,
+    providerInvalidOutputFallbackMessage = "Invalid output",
+)
+
 private enum class UnderstandingOutputFailureStage(val logValue: String) {
     JsonDecode("json_decode"),
     ContextSelectionInvalid("context_selection_invalid"),
@@ -695,4 +634,8 @@ private class RepairableUnderstandingOutputException(
     val stage: UnderstandingOutputFailureStage,
     message: String,
     cause: Throwable? = null,
-) : RuntimeException(message, cause)
+) : StructuredCapabilityInvalidOutputException(
+    message = message,
+    cause = cause,
+    failureStage = stage.logValue,
+)

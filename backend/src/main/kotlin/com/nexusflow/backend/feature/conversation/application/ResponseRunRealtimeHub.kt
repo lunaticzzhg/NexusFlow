@@ -1,9 +1,9 @@
 package com.nexusflow.backend.feature.conversation.application
 
-import com.nexusflow.backend.feature.conversation.domain.ResponseRun
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunId
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunStatus
-import com.nexusflow.backend.feature.task.domain.MessageId
+import com.nexusflow.backend.feature.responserun.domain.ResponseRun
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunId
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStatus
+import com.nexusflow.backend.feature.conversation.domain.MessageId
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow

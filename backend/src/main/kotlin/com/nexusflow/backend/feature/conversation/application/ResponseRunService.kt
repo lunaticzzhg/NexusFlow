@@ -1,16 +1,17 @@
 package com.nexusflow.backend.feature.conversation.application
 
 import com.nexusflow.backend.core.identity.ActorContext
-import com.nexusflow.backend.feature.conversation.domain.CancelResponseRunCommand
-import com.nexusflow.backend.feature.conversation.domain.CancelResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.CancelResponseRunCommand
+import com.nexusflow.backend.feature.responserun.domain.CancelResponseRunResult
 import com.nexusflow.backend.feature.conversation.domain.ConversationDetail
 import com.nexusflow.backend.feature.conversation.domain.ConversationId
 import com.nexusflow.backend.feature.conversation.domain.ConversationRepository
-import com.nexusflow.backend.feature.conversation.domain.ResponseRun
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunId
-import com.nexusflow.backend.feature.conversation.domain.ResponseRunStatus
-import com.nexusflow.backend.feature.conversation.domain.RetryResponseRunCommand
-import com.nexusflow.backend.feature.conversation.domain.RetryResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.ResponseRun
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunId
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStatus
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStore
+import com.nexusflow.backend.feature.responserun.domain.RetryResponseRunCommand
+import com.nexusflow.backend.feature.responserun.domain.RetryResponseRunResult
 import com.nexusflow.backend.feature.task.application.InvalidTaskOperationException
 import com.nexusflow.backend.feature.task.application.InvalidTaskRequestException
 import com.nexusflow.backend.feature.task.application.MissingTaskScopeException
@@ -26,6 +27,7 @@ import java.util.UUID
 
 class ResponseRunService(
     private val conversationRepository: ConversationRepository,
+    private val responseRunStore: ResponseRunStore,
     private val taskRepository: TaskRepository,
     private val realtimeHub: ResponseRunRealtimeHub,
     private val clock: Clock = Clock.systemUTC(),
@@ -51,7 +53,7 @@ class ResponseRunService(
         val runId = responseRunId.toResponseRunId()
         val expectedConversationId = conversationId.toConversationId()
         loadAuthorizedDetail(actor.taskOwner(), expectedConversationId, runId)
-        val run = when (val result = conversationRepository.cancelResponseRun(CancelResponseRunCommand(runId, clock.instant()))) {
+        val run = when (val result = responseRunStore.cancelResponseRun(CancelResponseRunCommand(runId, clock.instant()))) {
             is CancelResponseRunResult.Cancelled -> result.run.also { realtimeHub.recordRun(it) }
             is CancelResponseRunResult.Existing -> result.run
             CancelResponseRunResult.NotCancellable -> throw InvalidTaskOperationException()
@@ -70,7 +72,7 @@ class ResponseRunService(
         val runId = responseRunId.toResponseRunId()
         val expectedConversationId = conversationId.toConversationId()
         loadAuthorizedDetail(actor.taskOwner(), expectedConversationId, runId)
-        val run = when (val result = conversationRepository.retryResponseRun(RetryResponseRunCommand(runId, clock.instant()))) {
+        val run = when (val result = responseRunStore.retryResponseRun(RetryResponseRunCommand(runId, clock.instant()))) {
             is RetryResponseRunResult.Queued -> result.run.also { realtimeHub.beginAttempt(it) }
             RetryResponseRunResult.NotRetryable -> throw InvalidTaskOperationException()
             RetryResponseRunResult.NotFound -> throw TaskNotFoundException()

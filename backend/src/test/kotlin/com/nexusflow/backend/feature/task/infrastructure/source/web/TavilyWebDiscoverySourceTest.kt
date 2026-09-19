@@ -1,4 +1,4 @@
-package com.nexusflow.backend.feature.task.infrastructure.source.web
+package com.nexusflow.backend.feature.research.infrastructure.source.web
 
 import com.nexusflow.backend.core.config.TavilyRuntimeConfig
 import com.nexusflow.backend.core.external.ExternalSourceHttpClient
