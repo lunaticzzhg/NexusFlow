@@ -13,6 +13,7 @@ import com.nexusflow.backend.feature.task.postgresDataSource
 import com.nexusflow.backend.feature.task.taskActor
 import com.nexusflow.backend.feature.task.understandingOutcome
 import com.nexusflow.backend.feature.task.application.PlanningOutcome
+import com.nexusflow.backend.feature.task.application.TaskConflictException
 import com.nexusflow.backend.feature.conversation.domain.MessageRole
 import com.nexusflow.contracts.backendai.understanding.TurnIntent
 import com.nexusflow.contracts.backendai.understanding.UserMessageUnderstanding
@@ -27,6 +28,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
 class ConversationServiceTest {
@@ -210,6 +212,19 @@ class ConversationServiceTest {
             assertEquals(2, secondMessage.detail.responseRuns.size)
             assertEquals(emptyList(), understanding.calls)
             assertEquals(0, countRows("tasks"))
+        }
+
+    @Test
+    fun `duplicate create with same client id and text but different timezone conflicts`() =
+        runBlocking {
+            val services = createConversationServices(dataSource = dataSource)
+
+            services.conversationService.createConversation(taskActor(), "conversation-timezone-conflict", "你好", "Asia/Shanghai")
+
+            assertFailsWith<TaskConflictException> {
+                services.conversationService.createConversation(taskActor(), "conversation-timezone-conflict", "你好", "UTC")
+            }
+            Unit
         }
 
     @Test

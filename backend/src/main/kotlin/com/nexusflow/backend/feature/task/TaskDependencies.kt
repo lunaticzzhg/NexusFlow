@@ -6,7 +6,7 @@ import com.nexusflow.ai.AiTaskCapabilityProvider
 import com.nexusflow.ai.createAiTaskCapabilities
 import com.nexusflow.contracts.backendai.answer.ConversationAnsweringCapability
 import com.nexusflow.contracts.backendai.answer.StreamingConversationAnsweringCapability
-import com.nexusflow.contracts.backendai.conversation.ConversationDecisionCapability
+import com.nexusflow.contracts.backendai.conversation.ConversationTurnCapability
 import com.nexusflow.contracts.backendai.planning.PlanComposer
 import com.nexusflow.contracts.backendai.planning.PlanExplainer
 import com.nexusflow.contracts.backendai.planning.PlanningResearchCapability
@@ -218,8 +218,8 @@ fun Application.configureTaskDependencies() {
         provide<PlanningResearchCapability?> {
             resolve<AiTaskCapabilities?>()?.planningResearch
         }
-        provide<ConversationDecisionCapability?> {
-            resolve<AiTaskCapabilities?>()?.conversationDecision
+        provide<ConversationTurnCapability?> {
+            resolve<AiTaskCapabilities?>()?.conversationTurn
         }
         provide<ConversationAnsweringCapability?> {
             resolve<AiTaskCapabilities?>()?.conversationAnswering
@@ -336,7 +336,6 @@ fun Application.configureTaskDependencies() {
         }
         provide {
             ConversationAnswerService(
-                conversationDecision = resolve<ConversationDecisionCapability?>(),
                 conversationAnswering = resolve<ConversationAnsweringCapability?>(),
                 streamingConversationAnswering = resolve<StreamingConversationAnsweringCapability?>(),
                 readToolCatalog = resolve<ReadToolCatalog>(),
@@ -376,7 +375,7 @@ fun Application.configureTaskDependencies() {
             ConversationTurnProcessor(
                 conversationRepository = resolve<ConversationRepository>(),
                 taskRepository = resolve(),
-                understanding = resolve(),
+                conversationTurn = resolve(),
                 conversationAnswerService = resolve(),
                 planningService = resolve(),
                 realtimeHub = resolve(),

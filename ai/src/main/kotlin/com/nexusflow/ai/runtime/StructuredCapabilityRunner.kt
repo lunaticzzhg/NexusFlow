@@ -3,6 +3,7 @@ package com.nexusflow.ai.runtime
 import com.nexusflow.ai.provider.InvalidStructuredOutputException
 import com.nexusflow.ai.provider.ProviderRateLimitedException
 import com.nexusflow.ai.provider.ProviderRefusedException
+import com.nexusflow.ai.provider.ProviderRequestException
 import com.nexusflow.ai.provider.ProviderTimeoutException
 import com.nexusflow.ai.provider.ProviderUnauthorizedException
 import com.nexusflow.ai.provider.ProviderUnavailableException
@@ -11,6 +12,7 @@ import com.nexusflow.ai.provider.StructuredModelProvider
 import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.ai.provider.StructuredModelResult
 import com.nexusflow.contracts.backendai.common.AiCapabilityException
+import com.nexusflow.contracts.backendai.common.CapabilityProviderRequestException
 import com.nexusflow.contracts.backendai.common.CapabilityRateLimitedException
 import com.nexusflow.contracts.backendai.common.CapabilityRefusedException
 import com.nexusflow.contracts.backendai.common.CapabilityTimeoutException
@@ -88,6 +90,7 @@ class StructuredCapabilityRunner(
     ): AiCapabilityException =
         when (this) {
             is ProviderUnauthorizedException -> CapabilityUnauthorizedException(this)
+            is ProviderRequestException -> CapabilityProviderRequestException(this)
             is ProviderRateLimitedException -> CapabilityRateLimitedException(this)
             is ProviderTimeoutException -> CapabilityTimeoutException(this)
             is ProviderRefusedException -> CapabilityRefusedException()

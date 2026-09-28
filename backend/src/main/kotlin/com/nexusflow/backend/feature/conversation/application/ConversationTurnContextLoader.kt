@@ -11,7 +11,6 @@ import com.nexusflow.backend.feature.task.domain.TaskRepository
 internal class ConversationTurnContextLoader(
     private val conversationRepository: ConversationRepository,
     private val taskRepository: TaskRepository,
-    private val timeZoneId: String,
 ) {
     suspend fun load(claim: ClaimedResponseRun): ConversationTurnContext {
         val detail = conversationRepository.findConversationDetailForResponseRun(claim.run.id)
@@ -46,7 +45,8 @@ internal class ConversationTurnContextLoader(
             currentTask = currentTask,
             planningTask = planningTask,
             planningTaskSuperseded = planningTask?.task?.revision != claim.run.expectedTaskRevision,
-            timeZoneId = timeZoneId,
+            timeZoneId = claim.run.timeZoneId,
+            referenceTime = claim.run.referenceTime,
         )
     }
 }

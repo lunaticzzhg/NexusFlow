@@ -1,6 +1,7 @@
 package com.nexusflow.ai.answer
 
 import com.nexusflow.ai.provider.ProviderUnavailableException
+import com.nexusflow.ai.provider.ProviderRequestException
 import com.nexusflow.ai.provider.StreamingTextModelProvider
 import com.nexusflow.ai.provider.TextModelRequest
 import com.nexusflow.ai.provider.TextModelResult
@@ -13,6 +14,7 @@ import com.nexusflow.contracts.backendai.answer.AnswerInformationNeedPayload
 import com.nexusflow.contracts.backendai.answer.AnswerNeedCoverageStatus
 import com.nexusflow.contracts.backendai.answer.ComposeConversationAnswerRequest
 import com.nexusflow.contracts.backendai.common.CapabilityUnavailableException
+import com.nexusflow.contracts.backendai.common.CapabilityProviderRequestException
 import com.nexusflow.contracts.backendai.conversation.InformationNeedMode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelAndJoin
@@ -52,6 +54,21 @@ class StreamingConversationAnswererTest {
             val deltas = mutableListOf<String>()
 
             assertFailsWith<CapabilityUnavailableException> {
+                StreamingConversationAnswerer(provider).answer(request()) { delta ->
+                    deltas += delta
+                }
+            }
+
+            assertEquals(listOf("partial"), deltas)
+        }
+
+    @Test
+    fun `provider request error surfaces as non transient capability failure after emitted deltas`() =
+        runBlocking {
+            val provider = ScriptedStreamingTextProvider("partial", failure = ProviderRequestException())
+            val deltas = mutableListOf<String>()
+
+            assertFailsWith<CapabilityProviderRequestException> {
                 StreamingConversationAnswerer(provider).answer(request()) { delta ->
                     deltas += delta
                 }

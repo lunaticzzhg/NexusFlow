@@ -3,16 +3,19 @@ package com.nexusflow.ai
 import com.nexusflow.ai.answer.StructuredConversationAnswerer
 import com.nexusflow.ai.answer.StreamingConversationAnswerer
 import com.nexusflow.ai.conversation.StructuredConversationDecision
+import com.nexusflow.ai.conversation.StructuredConversationTurn
 import com.nexusflow.ai.planner.StructuredPlanComposer
 import com.nexusflow.ai.planner.StructuredPlanExplainer
 import com.nexusflow.ai.planner.StructuredPlanningResearch
 import com.nexusflow.ai.provider.StructuredModelProvider
 import com.nexusflow.ai.provider.StreamingTextModelProvider
+import com.nexusflow.ai.provider.StreamingTurnModelProvider
 import com.nexusflow.ai.provider.deepseek.DeepSeekStructuredModelProvider
 import com.nexusflow.ai.provider.openai.OpenAiStructuredModelProvider
 import com.nexusflow.ai.provider.qwen.QwenStructuredModelProvider
 import com.nexusflow.ai.understanding.StructuredUserMessageUnderstanding
 import com.nexusflow.contracts.backendai.answer.ConversationAnsweringCapability
+import com.nexusflow.contracts.backendai.conversation.ConversationTurnCapability
 import com.nexusflow.contracts.backendai.conversation.ConversationDecisionCapability
 import com.nexusflow.contracts.backendai.planning.PlanComposer
 import com.nexusflow.contracts.backendai.planning.PlanExplainer
@@ -39,6 +42,7 @@ data class AiTaskCapabilities(
     val structuredProvider: StructuredModelProvider,
     val understanding: UserMessageUnderstanding,
     val conversationDecision: ConversationDecisionCapability,
+    val conversationTurn: ConversationTurnCapability?,
     val conversationAnswering: ConversationAnsweringCapability,
     val planningResearch: PlanningResearchCapability,
     val planComposer: PlanComposer,
@@ -56,10 +60,16 @@ fun createAiTaskCapabilities(
     } else {
         StructuredConversationAnswerer(structuredProvider, logger = logger)
     }
+    val conversationTurn = if (structuredProvider is StreamingTurnModelProvider) {
+        StructuredConversationTurn(structuredProvider)
+    } else {
+        null
+    }
     return AiTaskCapabilities(
         structuredProvider = structuredProvider,
         understanding = StructuredUserMessageUnderstanding(structuredProvider, logger = logger),
         conversationDecision = StructuredConversationDecision(structuredProvider, logger = logger),
+        conversationTurn = conversationTurn,
         conversationAnswering = conversationAnswering,
         planningResearch = StructuredPlanningResearch(structuredProvider, logger = logger),
         planComposer = StructuredPlanComposer(structuredProvider, logger = logger),

@@ -6,6 +6,7 @@ import com.nexusflow.backend.feature.responserun.domain.ClaimNextResponseRunComm
 import com.nexusflow.backend.feature.responserun.domain.ClaimedResponseRun
 import com.nexusflow.backend.feature.responserun.domain.ConsumeResponseRunIgnoreReason
 import com.nexusflow.backend.feature.responserun.domain.ConsumeResponseRunResult
+import com.nexusflow.backend.feature.responserun.domain.FailResponseRunAttemptCommand
 import com.nexusflow.backend.feature.responserun.domain.HeartbeatResponseRunLeaseCommand
 import com.nexusflow.backend.feature.responserun.domain.MarkResponseRunRetryableCommand
 import com.nexusflow.backend.feature.responserun.domain.ResponseRun
@@ -20,6 +21,13 @@ import com.nexusflow.backend.feature.responserun.domain.ResponseRunStore
 import com.nexusflow.backend.feature.responserun.domain.StoreResponseRunResult
 import com.nexusflow.backend.feature.responserun.domain.StoreResponseRunResultCommand
 import com.nexusflow.contracts.backendai.common.AiCapabilityException
+import com.nexusflow.contracts.backendai.common.CapabilityProviderRequestException
+import com.nexusflow.contracts.backendai.common.CapabilityRateLimitedException
+import com.nexusflow.contracts.backendai.common.CapabilityRefusedException
+import com.nexusflow.contracts.backendai.common.CapabilityTimeoutException
+import com.nexusflow.contracts.backendai.common.CapabilityUnauthorizedException
+import com.nexusflow.contracts.backendai.common.CapabilityUnavailableException
+import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
 import com.nexusflow.observability.RandomTraceIdGenerator
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.TraceContextElement
@@ -59,19 +67,48 @@ class ResponseRunWorker(
     private var loopJob: Job? = null
 
     fun start() {
-        if (loopJob != null) return
+        if (loopJob?.isActive == true) return
         loopJob = scope.launch {
-            while (isActive) {
-                val claimed = runOnce()
-                if (!claimed) delay(config.pollInterval.toMillis())
+            repeat(config.parallelism) { index ->
+                launch {
+                    runLoop(index, "$workerId#$index")
+                }
             }
         }
     }
 
-    suspend fun runOnce(): Boolean {
+    private suspend fun runLoop(
+        index: Int,
+        loopWorkerId: String,
+    ) {
+        while (scope.isActive && kotlinx.coroutines.currentCoroutineContext().isActive) {
+            val claimed = try {
+                runOnce(loopWorkerId)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                logger?.error(
+                    component = LOG_COMPONENT,
+                    event = "response_run_worker_loop_failed",
+                    fields = logFields {
+                        "worker_id" value workerId
+                        "lease_worker_id" value loopWorkerId
+                        "worker_loop_index" value index
+                    },
+                    cause = error,
+                )
+                false
+            }
+            if (!claimed) delay(config.pollInterval.toMillis())
+        }
+    }
+
+    suspend fun runOnce(): Boolean = runOnce(workerId)
+
+    private suspend fun runOnce(leaseWorkerId: String): Boolean {
         val claimed = responseRunStore.claimNextResponseRun(
             ClaimNextResponseRunCommand(
-                workerId = workerId,
+                workerId = leaseWorkerId,
                 now = clock.instant(),
                 leaseDuration = config.leaseDuration,
                 maxAttempts = config.maxAttempts,
@@ -79,12 +116,15 @@ class ResponseRunWorker(
         ) ?: return false
         withContext(TraceContextElement(claimed.run.workerTraceId())) {
             logClaimed(claimed)
-            executeClaimedRun(claimed)
+            executeClaimedRun(claimed, leaseWorkerId)
         }
         return true
     }
 
-    private suspend fun executeClaimedRun(claimed: ClaimedResponseRun) =
+    private suspend fun executeClaimedRun(
+        claimed: ClaimedResponseRun,
+        leaseWorkerId: String,
+    ) =
         coroutineScope {
             realtimeHub?.recordRun(claimed.run, "Response run processing")
             logger?.info(
@@ -100,7 +140,7 @@ class ResponseRunWorker(
                         HeartbeatResponseRunLeaseCommand(
                             responseRunId = claimed.run.id,
                             attempt = claimed.run.attempt,
-                            workerId = workerId,
+                            workerId = leaseWorkerId,
                             now = clock.instant(),
                             leaseDuration = config.leaseDuration,
                         ),
@@ -187,30 +227,54 @@ class ResponseRunWorker(
             } catch (error: Throwable) {
                 val now = clock.instant()
                 val failureCategory = error.toFailureCategory()
-                val retryable = responseRunStore.markResponseRunRetryable(
-                    MarkResponseRunRetryableCommand(
-                        responseRunId = claimed.run.id,
-                        attempt = claimed.run.attempt,
-                        now = now,
-                        retryAt = now.plus(config.retryBackoff),
-                        failureCategory = failureCategory,
+                if (failureCategory.isRetryable()) {
+                    val retryable = responseRunStore.markResponseRunRetryable(
+                        MarkResponseRunRetryableCommand(
+                            responseRunId = claimed.run.id,
+                            attempt = claimed.run.attempt,
+                            now = now,
+                            retryAt = now.plus(config.retryBackoff),
+                            failureCategory = failureCategory,
+                        )
                     )
-                )
-                if (retryable) {
-                    logger?.warn(
-                        component = LOG_COMPONENT,
-                        event = "response_run_retry_scheduled",
-                        fields = logFields {
-                            addRunFields(claimed.run, step = "retry", outcome = "retry_scheduled")
-                            "failure_category" value failureCategory.logValue()
-                            "retry_at" value now.plus(config.retryBackoff).toString()
-                        },
-                    )
-                    responseRunStore.findResponseRun(claimed.run.id)?.let {
-                        logStateObserved(it)
-                        realtimeHub?.recordRun(it, "Response run will retry")
+                    if (retryable) {
+                        logger?.warn(
+                            component = LOG_COMPONENT,
+                            event = "response_run_retry_scheduled",
+                            fields = logFields {
+                                addRunFields(claimed.run, step = "retry", outcome = "retry_scheduled")
+                                "failure_category" value failureCategory.logValue()
+                                "retry_at" value now.plus(config.retryBackoff).toString()
+                            },
+                        )
+                        responseRunStore.findResponseRun(claimed.run.id)?.let {
+                            logStateObserved(it)
+                            realtimeHub?.recordRun(it, "Response run will retry")
+                        }
+                    } else {
+                        responseRunStore.findResponseRun(claimed.run.id)?.let {
+                            logTerminal(it)
+                            logStateObserved(it)
+                            realtimeHub?.recordRun(it)
+                        }
                     }
                 } else {
+                    val failed = responseRunStore.failResponseRunAttempt(
+                        FailResponseRunAttemptCommand(
+                            responseRunId = claimed.run.id,
+                            attempt = claimed.run.attempt,
+                            now = now,
+                            failureCategory = failureCategory,
+                        ),
+                    )
+                    logger?.warn(
+                        component = LOG_COMPONENT,
+                        event = "response_run_terminal_failure_marked",
+                        fields = logFields {
+                            addRunFields(claimed.run, step = "failed", outcome = if (failed) "failed" else "stale")
+                            "failure_category" value failureCategory.logValue()
+                        },
+                    )
                     responseRunStore.findResponseRun(claimed.run.id)?.let {
                         logTerminal(it)
                         logStateObserved(it)
@@ -425,9 +489,29 @@ class ResponseRunLeaseLostException(
 
 private fun Throwable.toFailureCategory(): ResponseRunFailureCategory =
     when (this) {
-        is AiCapabilityException -> ResponseRunFailureCategory.ProviderTemporary
+        is InvalidCapabilityResultException,
+        is CapabilityRefusedException,
+        -> ResponseRunFailureCategory.AiInvalidResult
+        is CapabilityRateLimitedException,
+        is CapabilityTimeoutException,
+        is CapabilityUnavailableException,
+        -> ResponseRunFailureCategory.ProviderTemporary
+        is CapabilityProviderRequestException,
+        is CapabilityUnauthorizedException -> ResponseRunFailureCategory.InternalInvariant
+        is AiCapabilityException -> ResponseRunFailureCategory.InternalInvariant
         is ResponseRunLeaseLostException -> ResponseRunFailureCategory.WorkerLost
         else -> ResponseRunFailureCategory.InternalInvariant
+    }
+
+private fun ResponseRunFailureCategory.isRetryable(): Boolean =
+    when (this) {
+        ResponseRunFailureCategory.ProviderTemporary,
+        ResponseRunFailureCategory.WorkerLost,
+        -> true
+        ResponseRunFailureCategory.AiInvalidResult,
+        ResponseRunFailureCategory.RunTimeout,
+        ResponseRunFailureCategory.InternalInvariant,
+        -> false
     }
 
 private const val LOG_COMPONENT = "response_run_worker"
@@ -587,6 +671,7 @@ data class ResponseRunWorkerConfig(
     val heartbeatInterval: Duration,
     val retryBackoff: Duration,
     val maxAttempts: Int,
+    val parallelism: Int = 1,
 ) {
     init {
         require(!pollInterval.isNegative && !pollInterval.isZero) { "pollInterval must be positive" }
@@ -595,5 +680,6 @@ data class ResponseRunWorkerConfig(
         require(heartbeatInterval < leaseDuration) { "heartbeatInterval must be shorter than leaseDuration" }
         require(!retryBackoff.isNegative) { "retryBackoff must not be negative" }
         require(maxAttempts > 0) { "maxAttempts must be positive" }
+        require(parallelism > 0) { "parallelism must be positive" }
     }
 }

@@ -15,4 +15,5 @@ internal data class ConversationTurnContext(
     val planningTask: TaskDetail?,
     val planningTaskSuperseded: Boolean,
     val timeZoneId: String,
+    val referenceTime: java.time.Instant,
 )

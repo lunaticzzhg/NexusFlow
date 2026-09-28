@@ -136,8 +136,8 @@ internal fun StandaloneConversationAnswerRequest.toTurnRequest(): ConversationAn
         currentMessage = userMessage.content,
         userMessage = userMessage.toConversationTurnMessage(),
         recentMessages = detail.messages
-            .filter { message -> message.id != userMessage.id && message.createdAt.isBefore(userMessage.createdAt) }
-            .sortedBy { it.createdAt }
+            .filter { message -> message.id != userMessage.id && message.turnIndex < userMessage.turnIndex }
+            .sortedWith(compareBy({ it.turnIndex }, { it.role.historyOrder() }, { it.createdAt }))
             .takeLast(MAX_RECENT_MESSAGES)
             .map { it.toConversationTurnMessage() },
         timeZoneId = timeZoneId,
@@ -169,3 +169,9 @@ private const val CAPABILITY_UNAVAILABLE_MESSAGE = "当前还没有可用的信�
 private const val AI_UNAVAILABLE_MESSAGE = "暂时无法生成可靠回答，请稍后再试。"
 private const val INVALID_AI_RESULT_MESSAGE = "我暂时无法生成可靠回答，请换个说法再试一次。"
 private const val INVALID_TOOL_MESSAGE = "我无法安全使用这项资料来源，请换个说法再试一次。"
+
+private fun MessageRole.historyOrder(): Int =
+    when (this) {
+        MessageRole.User -> 0
+        MessageRole.Assistant -> 1
+    }

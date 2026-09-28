@@ -5,6 +5,7 @@ import com.nexusflow.backend.feature.responserun.domain.ResponseRunFailureCatego
 import com.nexusflow.backend.feature.responserun.domain.ResponseRunResult
 import com.nexusflow.backend.feature.responserun.domain.ResponseRunResultPayload
 import java.time.Instant
+import java.util.UUID
 
 interface PlanningResultCommitter {
     suspend fun consumePlanningUnderstanding(command: ConsumePlanningUnderstandingCommand): ConsumeResponseRunResult
@@ -16,6 +17,7 @@ data class ConsumePlanningUnderstandingCommand(
     val result: ResponseRunResult,
     val payload: ResponseRunResultPayload.PlanningUnderstanding,
     val newTaskId: TaskId,
+    val assistantMessageId: UUID,
     val requirements: List<RequirementWrite>,
     val removedRequirementKinds: List<RequirementKind>,
     val now: Instant,

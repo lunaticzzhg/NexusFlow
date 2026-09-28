@@ -1,15 +1,14 @@
 package com.nexusflow.backend.feature.conversation.application
 
+import com.nexusflow.backend.feature.conversation.domain.MessageId
 import com.nexusflow.backend.feature.responserun.domain.ResponseRun
 import com.nexusflow.backend.feature.responserun.domain.ResponseRunId
 import com.nexusflow.backend.feature.responserun.domain.ResponseRunStatus
-import com.nexusflow.backend.feature.conversation.domain.MessageId
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.onFailure
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import java.time.Clock
 import java.time.Instant
@@ -24,20 +23,13 @@ class ResponseRunRealtimeHub(
         require(replayBufferSize > 0) { "replayBufferSize must be positive" }
     }
 
-    private val sharedEvents = MutableSharedFlow<ResponseRunEvent>(extraBufferCapacity = 256)
     private val statesByRun = ConcurrentHashMap<ResponseRunId, MutableRealtimeState>()
 
     fun beginAttempt(
         run: ResponseRun,
         now: Instant = clock.instant(),
     ) {
-        statesByRun.compute(run.id) { _, existing ->
-            when {
-                existing == null || run.attempt > existing.attempt -> MutableRealtimeState(run.attempt)
-                run.attempt == existing.attempt -> existing
-                else -> existing
-            }
-        }
+        stateFor(run.id, run.attempt)
         if (run.status == ResponseRunStatus.Processing) {
             thinking(run, now)
         }
@@ -153,42 +145,42 @@ class ResponseRunRealtimeHub(
         }
 
     fun snapshot(run: ResponseRun): RealtimeSnapshot? {
-        val state = statesByRun[run.id]?.takeIf { it.attempt == run.attempt } ?: return null
-        return state.snapshot()
+        val state = statesByRun[run.id] ?: return null
+        return state.snapshot(run.attempt)
     }
 
     fun events(
         responseRunId: ResponseRunId,
+        afterAttempt: Int,
         afterSeq: Long? = null,
     ): Flow<ResponseRunEvent> =
         channelFlow {
-            val liveEvents = Channel<ResponseRunEvent>(Channel.UNLIMITED)
-            val liveCollector =
-                launch {
-                    sharedEvents.filter { it.runId == responseRunId }.collect { event ->
-                        liveEvents.send(event)
-                    }
-                }
-            var lastSentSeq = afterSeq ?: 0L
-            replayEvents(responseRunId, afterSeq).forEach { event ->
-                if (event.seq > lastSentSeq) {
-                    send(event)
-                    lastSentSeq = event.seq
-                }
-            }
-            val liveSender =
-                launch {
-                    for (event in liveEvents) {
-                        if (event.seq > lastSentSeq) {
+            val subscription = stateFor(responseRunId, afterAttempt).subscribe(afterAttempt, afterSeq ?: 0L)
+            val sender = launch {
+                var lastSentAttempt = afterAttempt
+                var lastSentSeq = afterSeq ?: 0L
+                try {
+                    subscription.replay.forEach { event ->
+                        if (event.isAfter(lastSentAttempt, lastSentSeq)) {
                             send(event)
+                            lastSentAttempt = event.attempt
                             lastSentSeq = event.seq
                         }
                     }
+                    for (event in subscription.channel) {
+                        if (event.isAfter(lastSentAttempt, lastSentSeq)) {
+                            send(event)
+                            lastSentAttempt = event.attempt
+                            lastSentSeq = event.seq
+                        }
+                    }
+                } finally {
+                    subscription.close()
                 }
+            }
             awaitClose {
-                liveCollector.cancel()
-                liveSender.cancel()
-                liveEvents.close()
+                sender.cancel()
+                subscription.close()
             }
         }
 
@@ -198,32 +190,19 @@ class ResponseRunRealtimeHub(
         now: Instant,
         update: (MutableRealtimeState) -> Unit = {},
     ): ResponseRunEvent? {
-        val state = statesByRun.compute(run.id) { _, existing ->
-            when {
-                existing == null || run.attempt > existing.attempt -> MutableRealtimeState(run.attempt)
-                run.attempt == existing.attempt -> existing
-                else -> existing
-            }
-        } ?: return null
-        if (state.attempt != run.attempt) return null
-        update(state)
-        val event = ResponseRunEvent(
-            runId = run.id,
-            attempt = run.attempt,
-            seq = state.nextSeq(),
-            occurredAt = now,
-            payload = payload,
-        )
-        state.addReplayEvent(event, replayBufferSize)
-        sharedEvents.tryEmit(event)
-        return event
+        val state = stateFor(run.id, run.attempt)
+        return state.updateAndPublishEvent(run, payload, now, replayBufferSize, update)
     }
 
-    private fun replayEvents(
+    private fun stateFor(
         responseRunId: ResponseRunId,
-        afterSeq: Long?,
-    ): List<ResponseRunEvent> =
-        statesByRun[responseRunId]?.replayEvents(afterSeq ?: 0L).orEmpty()
+        attempt: Int,
+    ): MutableRealtimeState =
+        statesByRun.compute(responseRunId) { _, existing ->
+            existing ?: MutableRealtimeState(responseRunId, attempt)
+        }!!.also { state ->
+            state.advanceToAttempt(attempt)
+        }
 }
 
 data class RealtimeSnapshot(
@@ -300,38 +279,114 @@ sealed interface ResponseRunEventPayload {
 }
 
 private class MutableRealtimeState(
-    val attempt: Int,
+    private val responseRunId: ResponseRunId,
+    initialAttempt: Int,
 ) {
+    var attempt: Int = initialAttempt
+        private set
     private var seq: Long = 0
     private val replayEvents = ArrayDeque<ResponseRunEvent>()
+    private val subscribers = linkedSetOf<Channel<ResponseRunEvent>>()
     var partialText: String = ""
     val activities: MutableMap<String, ResponseRunActivity> = linkedMapOf()
 
-    fun nextSeq(): Long {
-        seq += 1
-        return seq
+    @Synchronized
+    fun advanceToAttempt(nextAttempt: Int) {
+        if (nextAttempt <= attempt) return
+        attempt = nextAttempt
+        seq = 0
+        replayEvents.clear()
+        partialText = ""
+        activities.clear()
     }
 
-    fun snapshot(): RealtimeSnapshot =
-        RealtimeSnapshot(
+    @Synchronized
+    fun updateAndPublishEvent(
+        run: ResponseRun,
+        payload: ResponseRunEventPayload,
+        now: Instant,
+        maxSize: Int,
+        update: (MutableRealtimeState) -> Unit,
+    ): ResponseRunEvent? {
+        if (run.attempt != attempt) return null
+        update(this)
+        seq += 1
+        val event = ResponseRunEvent(
+            runId = run.id,
+            attempt = run.attempt,
+            seq = seq,
+            occurredAt = now,
+            payload = payload,
+        )
+        replayEvents += event
+        while (replayEvents.size > maxSize) {
+            replayEvents.removeFirst()
+        }
+        val closedSubscribers = mutableListOf<Channel<ResponseRunEvent>>()
+        subscribers.forEach { subscriber ->
+            subscriber.trySend(event).onFailure {
+                subscriber.close(ResponseRunSubscriberOverflowException(responseRunId.value.toString()))
+                closedSubscribers += subscriber
+            }
+        }
+        subscribers.removeAll(closedSubscribers.toSet())
+        return event
+    }
+
+    @Synchronized
+    fun subscribe(
+        afterAttempt: Int,
+        afterSeq: Long,
+    ): RealtimeSubscription {
+        val channel = Channel<ResponseRunEvent>(SUBSCRIBER_BUFFER_SIZE)
+        val replay = replayEventsFor(afterAttempt, afterSeq)
+        subscribers += channel
+        return RealtimeSubscription(channel, replay) {
+            synchronized(this) {
+                subscribers -= channel
+            }
+            channel.close()
+        }
+    }
+
+    @Synchronized
+    fun snapshot(expectedAttempt: Int): RealtimeSnapshot? {
+        if (expectedAttempt != attempt) return null
+        return RealtimeSnapshot(
             attempt = attempt,
             lastSeq = seq,
             partialText = partialText,
             activities = activities.values.toList(),
         )
-
-    fun addReplayEvent(
-        event: ResponseRunEvent,
-        maxSize: Int,
-    ) {
-        replayEvents += event
-        while (replayEvents.size > maxSize) {
-            replayEvents.removeFirst()
-        }
     }
 
-    fun replayEvents(afterSeq: Long): List<ResponseRunEvent> =
-        replayEvents.filter { it.seq > afterSeq }
+    private fun replayEventsFor(
+        afterAttempt: Int,
+        afterSeq: Long,
+    ): List<ResponseRunEvent> =
+        when {
+            afterAttempt < attempt -> replayEvents.toList()
+            afterAttempt == attempt -> replayEvents.filter { it.seq > afterSeq }
+            else -> emptyList()
+        }
 }
 
+private class RealtimeSubscription(
+    val channel: Channel<ResponseRunEvent>,
+    val replay: List<ResponseRunEvent>,
+    private val onClose: () -> Unit,
+) {
+    fun close() = onClose()
+}
+
+class ResponseRunSubscriberOverflowException(responseRunId: String) :
+    IllegalStateException("response run realtime subscriber overflowed: responseRunId=$responseRunId")
+
 private const val DEFAULT_REPLAY_BUFFER_SIZE = 256
+private const val SUBSCRIBER_BUFFER_SIZE = 64
+
+private fun ResponseRunEvent.isAfter(
+    lastAttempt: Int,
+    lastSeq: Long,
+): Boolean =
+    attempt > lastAttempt || (attempt == lastAttempt && seq > lastSeq)

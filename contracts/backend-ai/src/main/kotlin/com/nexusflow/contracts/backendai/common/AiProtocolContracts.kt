@@ -22,6 +22,9 @@ enum class StructuredModelCapability {
     @SerialName("conversation_answer")
     ConversationAnswer,
 
+    @SerialName("conversation_turn")
+    ConversationTurn,
+
     @SerialName("planning_research")
     PlanningResearch,
 }
@@ -120,6 +123,9 @@ class CapabilityUnavailableException(cause: Throwable? = null) :
 
 class CapabilityUnauthorizedException(cause: Throwable? = null) :
     AiCapabilityException("AI capability rejected credentials", cause)
+
+class CapabilityProviderRequestException(cause: Throwable? = null) :
+    AiCapabilityException("AI capability provider rejected the request", cause)
 
 class CapabilityRateLimitedException(cause: Throwable? = null) :
     AiCapabilityException("AI capability rate limited the request", cause)

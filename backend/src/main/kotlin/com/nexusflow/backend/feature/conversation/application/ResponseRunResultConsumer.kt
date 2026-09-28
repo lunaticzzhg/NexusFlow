@@ -76,6 +76,7 @@ class ResponseRunResultConsumer(
                 result = result,
                 payload = payload,
                 newTaskId = TaskId(UUID.randomUUID()),
+                assistantMessageId = UUID.randomUUID(),
                 requirements = payload.requirements.map { it.toRequirementWrite() },
                 removedRequirementKinds = payload.removedRequirementKinds.map { RequirementKind.valueOf(it) },
                 now = clock.instant(),

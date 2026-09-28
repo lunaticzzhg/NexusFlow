@@ -83,9 +83,10 @@ class ResponseRunService(
 
     fun events(
         responseRunId: String,
+        afterAttempt: Int,
         afterSeq: Long? = null,
     ): Flow<ResponseRunEvent> =
-        realtimeHub.events(responseRunId.toResponseRunId(), afterSeq)
+        realtimeHub.events(responseRunId.toResponseRunId(), afterAttempt, afterSeq)
 
     private suspend fun buildSnapshot(
         detail: ConversationDetail,

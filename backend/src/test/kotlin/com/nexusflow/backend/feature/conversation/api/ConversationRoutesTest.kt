@@ -364,6 +364,62 @@ class ConversationRoutesTest {
         }
     }
 
+
+
+    @Test
+    fun `response run sse ignores same attempt future sequence after hub restart`() {
+        val dataSource = postgresDataSource("Response run sse future seq route")
+        try {
+            cleanMigrateAndSeed(dataSource)
+            val services = createConversationServices(dataSource = dataSource, understanding = null)
+            val conversationRepository = JdbcConversationRepository(dataSource)
+            val responseRunRepository = JdbcResponseRunRepository(dataSource)
+            val realtimeHub = ResponseRunRealtimeHub(TaskFlowIds.FixedClock)
+            val responseRunService = ResponseRunService(
+                conversationRepository,
+                responseRunRepository,
+                services.repository,
+                realtimeHub,
+                TaskFlowIds.FixedClock,
+            )
+            val logger = RecordingStructuredLogger()
+
+            testApplication {
+                application {
+                    configureHttpPlatform()
+                    routing { conversationRoutes(services.conversationService, HeaderActorResolver, responseRunService, logger) }
+                }
+                val sseClient = createClient { install(SSE) }
+                val created = postJson<CreateConversationRequest, CreateConversationResponse>(
+                    "/v1/conversations",
+                    CreateConversationRequest("route-sse-future-seq", "你好", "Asia/Shanghai"),
+                )
+                val runId = created.data.conversation.responseRuns.single().id
+                val run = assertNotNull(responseRunRepository.findResponseRun(ResponseRunId(UUID.fromString(runId))))
+                val first = assertNotNull(realtimeHub.delta(run, "after-restart"))
+
+                sseClient.sse("/v1/conversations/${created.data.conversation.id}/response-runs/$runId/events", {
+                    headers.append("X-Orbit-Tenant", TaskFlowIds.TenantOne.toString())
+                    headers.append("X-Orbit-User", TaskFlowIds.UserOne.toString())
+                    headers.append("X-Orbit-Scopes", "orbit.tasks.read orbit.tasks.write")
+                    headers.append("Last-Event-ID", "$runId:${run.attempt}:99")
+                }) {
+                    val events = incoming.take(2).toList()
+                    val snapshot = JsonFormat.decodeFromString<ResponseRunEventEnvelope>(events[0].data!!)
+                    val replay = JsonFormat.decodeFromString<ResponseRunEventEnvelope>(events[1].data!!)
+                    assertEquals(ResponseRunEventPayload.Snapshot::class, snapshot.payload::class)
+                    assertEquals(1, snapshot.seq)
+                    assertEquals(first.toResponseForTest(), replay)
+                }
+                val connected = logger.entries.single { it.event == "response_run_sse_connected" }
+                assertEquals("$runId:${run.attempt}:99", connected.fields["last_event_id"])
+                assertNull(connected.fields["after_seq"])
+            }
+        } finally {
+            dataSource.close()
+        }
+    }
+
     @Test
     fun `response run sse characterization ignores stale attempt last event id and replays buffer`() {
         val dataSource = postgresDataSource("Response run sse stale replay route")
@@ -715,3 +771,16 @@ class ConversationRoutesTest {
         }
     }
 }
+
+
+private fun com.nexusflow.backend.feature.conversation.application.ResponseRunEvent.toResponseForTest(): ResponseRunEventEnvelope =
+    ResponseRunEventEnvelope(
+        runId = runId.value.toString(),
+        attempt = attempt,
+        seq = seq,
+        occurredAt = kotlinx.datetime.Instant.fromEpochSeconds(occurredAt.epochSecond, occurredAt.nano.toLong()),
+        payload = when (val item = payload) {
+            is com.nexusflow.backend.feature.conversation.application.ResponseRunEventPayload.Delta -> ResponseRunEventPayload.Delta(item.text)
+            else -> error("unsupported test payload $item")
+        },
+    )

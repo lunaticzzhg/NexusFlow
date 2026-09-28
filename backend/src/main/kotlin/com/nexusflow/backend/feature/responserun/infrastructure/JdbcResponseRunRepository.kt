@@ -234,6 +234,7 @@ class JdbcResponseRunRepository(
                 run.assistant_message_id,
                 run.failure_category,
                 run.origin_trace_id,
+                run.time_zone_id,
                 run.created_at,
                 run.started_at,
                 run.updated_at,
@@ -404,7 +405,7 @@ class JdbcResponseRunRepository(
             RETURNING
                 id, conversation_id, user_message_id, turn_index, status, stage, attempt,
                 available_at, lease_owner, lease_expires_at, deadline_at, expected_task_id,
-                expected_task_revision, assistant_message_id, failure_category, origin_trace_id, created_at,
+                expected_task_revision, assistant_message_id, failure_category, origin_trace_id, time_zone_id, created_at,
                 started_at, updated_at, completed_at
             """.trimIndent(),
         ).use { statement ->
@@ -437,7 +438,7 @@ class JdbcResponseRunRepository(
             RETURNING
                 id, conversation_id, user_message_id, turn_index, status, stage, attempt,
                 available_at, lease_owner, lease_expires_at, deadline_at, expected_task_id,
-                expected_task_revision, assistant_message_id, failure_category, origin_trace_id, created_at,
+                expected_task_revision, assistant_message_id, failure_category, origin_trace_id, time_zone_id, created_at,
                 started_at, updated_at, completed_at
             """.trimIndent(),
         ).use { statement ->
@@ -513,7 +514,7 @@ class JdbcResponseRunRepository(
             SELECT
                 id, conversation_id, user_message_id, turn_index, status, stage, attempt,
                 available_at, lease_owner, lease_expires_at, deadline_at, expected_task_id,
-                expected_task_revision, assistant_message_id, failure_category, origin_trace_id, created_at,
+                expected_task_revision, assistant_message_id, failure_category, origin_trace_id, time_zone_id, created_at,
                 started_at, updated_at, completed_at
             FROM response_runs
             WHERE id = ?
@@ -531,7 +532,7 @@ class JdbcResponseRunRepository(
             SELECT
                 id, conversation_id, user_message_id, turn_index, status, stage, attempt,
                 available_at, lease_owner, lease_expires_at, deadline_at, expected_task_id,
-                expected_task_revision, assistant_message_id, failure_category, origin_trace_id, created_at,
+                expected_task_revision, assistant_message_id, failure_category, origin_trace_id, time_zone_id, created_at,
                 started_at, updated_at, completed_at
             FROM response_runs
             WHERE id = ?
@@ -599,6 +600,7 @@ class JdbcResponseRunRepository(
             assistantMessageId = getObject("assistant_message_id", UUID::class.java)?.let(::MessageId),
             failureCategory = getString("failure_category")?.toResponseRunFailureCategory(),
             originTraceId = getString("origin_trace_id"),
+            timeZoneId = getString("time_zone_id"),
             createdAt = getTimestamp("created_at").toInstant(),
             startedAt = getTimestamp("started_at")?.toInstant(),
             updatedAt = getTimestamp("updated_at").toInstant(),

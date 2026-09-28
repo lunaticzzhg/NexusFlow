@@ -54,6 +54,7 @@ enum class StructuredModelFinishCategory {
 
 enum class StructuredModelFailureCategory {
     ProviderUnauthorized,
+    ProviderRequest,
     ProviderRateLimited,
     ProviderUnavailable,
     ProviderTimeout,
@@ -72,6 +73,16 @@ sealed class StructuredModelException(
 class ProviderUnauthorizedException(cause: Throwable? = null) : StructuredModelException(
     StructuredModelFailureCategory.ProviderUnauthorized,
     "Structured model provider rejected credentials",
+    cause,
+)
+
+class ProviderRequestException(
+    val httpStatusCode: Int? = null,
+    val providerErrorCode: String? = null,
+    cause: Throwable? = null,
+) : StructuredModelException(
+    StructuredModelFailureCategory.ProviderRequest,
+    "Structured model provider rejected the request",
     cause,
 )
 

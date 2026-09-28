@@ -65,7 +65,10 @@ import com.nexusflow.backend.feature.task.domain.source.WebDiscoverySource
 import com.nexusflow.backend.feature.task.domain.source.WebExtractedPage
 import com.nexusflow.backend.feature.task.domain.source.WebSearchHit
 import com.nexusflow.backend.feature.task.domain.source.WebSearchQuery
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -131,6 +134,98 @@ class ReadToolFoundationTest {
                 )
             }
             Unit
+        }
+
+
+    @Test
+    fun `executor bounds concurrent calls and preserves result order`() =
+        runBlocking {
+            val firstEntered = CompletableDeferred<Unit>()
+            val releaseFirst = CompletableDeferred<Unit>()
+            val secondEntered = CompletableDeferred<Unit>()
+            val first = GatedReadTool(ReadToolKey("test.first")) {
+                firstEntered.complete(Unit)
+                releaseFirst.await()
+            }
+            val second = GatedReadTool(ReadToolKey("test.second")) {
+                secondEntered.complete(Unit)
+            }
+            val executor = ReadToolExecutor(
+                catalog = ReadToolCatalog(listOf(first, second)),
+                maxCallsPerTurn = 2,
+                maxConcurrentCalls = 1,
+            )
+
+            val deferred = async {
+                executor.execute(
+                    listOf(
+                        ReadToolCall(first.definition.key, emptyArgs()),
+                        ReadToolCall(second.definition.key, emptyArgs()),
+                    ),
+                    context,
+                )
+            }
+            withTimeout(1_000) { firstEntered.await() }
+            assertEquals(false, secondEntered.isCompleted)
+            releaseFirst.complete(Unit)
+
+            val executions = withTimeout(1_000) { deferred.await() }
+
+            withTimeout(1_000) { secondEntered.await() }
+            assertEquals(listOf(first.definition.key, second.definition.key), executions.map { it.call.key })
+        }
+
+    @Test
+    fun `executor allows two overlapping calls and queues the third when limit is two`() =
+        runBlocking {
+            val firstEntered = CompletableDeferred<Unit>()
+            val secondEntered = CompletableDeferred<Unit>()
+            val thirdEntered = CompletableDeferred<Unit>()
+            val releaseFirst = CompletableDeferred<Unit>()
+            val releaseSecond = CompletableDeferred<Unit>()
+            val first = GatedReadTool(ReadToolKey("test.limit2.first")) {
+                firstEntered.complete(Unit)
+                releaseFirst.await()
+            }
+            val second = GatedReadTool(ReadToolKey("test.limit2.second")) {
+                secondEntered.complete(Unit)
+                releaseSecond.await()
+            }
+            val third = GatedReadTool(ReadToolKey("test.limit2.third")) {
+                thirdEntered.complete(Unit)
+            }
+            val executor = ReadToolExecutor(
+                catalog = ReadToolCatalog(listOf(first, second, third)),
+                maxCallsPerTurn = 3,
+                maxConcurrentCalls = 2,
+            )
+
+            val deferred = async {
+                executor.execute(
+                    listOf(
+                        ReadToolCall(first.definition.key, emptyArgs()),
+                        ReadToolCall(second.definition.key, emptyArgs()),
+                        ReadToolCall(third.definition.key, emptyArgs()),
+                    ),
+                    context,
+                )
+            }
+
+            withTimeout(1_000) { firstEntered.await() }
+            withTimeout(1_000) { secondEntered.await() }
+            assertEquals(false, thirdEntered.isCompleted)
+
+            releaseFirst.complete(Unit)
+            withTimeout(1_000) { thirdEntered.await() }
+            assertEquals(false, deferred.isCompleted)
+
+            releaseSecond.complete(Unit)
+            val executions = withTimeout(1_000) { deferred.await() }
+
+            assertEquals(
+                listOf(first.definition.key, second.definition.key, third.definition.key),
+                executions.map { it.call.key },
+            )
         }
 
     @Test
@@ -957,6 +1052,26 @@ class ReadToolFoundationTest {
             proposedArguments: JsonObject,
             context: ReadToolExecutionContext,
         ): ReadToolOutcome = ReadToolOutcome.Empty
+    }
+
+
+    private class GatedReadTool(
+        key: ReadToolKey,
+        private val gate: suspend () -> Unit,
+    ) : ReadTool {
+        override val definition: ReadToolDefinition = ReadToolDefinition(
+            key = key,
+            description = "Gated read-only tool.",
+            argumentHint = "No arguments.",
+        )
+
+        override suspend fun execute(
+            proposedArguments: JsonObject,
+            context: ReadToolExecutionContext,
+        ): ReadToolOutcome {
+            gate()
+            return ReadToolOutcome.Empty
+        }
     }
 
     private class StaticTrailDiscoverySource(

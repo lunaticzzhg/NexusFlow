@@ -2,6 +2,7 @@ package com.nexusflow.ai.answer
 
 import com.nexusflow.ai.provider.ProviderRateLimitedException as ProviderRateLimitedModelException
 import com.nexusflow.ai.provider.ProviderRefusedException as ProviderRefusedModelException
+import com.nexusflow.ai.provider.ProviderRequestException as ProviderRequestModelException
 import com.nexusflow.ai.provider.ProviderTimeoutException as ProviderTimeoutModelException
 import com.nexusflow.ai.provider.ProviderUnauthorizedException as ProviderUnauthorizedModelException
 import com.nexusflow.ai.provider.ProviderUnavailableException as ProviderUnavailableModelException
@@ -18,6 +19,7 @@ import com.nexusflow.contracts.backendai.answer.ComposeConversationAnswerRequest
 import com.nexusflow.contracts.backendai.answer.ComposeConversationAnswerResult
 import com.nexusflow.contracts.backendai.answer.ResearchIssuePayload
 import com.nexusflow.contracts.backendai.answer.StreamingConversationAnsweringCapability
+import com.nexusflow.contracts.backendai.common.CapabilityProviderRequestException
 import com.nexusflow.contracts.backendai.common.CapabilityRateLimitedException
 import com.nexusflow.contracts.backendai.common.CapabilityRefusedException
 import com.nexusflow.contracts.backendai.common.CapabilityTimeoutException
@@ -182,6 +184,7 @@ class StreamingConversationAnswerer(
     private fun StructuredModelException.toAnswerCapabilityException(): RuntimeException =
         when (this) {
             is ProviderUnauthorizedModelException -> CapabilityUnauthorizedException(this)
+            is ProviderRequestModelException -> CapabilityProviderRequestException(this)
             is ProviderRateLimitedModelException -> CapabilityRateLimitedException(this)
             is ProviderTimeoutModelException -> CapabilityTimeoutException(this)
             is ProviderRefusedModelException -> CapabilityRefusedException()

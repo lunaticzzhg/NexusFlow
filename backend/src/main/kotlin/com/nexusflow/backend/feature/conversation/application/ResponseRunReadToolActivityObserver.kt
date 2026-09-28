@@ -6,12 +6,13 @@ import com.nexusflow.backend.feature.research.application.ReadToolDefinition
 import com.nexusflow.backend.feature.research.application.ReadToolExecutionObserver
 import com.nexusflow.backend.feature.research.application.ReadToolOutcome
 import com.nexusflow.backend.feature.responserun.domain.ResponseRun
+import java.util.concurrent.ConcurrentHashMap
 
 class ResponseRunReadToolActivityObserver(
     private val realtimeHub: ResponseRunRealtimeHub,
     private val run: ResponseRun,
 ) : ReadToolExecutionObserver {
-    private val activityIdsByCall = mutableMapOf<ReadToolCall, String>()
+    private val activityIdsByCall = ConcurrentHashMap<ReadToolCall, String>()
 
     override suspend fun onStarted(
         call: ReadToolCall,

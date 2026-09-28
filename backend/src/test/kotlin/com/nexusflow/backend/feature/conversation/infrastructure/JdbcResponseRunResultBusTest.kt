@@ -19,12 +19,17 @@ import com.nexusflow.backend.feature.responserun.domain.ConsumeResponseRunResult
 import com.nexusflow.backend.feature.conversation.domain.ConversationId
 import com.nexusflow.backend.feature.conversation.domain.CreateConversationCommand
 import com.nexusflow.backend.feature.conversation.domain.CreateConversationResult
+import com.nexusflow.backend.feature.conversation.domain.AppendConversationUserMessageCommand
+import com.nexusflow.backend.feature.conversation.domain.AppendConversationUserMessageResult
 import com.nexusflow.backend.feature.responserun.domain.FailResponseRunAttemptCommand
 import com.nexusflow.backend.feature.responserun.domain.MarkResponseRunRetryableCommand
 import com.nexusflow.backend.feature.responserun.domain.ResponseRunFailureCategory
 import com.nexusflow.backend.feature.responserun.domain.ResponseRunId
 import com.nexusflow.backend.feature.responserun.domain.ResponseRunResult
 import com.nexusflow.backend.feature.responserun.domain.ResponseRunResultPayload
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunResultStore
+import com.nexusflow.backend.feature.responserun.domain.ResponseRunStore
+import com.nexusflow.backend.feature.responserun.domain.ResponseRun
 import com.nexusflow.backend.feature.responserun.domain.ResponseRunStage
 import com.nexusflow.backend.feature.responserun.domain.ResponseRunStatus
 import com.nexusflow.backend.feature.responserun.domain.StoreResponseRunResult
@@ -42,8 +47,12 @@ import com.nexusflow.backend.feature.task.RecordingQuestionAnswering
 import com.nexusflow.backend.feature.task.RecordingPlanningResearch
 import com.nexusflow.backend.feature.task.ScriptedUnderstanding
 import com.nexusflow.backend.feature.task.TaskFlowIds
+import com.nexusflow.backend.feature.task.UnderstandingBackedConversationTurn
 import com.nexusflow.backend.feature.research.application.readtool.MovieShowtimesKey
 import com.nexusflow.backend.feature.research.application.readtool.SportsFixturesKey
+import com.nexusflow.backend.feature.task.answerTurn
+import com.nexusflow.backend.feature.task.planningTurn
+import com.nexusflow.backend.feature.task.researchTurn
 import com.nexusflow.backend.feature.task.activityDomainChange
 import com.nexusflow.backend.feature.task.budgetChange
 import com.nexusflow.backend.feature.task.cleanMigrateAndSeed
@@ -75,10 +84,14 @@ import com.nexusflow.backend.feature.task.toolProposal
 import com.nexusflow.backend.feature.task.understandingOutcome
 import com.nexusflow.contracts.backendai.understanding.TurnIntent
 import com.nexusflow.contracts.backendai.conversation.ConversationDecisionResult
+import com.nexusflow.contracts.backendai.conversation.ConversationTurnCapability
+import com.nexusflow.contracts.backendai.conversation.ConversationTurnRequest
+import com.nexusflow.contracts.backendai.conversation.ConversationTurnResult
 import com.nexusflow.contracts.backendai.conversation.InformationNeedMode
 import com.nexusflow.contracts.backendai.conversation.InformationNeedProposal
 import com.nexusflow.contracts.backendai.answer.ResearchIssueType
 import com.nexusflow.contracts.backendai.answer.StreamingConversationAnsweringCapability
+import com.nexusflow.contracts.backendai.common.CapabilityProviderRequestException
 import com.nexusflow.contracts.backendai.common.CapabilityUnavailableException
 import com.nexusflow.observability.DefaultStructuredLogger
 import com.nexusflow.observability.JsonLogFormatter
@@ -86,13 +99,16 @@ import com.nexusflow.observability.LogLevel
 import com.nexusflow.observability.LogSink
 import com.nexusflow.observability.StructuredLogger
 import com.zaxxer.hikari.HikariDataSource
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
@@ -101,6 +117,8 @@ import java.sql.Timestamp
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+import java.util.Collections
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -366,6 +384,195 @@ class JdbcResponseRunResultBusTest {
             assertEquals(RequirementValue.ActivityDomain("movie"), task.requirements.single().value)
         }
 
+
+
+    @Test
+    fun `planning clarification writes assistant and completes turn without queueing planning`() =
+        runBlocking {
+            val created = createConversation(
+                idSeed = "00000000-0000-0000-0000-000000004038",
+                text = "Plan something vague",
+            )
+            val claim = assertNotNull(claim())
+            val result = assertIs<StoreResponseRunResult.Stored>(
+                responseRunRepository.storeResponseRunResult(
+                    StoreResponseRunResultCommand(
+                        responseRunId = claim.run.id,
+                        attempt = claim.run.attempt,
+                        payload = ResponseRunResultPayload.PlanningUnderstanding(
+                            conversationId = created.conversationId.value.toString(),
+                            userMessageId = created.userMessageId.value.toString(),
+                            aiRequestId = created.aiRequestId,
+                            taskId = null,
+                            taskCreationRequestId = "clarification-no-planning",
+                            intent = "Plan something vague",
+                            expectedTaskRevision = null,
+                            intentPatch = null,
+                            requirements = emptyList(),
+                            clarificationText = "What kind of activity should I plan?",
+                            planningRequested = false,
+                        ),
+                        now = TaskFlowIds.Now.plusSeconds(1),
+                    ),
+                ),
+            ).result
+
+            assertIs<ConsumeResponseRunResult.Consumed>(consumer.consume(result))
+            assertIs<ConsumeResponseRunResult.AlreadyConsumed>(consumer.consume(result))
+
+            val run = assertNotNull(responseRunRepository.findResponseRun(created.runId))
+            assertEquals(ResponseRunStatus.Completed, run.status)
+            assertEquals(ResponseRunStage.Turn, run.stage)
+            assertNull(run.expectedTaskId)
+            assertNull(run.expectedTaskRevision)
+            assertNotNull(run.assistantMessageId)
+            assertNotNull(responseRunRepository.findResponseRunResult(created.runId, claim.run.attempt)?.consumedAt)
+            val detail = assertNotNull(repository.findConversationDetail(owner(), created.conversationId))
+            assertNotNull(detail.messages.single { it.id == created.userMessageId }.understoodAt)
+            val assistants = detail.messages.filter { it.role == MessageRole.Assistant }
+            assertEquals(1, assistants.size)
+            assertEquals("What kind of activity should I plan?", assistants.single().content)
+            assertEquals(created.aiRequestId, assistants.single().aiRequestId)
+            val task = assertNotNull(taskRepository.findCurrentTaskForConversation(owner(), created.conversationId))
+            assertEquals("Plan something vague", task.task.intent)
+            assertEquals(1, task.task.revision)
+            assertEquals(emptyList(), task.requirements)
+        }
+
+    @Test
+    fun `planning clarification applies requirement deltas and completes without queueing planning`() =
+        runBlocking {
+            val created = createConversation(
+                idSeed = "00000000-0000-0000-0000-000000004039",
+                text = "Plan under 200 dollars",
+            )
+            val claim = assertNotNull(claim())
+            val result = assertIs<StoreResponseRunResult.Stored>(
+                responseRunRepository.storeResponseRunResult(
+                    StoreResponseRunResultCommand(
+                        responseRunId = claim.run.id,
+                        attempt = claim.run.attempt,
+                        payload = ResponseRunResultPayload.PlanningUnderstanding(
+                            conversationId = created.conversationId.value.toString(),
+                            userMessageId = created.userMessageId.value.toString(),
+                            aiRequestId = created.aiRequestId,
+                            taskId = null,
+                            taskCreationRequestId = "clarification-budget",
+                            intent = "Plan under 200 dollars",
+                            expectedTaskRevision = null,
+                            intentPatch = null,
+                            requirements = listOf(
+                                RequirementWritePayload(
+                                    id = "00000000-0000-0000-0000-000000004139",
+                                    kind = RequirementKind.BudgetLimit.name,
+                                    value = RequirementValuePayload.BudgetLimit(200, "USD"),
+                                    strength = RequirementStrength.Must.name,
+                                ),
+                            ),
+                            clarificationText = "What neighborhood should I search in?",
+                            planningRequested = false,
+                        ),
+                        now = TaskFlowIds.Now.plusSeconds(1),
+                    ),
+                ),
+            ).result
+
+            assertIs<ConsumeResponseRunResult.Consumed>(consumer.consume(result))
+
+            val run = assertNotNull(responseRunRepository.findResponseRun(created.runId))
+            assertEquals(ResponseRunStatus.Completed, run.status)
+            assertEquals(ResponseRunStage.Turn, run.stage)
+            assertNull(run.expectedTaskId)
+            assertNull(run.expectedTaskRevision)
+            val detail = assertNotNull(repository.findConversationDetail(owner(), created.conversationId))
+            assertEquals("What neighborhood should I search in?", detail.messages.single { it.role == MessageRole.Assistant }.content)
+            val task = assertNotNull(taskRepository.findCurrentTaskForConversation(owner(), created.conversationId))
+            assertEquals(2, task.task.revision)
+            assertEquals(RequirementKind.BudgetLimit, task.requirements.single().kind)
+            assertEquals(RequirementValue.BudgetLimit(200, "USD"), task.requirements.single().value)
+            assertEquals(emptyList(), task.plans)
+        }
+
+    @Test
+    fun `planning clarification stale revision fails without assistant or partial requirement writes`() =
+        runBlocking {
+            val created = createConversation(
+                idSeed = "00000000-0000-0000-0000-00000000403a",
+                text = "Update plan with budget",
+            )
+            val taskId = TaskId(UUID.fromString("00000000-0000-0000-0000-00000000423a"))
+            assertIs<CreateLinkedTaskPersistenceResult.Created>(
+                taskRepository.createLinkedTask(
+                    CreateLinkedTaskPersistenceCommand(
+                        owner = owner(),
+                        conversationId = created.conversationId,
+                        taskId = taskId,
+                        creationRequestId = "clarification-stale",
+                        intent = "Original plan",
+                        now = TaskFlowIds.Now,
+                    ),
+                ),
+            )
+            assertIs<ApplyUnderstandingResult.Applied>(
+                taskRepository.applyConversationUnderstanding(
+                    ApplyConversationUnderstandingCommand(
+                        owner = owner(),
+                        taskId = taskId,
+                        expectedTaskRevision = 1,
+                        conversationMessageId = created.userMessageId,
+                        aiRequestId = created.aiRequestId,
+                        intentPatch = "Concurrent update",
+                        requirements = emptyList(),
+                        now = TaskFlowIds.Now.plusSeconds(1),
+                    ),
+                ),
+            )
+            val claim = assertNotNull(claim())
+            val result = assertIs<StoreResponseRunResult.Stored>(
+                responseRunRepository.storeResponseRunResult(
+                    StoreResponseRunResultCommand(
+                        responseRunId = claim.run.id,
+                        attempt = claim.run.attempt,
+                        payload = ResponseRunResultPayload.PlanningUnderstanding(
+                            conversationId = created.conversationId.value.toString(),
+                            userMessageId = created.userMessageId.value.toString(),
+                            aiRequestId = created.aiRequestId,
+                            taskId = taskId.value.toString(),
+                            taskCreationRequestId = "clarification-stale-result",
+                            intent = "Original plan",
+                            expectedTaskRevision = 1,
+                            intentPatch = null,
+                            requirements = listOf(
+                                RequirementWritePayload(
+                                    id = "00000000-0000-0000-0000-00000000413a",
+                                    kind = RequirementKind.BudgetLimit.name,
+                                    value = RequirementValuePayload.BudgetLimit(100, "USD"),
+                                    strength = RequirementStrength.Must.name,
+                                ),
+                            ),
+                            clarificationText = "Which date should I use?",
+                            planningRequested = false,
+                        ),
+                        now = TaskFlowIds.Now.plusSeconds(2),
+                    ),
+                ),
+            ).result
+
+            assertIs<ConsumeResponseRunResult.Consumed>(consumer.consume(result))
+
+            val run = assertNotNull(responseRunRepository.findResponseRun(created.runId))
+            assertEquals(ResponseRunStatus.Failed, run.status)
+            assertEquals(ResponseRunFailureCategory.AiInvalidResult, run.failureCategory)
+            assertNull(run.assistantMessageId)
+            assertNotNull(responseRunRepository.findResponseRunResult(created.runId, claim.run.attempt)?.consumedAt)
+            val detail = assertNotNull(repository.findConversationDetail(owner(), created.conversationId))
+            assertEquals(emptyList(), detail.messages.filter { it.role == MessageRole.Assistant })
+            val task = assertNotNull(taskRepository.findCurrentTaskForConversation(owner(), created.conversationId))
+            assertEquals(2, task.task.revision)
+            assertEquals("Concurrent update", task.task.intent)
+            assertEquals(emptyList(), task.requirements)
+        }
+
     @Test
     fun `characterization planning understanding consumption updates existing linked task and queues planning stage`() =
         runBlocking {
@@ -464,17 +671,16 @@ class JdbcResponseRunResultBusTest {
             val processor = ConversationTurnProcessor(
                 conversationRepository = repository,
                 taskRepository = taskRepository,
-                understanding = understanding,
                 conversationAnswerService = conversationAnswerService(decision),
+                conversationTurn = answerTurn("Worker answer"),
                 clock = TaskFlowIds.FixedClock,
                 uuidFactory = { UUID.fromString("00000000-0000-0000-0000-000000004234") },
-                timeZoneId = "Asia/Shanghai",
             )
 
             assertEquals(true, worker(processor).runOnce())
 
             val run = responseRunRepository.findResponseRun(created.runId)
-            assertEquals(ResponseRunStatus.FailedRetryable, run?.status)
+            assertEquals(ResponseRunStatus.Failed, run?.status)
             assertEquals(ResponseRunFailureCategory.InternalInvariant, run?.failureCategory)
             assertNull(responseRunRepository.findResponseRunResult(created.runId, 1)?.consumedAt)
             assertEquals(listOf(MessageRole.User), repository.findConversationDetail(owner(), created.conversationId)?.messages?.map { it.role })
@@ -580,11 +786,10 @@ class JdbcResponseRunResultBusTest {
             val processor = ConversationTurnProcessor(
                 conversationRepository = repository,
                 taskRepository = taskRepository,
-                understanding = understanding,
                 conversationAnswerService = answerService,
+                conversationTurn = answerTurn("Worker answer"),
                 clock = TaskFlowIds.FixedClock,
                 uuidFactory = { UUID.fromString("00000000-0000-0000-0000-000000004999") },
-                timeZoneId = "Asia/Shanghai",
             )
             val worker = ResponseRunWorker(
                 responseRunStore = responseRunRepository,
@@ -608,11 +813,52 @@ class JdbcResponseRunResultBusTest {
             val detail = repository.findConversationDetail(owner(), created.conversationId)
             assertEquals(listOf(MessageRole.User, MessageRole.Assistant), detail?.messages?.map { it.role })
             assertEquals("Worker answer", detail?.messages?.single { it.role == MessageRole.Assistant }?.content)
-            assertEquals(1, understanding.calls.size)
-            assertEquals(1, decision.requests.size)
+            assertEquals(emptyList(), understanding.calls)
+            assertEquals(emptyList(), decision.requests)
             assertEquals(ResponseRunStatus.Completed, responseRunRepository.findResponseRun(created.runId)?.status)
             assertNotNull(responseRunRepository.findResponseRunResult(created.runId, 1)?.consumedAt)
             Unit
+        }
+
+    @Test
+    fun `worker turn request uses persisted timezone and run creation reference time`() =
+        runBlocking {
+            val captured = CompletableDeferred<ConversationTurnRequest>()
+            val turn = ConversationTurnCapability { request: ConversationTurnRequest, _: suspend (String) -> Unit ->
+                captured.complete(request)
+                ConversationTurnResult.Answer("timezone answer")
+            }
+            val services = createConversationServices(
+                dataSource = dataSource,
+                conversationTurn = turn,
+            )
+            val accepted = services.conversationService.createConversation(
+                taskActor(),
+                "worker-timezone-reference",
+                "Cross day question",
+                "Asia/Shanghai",
+            )
+            val run = accepted.detail.responseRuns.single()
+            val worker = worker(
+                ConversationTurnProcessor(
+                    conversationRepository = repository,
+                    taskRepository = taskRepository,
+                    conversationTurn = turn,
+                    conversationAnswerService = null,
+                    planningService = null,
+                    clock = java.time.Clock.fixed(TaskFlowIds.Now.plusSeconds(600), java.time.ZoneOffset.UTC),
+                    uuidFactory = { UUID.randomUUID() },
+                ),
+            )
+
+            assertEquals(true, worker.runOnce())
+
+            val request = withTimeout(1_000) { captured.await() }
+            assertEquals("Asia/Shanghai", request.timeZoneId)
+            assertEquals(
+                kotlinx.datetime.Instant.fromEpochSeconds(run.createdAt.epochSecond, run.createdAt.nano.toLong()),
+                request.referenceTime,
+            )
         }
 
     @Test
@@ -638,12 +884,11 @@ class JdbcResponseRunResultBusTest {
             val processor = ConversationTurnProcessor(
                 conversationRepository = repository,
                 taskRepository = taskRepository,
-                understanding = understanding,
                 conversationAnswerService = answerService,
+                conversationTurn = researchTurn(*directConversationDecision("Worker answer").informationNeeds.toTypedArray()),
                 logger = logger.logger,
                 clock = TaskFlowIds.FixedClock,
                 uuidFactory = { UUID.fromString("00000000-0000-0000-0000-000000004998") },
-                timeZoneId = "Asia/Shanghai",
             )
 
             assertEquals(true, worker(processor, logger = logger.logger).runOnce())
@@ -661,22 +906,15 @@ class JdbcResponseRunResultBusTest {
                 records.filter { it.field("operation_id") == runId },
                 listOf(
                     "started",
-                    "understanding_started",
-                    "understanding_finished",
+                    "turn_started",
+                    "turn_research",
                     "answer_started",
-                    "decision_finished",
                     "answer_generated",
                     "answer_finished",
                     "finished",
                 ),
             )
-            val chatBranch = records.filter { it.field("operation_id") == runId && it.field("branch") == "chat_answer" }
-            listOf("understanding_finished", "decision_finished", "answer_generated", "answer_finished", "finished")
-                .forEach { step -> assertTrue(chatBranch.any { it.field("step") == step }, "missing $step") }
-            assertEquals(
-                "conversation",
-                chatBranch.single { it.field("step") == "understanding_finished" }.field("outcome"),
-            )
+            assertTrue(records.any { it.field("step") == "turn_research" && it.field("branch") == "research" })
             assertTrue(records.none { it.field("event") == "response_run_result_stored" && it.field("level") == "INFO" })
         }
 
@@ -708,11 +946,10 @@ class JdbcResponseRunResultBusTest {
             val processor = ConversationTurnProcessor(
                 conversationRepository = repository,
                 taskRepository = taskRepository,
-                understanding = understanding,
                 conversationAnswerService = answerService,
+                conversationTurn = answerTurn("Traced worker answer"),
                 clock = TaskFlowIds.FixedClock,
                 uuidFactory = { UUID.fromString("00000000-0000-0000-0000-0000000040a4") },
-                timeZoneId = "Asia/Shanghai",
             )
             val sink = RecordingLogSink()
             val logger = DefaultStructuredLogger(
@@ -779,15 +1016,14 @@ class JdbcResponseRunResultBusTest {
             val processor = ConversationTurnProcessor(
                 conversationRepository = repository,
                 taskRepository = taskRepository,
-                understanding = understanding,
                 conversationAnswerService = conversationAnswerService(
                     decision = decision,
                     answering = null,
                     streamingAnswering = stalledAnswering,
                 ),
+                conversationTurn = researchTurn(*directConversationDecision("lease lost answer").informationNeeds.toTypedArray()),
                 clock = TaskFlowIds.FixedClock,
                 uuidFactory = { UUID.fromString("00000000-0000-0000-0000-0000000040b4") },
-                timeZoneId = "Asia/Shanghai",
             )
             val worker = ResponseRunWorker(
                 responseRunStore = responseRunRepository,
@@ -821,6 +1057,180 @@ class JdbcResponseRunResultBusTest {
             val run = assertNotNull(responseRunRepository.findResponseRun(created.runId))
             assertEquals(ResponseRunStatus.FailedRetryable, run.status)
             assertEquals(ResponseRunFailureCategory.WorkerLost, run.failureCategory)
+            assertNull(responseRunRepository.findResponseRunResult(created.runId, 1))
+        }
+
+    @Test
+    fun `started worker loops process different conversations concurrently`() =
+        runBlocking {
+            val first = createConversation("00000000-0000-0000-0000-0000000040c1", text = "first concurrent")
+            val second = createConversation("00000000-0000-0000-0000-0000000040c2", text = "second concurrent")
+            val firstEntered = CompletableDeferred<Unit>()
+            val secondEntered = CompletableDeferred<Unit>()
+            val releaseBoth = CompletableDeferred<Unit>()
+            val enteredMessages = Collections.synchronizedList(mutableListOf<String>())
+            val turn = ConversationTurnCapability { request: ConversationTurnRequest, _: suspend (String) -> Unit ->
+                enteredMessages += request.currentMessage
+                when (request.currentMessage) {
+                    "first concurrent" -> firstEntered.complete(Unit)
+                    "second concurrent" -> secondEntered.complete(Unit)
+                }
+                releaseBoth.await()
+                ConversationTurnResult.Answer("answer ${request.currentMessage}")
+            }
+            val worker = worker(
+                processor = conversationAnswerProcessor(ScriptedUnderstanding({ understandingOutcome(turnIntent = TurnIntent.Conversation, changes = emptyList()) }), conversationAnswerService(RecordingConversationDecision({ directConversationDecision("unused") })), ResponseRunRealtimeHub(TaskFlowIds.FixedClock), turn),
+                config = workerConfig(parallelism = 2, pollInterval = Duration.ofMillis(5)),
+            )
+
+            try {
+                worker.start()
+                withTimeout(1_000) { firstEntered.await() }
+                withTimeout(1_000) { secondEntered.await() }
+                assertEquals(setOf("first concurrent", "second concurrent"), enteredMessages.toSet())
+                releaseBoth.complete(Unit)
+                waitForRunStatus(first.runId, ResponseRunStatus.Completed)
+                waitForRunStatus(second.runId, ResponseRunStatus.Completed)
+            } finally {
+                worker.close()
+            }
+            Unit
+        }
+
+    @Test
+    fun `started worker preserves same conversation turn order with parallel loops`() =
+        runBlocking {
+            val first = createConversation("00000000-0000-0000-0000-0000000040d1", text = "first same conversation")
+            val firstEntered = CompletableDeferred<Unit>()
+            val secondEntered = CompletableDeferred<Unit>()
+            val releaseFirst = CompletableDeferred<Unit>()
+            val releaseSecond = CompletableDeferred<Unit>()
+            val requests = Collections.synchronizedList(mutableListOf<ConversationTurnRequest>())
+            val turn = ConversationTurnCapability { request: ConversationTurnRequest, _: suspend (String) -> Unit ->
+                requests += request
+                when (request.currentMessage) {
+                    "first same conversation" -> {
+                        firstEntered.complete(Unit)
+                        releaseFirst.await()
+                    }
+                    "second same conversation" -> {
+                        secondEntered.complete(Unit)
+                        releaseSecond.await()
+                    }
+                }
+                ConversationTurnResult.Answer("answer ${request.currentMessage}")
+            }
+            val worker = worker(
+                processor = conversationAnswerProcessor(ScriptedUnderstanding({ understandingOutcome(turnIntent = TurnIntent.Conversation, changes = emptyList()) }), conversationAnswerService(RecordingConversationDecision({ directConversationDecision("unused") })), ResponseRunRealtimeHub(TaskFlowIds.FixedClock), turn),
+                config = workerConfig(parallelism = 2, pollInterval = Duration.ofMillis(5)),
+            )
+
+            try {
+                worker.start()
+                withTimeout(1_000) { firstEntered.await() }
+                assertNull(withTimeoutOrNull(150) { secondEntered.await() })
+                releaseFirst.complete(Unit)
+                waitForRunStatus(first.runId, ResponseRunStatus.Completed)
+                val second = appendMessage(first.conversationId, "00000000-0000-0000-0000-0000000040d2", text = "second same conversation")
+                withTimeout(1_000) { secondEntered.await() }
+                val secondRequest = requests.single { it.currentMessage == "second same conversation" }
+                assertEquals(listOf("first same conversation", "answer first same conversation"), secondRequest.recentMessages.map { it.content })
+                releaseSecond.complete(Unit)
+                waitForRunStatus(second.runId, ResponseRunStatus.Completed)
+            } finally {
+                worker.close()
+            }
+            Unit
+        }
+
+    @Test
+    fun `started worker survives claim exception and completes a later poll`() =
+        runBlocking {
+            val created = createConversation("00000000-0000-0000-0000-0000000040e1", text = "claim retry")
+            val failingStore = FailingResponseRunStore(responseRunRepository, failNextClaim = true)
+            val worker = worker(
+                processor = conversationAnswerProcessor(ScriptedUnderstanding({ understandingOutcome(turnIntent = TurnIntent.Conversation, changes = emptyList()) }), conversationAnswerService(RecordingConversationDecision({ directConversationDecision("unused") })), ResponseRunRealtimeHub(TaskFlowIds.FixedClock), answerTurn("claim survived")),
+                store = failingStore,
+                resultStore = responseRunRepository,
+                config = workerConfig(pollInterval = Duration.ofMillis(5)),
+            )
+
+            try {
+                worker.start()
+                waitForRunStatus(created.runId, ResponseRunStatus.Completed)
+                assertEquals(1, failingStore.claimFailuresThrown)
+            } finally {
+                worker.close()
+            }
+        }
+
+    @Test
+    fun `started worker survives heartbeat exception and continues with another run`() =
+        runBlocking {
+            val first = createConversation("00000000-0000-0000-0000-0000000040f1", text = "heartbeat failing")
+            val firstEntered = CompletableDeferred<Unit>()
+            val turn = ConversationTurnCapability { request: ConversationTurnRequest, _: suspend (String) -> Unit ->
+                if (request.currentMessage == "heartbeat failing") {
+                    firstEntered.complete(Unit)
+                    delay(250)
+                    ConversationTurnResult.Answer("should be cancelled by heartbeat failure")
+                } else {
+                    ConversationTurnResult.Answer("survived heartbeat")
+                }
+            }
+            val failingStore = FailingResponseRunStore(
+                delegate = responseRunRepository,
+                failNextHeartbeat = true,
+                heartbeatFailureRunId = first.runId,
+            )
+            val worker = worker(
+                processor = conversationAnswerProcessor(ScriptedUnderstanding({ understandingOutcome(turnIntent = TurnIntent.Conversation, changes = emptyList()) }), conversationAnswerService(RecordingConversationDecision({ directConversationDecision("unused") })), ResponseRunRealtimeHub(TaskFlowIds.FixedClock), turn),
+                store = failingStore,
+                resultStore = responseRunRepository,
+                config = workerConfig(pollInterval = Duration.ofMillis(5), heartbeatInterval = Duration.ofMillis(10)),
+            )
+
+            try {
+                worker.start()
+                withTimeout(1_000) { firstEntered.await() }
+                withTimeout(1_000) {
+                    while (failingStore.heartbeatFailuresThrown == 0) {
+                        delay(5)
+                    }
+                }
+                val second = createConversation("00000000-0000-0000-0000-0000000040f2", text = "heartbeat survivor")
+                waitForRunStatus(second.runId, ResponseRunStatus.Completed)
+                assertEquals(1, failingStore.heartbeatFailuresThrown)
+                assertNull(responseRunRepository.findResponseRunResult(first.runId, 1))
+            } finally {
+                worker.close()
+            }
+        }
+
+    @Test
+    fun `closing started worker cancels active processor without writing a result`() =
+        runBlocking {
+            val created = createConversation("00000000-0000-0000-0000-000000004101", text = "cancel active")
+            val entered = CompletableDeferred<Unit>()
+            val cancelled = CompletableDeferred<Unit>()
+            val turn = com.nexusflow.contracts.backendai.conversation.ConversationTurnCapability { _, _ ->
+                try {
+                    entered.complete(Unit)
+                    awaitCancellation()
+                } finally {
+                    cancelled.complete(Unit)
+                }
+            }
+            val worker = worker(
+                processor = conversationAnswerProcessor(ScriptedUnderstanding({ understandingOutcome(turnIntent = TurnIntent.Conversation, changes = emptyList()) }), conversationAnswerService(RecordingConversationDecision({ directConversationDecision("unused") })), ResponseRunRealtimeHub(TaskFlowIds.FixedClock), turn),
+                config = workerConfig(pollInterval = Duration.ofMillis(5), heartbeatInterval = Duration.ofSeconds(10)),
+            )
+
+            worker.start()
+            withTimeout(1_000) { entered.await() }
+            worker.close()
+
+            withTimeout(1_000) { cancelled.await() }
             assertNull(responseRunRepository.findResponseRunResult(created.runId, 1))
         }
 
@@ -874,9 +1284,9 @@ class JdbcResponseRunResultBusTest {
             )
             val realtimeHub = ResponseRunRealtimeHub(TaskFlowIds.FixedClock)
             val processor = conversationAnswerProcessor(
-                understanding = understanding,
                 answerService = answerService,
                 realtimeHub = realtimeHub,
+                turn = researchTurn(*decision.decideForTest().informationNeeds.toTypedArray()),
             )
             val worker = worker(processor)
 
@@ -928,14 +1338,14 @@ class JdbcResponseRunResultBusTest {
             val realtimeHub = ResponseRunRealtimeHub(TaskFlowIds.FixedClock)
             val events = mutableListOf<ResponseRunEventPayload>()
             val eventJob = launch {
-                realtimeHub.events(accepted.detail.responseRuns.single().id).collect { event ->
+                realtimeHub.events(accepted.detail.responseRuns.single().id, afterAttempt = accepted.detail.responseRuns.single().attempt).collect { event ->
                     events += event.payload
                 }
             }
             val processor = conversationAnswerProcessor(
-                understanding = understanding,
                 answerService = answerService,
                 realtimeHub = realtimeHub,
+                turn = researchTurn(*directConversationDecision("Answer conversationally").informationNeeds.toTypedArray()),
             )
 
             assertEquals(true, worker(processor, realtimeHub).runOnce())
@@ -980,9 +1390,9 @@ class JdbcResponseRunResultBusTest {
             )
             val realtimeHub = ResponseRunRealtimeHub(TaskFlowIds.FixedClock)
             val processor = conversationAnswerProcessor(
-                understanding = understanding,
                 answerService = answerService,
                 realtimeHub = realtimeHub,
+                turn = researchTurn(*directConversationDecision("Answer conversationally").informationNeeds.toTypedArray()),
             )
 
             assertEquals(true, worker(processor, realtimeHub).runOnce())
@@ -990,6 +1400,46 @@ class JdbcResponseRunResultBusTest {
             val run = assertNotNull(responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id))
             assertEquals(ResponseRunStatus.FailedRetryable, run.status)
             assertEquals(ResponseRunFailureCategory.ProviderTemporary, run.failureCategory)
+            val detail = assertNotNull(repository.findConversationDetail(owner(), accepted.detail.conversation.id))
+            assertEquals(listOf(MessageRole.User), detail.messages.map { it.role })
+            assertEquals("partial", assertNotNull(realtimeHub.snapshot(run.copy(status = ResponseRunStatus.Processing))).partialText)
+        }
+
+    @Test
+    fun `provider request failure marks run terminal without durable assistant`() =
+        runBlocking {
+            val decision = RecordingConversationDecision({ directConversationDecision("Answer conversationally") })
+            val answering = RecordingQuestionAnswering().apply {
+                deltas = listOf("partial")
+                answerFailure = CapabilityProviderRequestException()
+            }
+            val answerService = conversationAnswerService(decision = decision, answering = answering)
+            val understanding = ScriptedUnderstanding({
+                understandingOutcome(turnIntent = TurnIntent.Conversation, changes = emptyList())
+            })
+            val services = createConversationServices(
+                dataSource = dataSource,
+                understanding = understanding,
+                conversationAnswerService = answerService,
+            )
+            val accepted = services.conversationService.createConversation(
+                taskActor(),
+                "streaming-answer-provider-request-failure",
+                "Answer conversationally",
+                "Asia/Shanghai",
+            )
+            val realtimeHub = ResponseRunRealtimeHub(TaskFlowIds.FixedClock)
+            val processor = conversationAnswerProcessor(
+                answerService = answerService,
+                realtimeHub = realtimeHub,
+                turn = researchTurn(*directConversationDecision("Answer conversationally").informationNeeds.toTypedArray()),
+            )
+
+            assertEquals(true, worker(processor, realtimeHub).runOnce())
+
+            val run = assertNotNull(responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id))
+            assertEquals(ResponseRunStatus.Failed, run.status)
+            assertEquals(ResponseRunFailureCategory.InternalInvariant, run.failureCategory)
             val detail = assertNotNull(repository.findConversationDetail(owner(), accepted.detail.conversation.id))
             assertEquals(listOf(MessageRole.User), detail.messages.map { it.role })
             assertEquals("partial", assertNotNull(realtimeHub.snapshot(run.copy(status = ResponseRunStatus.Processing))).partialText)
@@ -1034,9 +1484,9 @@ class JdbcResponseRunResultBusTest {
             val realtimeHub = ResponseRunRealtimeHub(TaskFlowIds.FixedClock)
             val worker = worker(
                 conversationAnswerProcessor(
-                    understanding = understanding,
                     answerService = answerService,
                     realtimeHub = realtimeHub,
+                    turn = researchTurn(*mixedWeatherAndActivityDecision(toolCall).informationNeeds.toTypedArray()),
                 ),
             )
 
@@ -1160,7 +1610,6 @@ class JdbcResponseRunResultBusTest {
             })
             val services = createConversationServices(
                 dataSource = dataSource,
-                understanding = understanding,
                 logger = logger.logger,
             )
             val accepted = services.conversationService.createConversation(
@@ -1181,8 +1630,8 @@ class JdbcResponseRunResultBusTest {
                 records,
                 listOf(
                     "started",
-                    "understanding_started",
-                    "understanding_finished",
+                    "turn_started",
+                    "turn_planning",
                     "planning_queued",
                     "started",
                     "readiness_checked",
@@ -1193,17 +1642,15 @@ class JdbcResponseRunResultBusTest {
             )
             val planningBranch = records.filter { it.field("branch") == "planning" }
             listOf(
-                "understanding_finished",
+                "turn_planning",
                 "planning_queued",
                 "readiness_checked",
                 "planning_started",
                 "planning_finished",
                 "finished",
             ).forEach { step -> assertTrue(planningBranch.any { it.field("step") == step }, "missing $step") }
-            assertEquals(
-                "planning",
-                planningBranch.single { it.field("step") == "understanding_finished" }.field("outcome"),
-            )
+            assertEquals("planning", planningBranch.single { it.field("step") == "turn_planning" }.field("outcome"))
+            assertEquals("queued", planningBranch.single { it.field("step") == "planning_queued" }.field("outcome"))
             val planningFinished = planningBranch.single { it.field("event") == "planning_finished" }
             assertEquals("ready", planningFinished.field("outcome"))
             assertEquals("plan", planningFinished.field("planning_decision"))
@@ -1354,7 +1801,6 @@ class JdbcResponseRunResultBusTest {
             })
             val services = createConversationServices(
                 dataSource = dataSource,
-                understanding = understanding,
                 readToolCatalog = catalog,
                 readToolExecutor = ReadToolExecutor(catalog),
             )
@@ -1436,7 +1882,6 @@ class JdbcResponseRunResultBusTest {
             })
             val services = createConversationServices(
                 dataSource = dataSource,
-                understanding = understanding,
                 planningResearch = research,
                 readToolCatalog = catalog,
                 readToolExecutor = ReadToolExecutor(catalog),
@@ -1480,58 +1925,69 @@ class JdbcResponseRunResultBusTest {
         understanding: ScriptedUnderstanding,
         planningService: PlanningService,
         logger: StructuredLogger? = null,
+        turn: com.nexusflow.contracts.backendai.conversation.ConversationTurnCapability? = UnderstandingBackedConversationTurn(understanding),
     ): ConversationTurnProcessor =
         ConversationTurnProcessor(
             conversationRepository = repository,
             taskRepository = taskRepository,
-            understanding = understanding,
+            conversationTurn = turn,
             conversationAnswerService = null,
             planningService = planningService,
             logger = logger,
             clock = TaskFlowIds.FixedClock,
             uuidFactory = { UUID.randomUUID() },
-            timeZoneId = "Asia/Shanghai",
         )
 
     private fun conversationAnswerProcessor(
-        understanding: ScriptedUnderstanding,
+        understanding: ScriptedUnderstanding = ScriptedUnderstanding({ understandingOutcome(turnIntent = TurnIntent.Conversation, changes = emptyList()) }),
         answerService: ConversationAnswerService,
         realtimeHub: ResponseRunRealtimeHub,
+        turn: com.nexusflow.contracts.backendai.conversation.ConversationTurnCapability,
     ): ConversationTurnProcessor =
         ConversationTurnProcessor(
             conversationRepository = repository,
             taskRepository = taskRepository,
-            understanding = understanding,
+            conversationTurn = turn,
             conversationAnswerService = answerService,
             planningService = null,
             realtimeHub = realtimeHub,
             clock = TaskFlowIds.FixedClock,
             uuidFactory = { UUID.randomUUID() },
-            timeZoneId = "Asia/Shanghai",
         )
 
     private fun worker(
         processor: ConversationTurnProcessor,
         realtimeHub: ResponseRunRealtimeHub? = null,
         logger: StructuredLogger? = null,
+        store: ResponseRunStore = responseRunRepository,
+        resultStore: ResponseRunResultStore = responseRunRepository,
+        config: ResponseRunWorkerConfig = workerConfig(),
     ): ResponseRunWorker =
         ResponseRunWorker(
-            responseRunStore = responseRunRepository,
-            resultStore = responseRunRepository,
+            responseRunStore = store,
+            resultStore = resultStore,
             processor = processor,
             resultConsumer = consumer,
-            config = ResponseRunWorkerConfig(
-                enabled = true,
-                pollInterval = Duration.ofMillis(10),
-                leaseDuration = Duration.ofSeconds(30),
-                heartbeatInterval = Duration.ofSeconds(10),
-                retryBackoff = Duration.ZERO,
-                maxAttempts = 3,
-            ),
+            config = config,
             clock = TaskFlowIds.FixedClock,
             workerId = "worker-result-bus",
             realtimeHub = realtimeHub,
             logger = logger,
+        )
+
+    private fun workerConfig(
+        pollInterval: Duration = Duration.ofMillis(10),
+        heartbeatInterval: Duration = Duration.ofSeconds(10),
+        parallelism: Int = 1,
+    ): ResponseRunWorkerConfig =
+        ResponseRunWorkerConfig(
+            enabled = true,
+            pollInterval = pollInterval,
+            leaseDuration = Duration.ofSeconds(30),
+            heartbeatInterval = heartbeatInterval,
+            retryBackoff = Duration.ZERO,
+            maxAttempts = 3,
+            parallelism = parallelism,
         )
 
     private fun stealResponseRunLease(
@@ -1662,6 +2118,43 @@ class JdbcResponseRunResultBusTest {
             terminalKind = ConversationTurnTerminalKind.AssistantMessage.name,
         )
 
+    private suspend fun appendMessage(
+        conversationId: ConversationId,
+        idSeed: String,
+        text: String,
+    ): CreatedRun {
+        val userMessageId = MessageId(UUID.randomUUID())
+        val runId = ResponseRunId(UUID.randomUUID())
+        val aiRequestId = "ai-$idSeed"
+        val appended = turnStartCommitter.appendUserMessage(
+            AppendConversationUserMessageCommand(
+                owner = owner(),
+                conversationId = conversationId,
+                messageId = userMessageId,
+                clientMessageId = "client-$idSeed",
+                text = text,
+                aiRequestId = aiRequestId,
+                responseRunId = runId,
+                now = TaskFlowIds.Now,
+            ),
+        )
+        assertIs<AppendConversationUserMessageResult.Appended>(appended)
+        return CreatedRun(conversationId, userMessageId, runId, aiRequestId)
+    }
+
+    private suspend fun waitForRunStatus(
+        responseRunId: ResponseRunId,
+        status: ResponseRunStatus,
+    ): ResponseRun =
+        withTimeout(2_000) {
+            while (true) {
+                val run = responseRunRepository.findResponseRun(responseRunId)
+                if (run?.status == status) return@withTimeout run
+                delay(5)
+            }
+            error("unreachable")
+        }
+
     private suspend fun createConversation(
         idSeed: String,
         text: String = "Hello",
@@ -1691,6 +2184,36 @@ class JdbcResponseRunResultBusTest {
 
     private fun uuid(value: String): UUID = UUID.fromString(value)
 
+    private class FailingResponseRunStore(
+        private val delegate: ResponseRunStore,
+        failNextClaim: Boolean = false,
+        failNextHeartbeat: Boolean = false,
+        private val heartbeatFailureRunId: ResponseRunId? = null,
+    ) : ResponseRunStore by delegate {
+        private val claimShouldFail = AtomicBoolean(failNextClaim)
+        private val heartbeatShouldFail = AtomicBoolean(failNextHeartbeat)
+        var claimFailuresThrown: Int = 0
+            private set
+        var heartbeatFailuresThrown: Int = 0
+            private set
+
+        override suspend fun claimNextResponseRun(command: ClaimNextResponseRunCommand): ClaimedResponseRun? {
+            if (claimShouldFail.getAndSet(false)) {
+                claimFailuresThrown += 1
+                error("injected claim failure")
+            }
+            return delegate.claimNextResponseRun(command)
+        }
+
+        override suspend fun heartbeatResponseRunLease(command: com.nexusflow.backend.feature.responserun.domain.HeartbeatResponseRunLeaseCommand): Boolean {
+            if ((heartbeatFailureRunId == null || command.responseRunId == heartbeatFailureRunId) && heartbeatShouldFail.getAndSet(false)) {
+                heartbeatFailuresThrown += 1
+                error("injected heartbeat failure")
+            }
+            return delegate.heartbeatResponseRunLease(command)
+        }
+    }
+
     private class RecordingLogSink : LogSink {
         val lines = mutableListOf<String>()
 
@@ -1702,6 +2225,18 @@ class JdbcResponseRunResultBusTest {
             lines += formatted
         }
     }
+
+
+    private suspend fun RecordingConversationDecision.decideForTest(): ConversationDecisionResult =
+        decide(com.nexusflow.contracts.backendai.conversation.ConversationDecisionRequest(
+            aiRequestId = "test-decision",
+            conversationId = null,
+            taskId = null,
+            taskRevision = null,
+            currentMessage = "test",
+            referenceTime = kotlinx.datetime.Instant.fromEpochSeconds(TaskFlowIds.Now.epochSecond),
+            timeZoneId = "UTC",
+        ))
 
     private data class JsonRecordingLogger(
         val logger: StructuredLogger,
@@ -1736,7 +2271,7 @@ class JdbcResponseRunResultBusTest {
         var cursor = -1
         steps.forEach { step ->
             val next = records.indexOfFirstAfter(cursor) { it.field("step") == step }
-            assertTrue(next >= 0, "missing timeline step $step after index $cursor")
+            assertTrue(next >= 0, "missing timeline step $step after index $cursor in ${records.map { it.field("step") }}")
             cursor = next
         }
     }

@@ -14,11 +14,11 @@ usage() {
 Usage: scripts/run_android_debug.sh [--emulator|--device] [--help]
 
 Builds the Android debug APK, installs it on an online Android device, and
-starts NexusFlow. Android emulators access the Mac host at 10.0.2.2:8080;
-physical devices use 127.0.0.1:8080 through adb reverse. The target type is
-detected automatically unless --emulator or --device is supplied. When multiple
-devices are connected, select one interactively or set ANDROID_SERIAL. Set ADB
-to override the adb executable.
+starts NexusFlow. Both emulators and physical devices access the Mac host at
+127.0.0.1:8080 through adb reverse. The target type is detected automatically
+unless --emulator or --device is supplied. When multiple devices are connected,
+select one interactively or set ANDROID_SERIAL. Set ADB to override the adb
+executable.
 
 Environment:
   ADB=/path/to/adb          adb executable to use (default: adb)
@@ -135,16 +135,11 @@ if [[ "$TARGET_KIND" != "auto" && "$TARGET_KIND" != "$ACTUAL_TARGET_KIND" ]]; th
   exit 2
 fi
 
-if [[ "$ACTUAL_TARGET_KIND" == "emulator" ]]; then
-  DEBUG_API_BASE_URL="http://10.0.2.2:8080"
-  echo "Using emulator debug API: $DEBUG_API_BASE_URL"
-else
-  DEBUG_API_BASE_URL="http://127.0.0.1:8080"
-  echo "Forwarding debug API: device 127.0.0.1:8080 -> Mac 127.0.0.1:8080"
-  if ! "$ADB_BIN" -s "$DEVICE_ID" reverse tcp:8080 tcp:8080; then
-    echo "Failed to configure adb reverse for device '$DEVICE_ID'." >&2
-    exit 1
-  fi
+DEBUG_API_BASE_URL="http://127.0.0.1:8080"
+echo "Forwarding debug API: $ACTUAL_TARGET_KIND 127.0.0.1:8080 -> Mac 127.0.0.1:8080"
+if ! "$ADB_BIN" -s "$DEVICE_ID" reverse tcp:8080 tcp:8080; then
+  echo "Failed to configure adb reverse for $ACTUAL_TARGET_KIND '$DEVICE_ID'." >&2
+  exit 1
 fi
 
 cd "$ROOT_DIR"

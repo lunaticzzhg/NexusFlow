@@ -17,6 +17,8 @@ description: "Implement NexusFlow product requirements and user-observable behav
 
 当 reconnaissance 后发现需求需要新的或改变的 cross-owner architecture、durable workflow/state machine、permission/trust model、compatibility-sensitive wire architecture、runtime/process boundary、owner/lifecycle 归属，或复杂 recovery/duplicate/late-result 语义时，通过 `nexusflow-ai-handoff` 将完整项目上下文交给独立 Architect。Task Contract 必须明确要求结构判断，并将 Expected Deliverable 明确为自包含 Work Order。拿到自包含 Work Order 后，再用 `orbit-work-order-executor` 执行；不要由同一个实现 Agent 自行设计再自行批准。
 
+用户要求先审视架构、确认后再倒推实现方案时，先使用 `nexusflow-architecture-first-delivery` 交付 Architecture Brief；这不替代上述独立 Architect Gate。已授权完整实现且未要求分步确认时，不因该 skill 增加重复确认。
+
 ## Required Sources
 
 每次开发先读取：

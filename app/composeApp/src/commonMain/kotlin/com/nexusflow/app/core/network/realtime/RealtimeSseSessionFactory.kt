@@ -145,7 +145,7 @@ internal class RealtimeSseSessionFactory(
                     connection.cancel()
                 }
             }
-        return RealtimeSseSession(events = events, stop = { stopSignal.complete(Unit) })
+        return RealtimeSseSession(events = events, stopAction = { stopSignal.complete(Unit) })
     }
 }
 
@@ -210,10 +210,10 @@ internal data class RealtimeSseRequest(
 
 internal class RealtimeSseSession(
     val events: Flow<RealtimeSseSessionEvent>,
-    private val stop: () -> Unit,
+    private val stopAction: () -> Unit,
 ) {
     fun stop() {
-        stop()
+        stopAction()
     }
 }
 

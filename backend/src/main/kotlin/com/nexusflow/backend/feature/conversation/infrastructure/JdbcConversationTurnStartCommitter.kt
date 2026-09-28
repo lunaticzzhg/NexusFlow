@@ -44,9 +44,13 @@ class JdbcConversationTurnStartCommitter(
                     val existing = connection.loadConversationDetail(command.owner, existingConversation.id)
                         ?: return@inTransaction CreateConversationResult.ConflictingConversation
                     val existingMessage = existing.messages.singleOrNull { it.clientMessageId == command.clientMessageId }
+                    val existingRun = existingMessage?.let { message ->
+                        existing.responseRuns.singleOrNull { run -> run.userMessageId == message.id }
+                    }
                     return@inTransaction when {
                         existingMessage == null -> CreateConversationResult.ConflictingMessage
-                        existingMessage.content == command.text -> CreateConversationResult.Existing(existing)
+                        existingMessage.content == command.text && existingRun?.timeZoneId == command.timeZoneId ->
+                            CreateConversationResult.Existing(existing)
                         else -> CreateConversationResult.ConflictingMessage
                     }
                 }
@@ -71,6 +75,7 @@ class JdbcConversationTurnStartCommitter(
                     availableAt = command.now,
                     deadlineAt = command.responseDeadlineAt,
                     createdAt = command.now,
+                    timeZoneId = command.timeZoneId,
                     originTraceId = command.originTraceId,
                 )
                 CreateConversationResult.Created(connection.loadConversationDetail(command.owner, command.conversationId)!!, message)
@@ -83,10 +88,14 @@ class JdbcConversationTurnStartCommitter(
                 val conversation = connection.lockConversation(command.owner, command.conversationId)
                     ?: return@inTransaction AppendConversationUserMessageResult.ConversationNotFound
                 connection.findMessageByClientId(command.conversationId, command.clientMessageId)?.let { existing ->
+                    val detail = connection.loadConversationDetail(command.owner, command.conversationId)!!
+                    val existingRun = detail.responseRuns.singleOrNull { run -> run.userMessageId == existing.id }
                     return@inTransaction if (existing.content == command.text) {
-                        AppendConversationUserMessageResult.Existing(
-                            connection.loadConversationDetail(command.owner, command.conversationId)!!,
-                        )
+                        if (existingRun?.timeZoneId == command.timeZoneId) {
+                            AppendConversationUserMessageResult.Existing(detail)
+                        } else {
+                            AppendConversationUserMessageResult.ConflictingMessage
+                        }
                     } else {
                         AppendConversationUserMessageResult.ConflictingMessage
                     }
@@ -114,6 +123,7 @@ class JdbcConversationTurnStartCommitter(
                     availableAt = command.now,
                     deadlineAt = command.responseDeadlineAt,
                     createdAt = command.now,
+                    timeZoneId = command.timeZoneId,
                     originTraceId = command.originTraceId,
                 )
                 connection.touchConversation(command.conversationId, command.now)
@@ -184,6 +194,7 @@ class JdbcConversationTurnStartCommitter(
         availableAt: Instant,
         deadlineAt: Instant,
         createdAt: Instant,
+        timeZoneId: String,
         originTraceId: String?,
     ) {
         prepareStatement(
@@ -192,8 +203,8 @@ class JdbcConversationTurnStartCommitter(
                 id, conversation_id, user_message_id, turn_index, status, stage, attempt,
                 available_at, lease_owner, lease_expires_at, deadline_at, expected_task_id,
                 expected_task_revision, assistant_message_id, failure_category, created_at,
-                started_at, updated_at, completed_at, origin_trace_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, ?, NULL, ?, NULL, ?)
+                started_at, updated_at, completed_at, time_zone_id, origin_trace_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, ?, NULL, ?, NULL, ?, ?)
             """.trimIndent(),
         ).use { statement ->
             statement.setObject(1, id.value)
@@ -207,7 +218,8 @@ class JdbcConversationTurnStartCommitter(
             statement.setInstant(9, deadlineAt)
             statement.setInstant(10, createdAt)
             statement.setInstant(11, createdAt)
-            statement.setString(12, originTraceId)
+            statement.setString(12, timeZoneId)
+            statement.setString(13, originTraceId)
             statement.executeUpdate()
         }
     }
@@ -364,6 +376,7 @@ class JdbcConversationTurnStartCommitter(
                 assistant_message_id,
                 failure_category,
                 origin_trace_id,
+                time_zone_id,
                 created_at,
                 started_at,
                 updated_at,
@@ -423,6 +436,7 @@ class JdbcConversationTurnStartCommitter(
             assistantMessageId = getObject("assistant_message_id", UUID::class.java)?.let(::MessageId),
             failureCategory = getString("failure_category")?.toResponseRunFailureCategory(),
             originTraceId = getString("origin_trace_id"),
+            timeZoneId = getString("time_zone_id"),
             createdAt = getTimestamp("created_at").toInstant(),
             startedAt = getTimestamp("started_at")?.toInstant(),
             updatedAt = getTimestamp("updated_at").toInstant(),

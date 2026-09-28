@@ -16,8 +16,13 @@ import com.nexusflow.backend.feature.responserun.domain.ResponseRunId
 import com.nexusflow.backend.feature.responserun.domain.ResponseRunStage
 import com.nexusflow.backend.feature.responserun.domain.ResponseRunStatus
 import com.nexusflow.backend.feature.conversation.domain.MessageId
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -29,6 +34,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class ResponseRunRealtimeHubTest {
     private val now = Instant.parse("2026-08-28T10:15:30Z")
@@ -77,7 +84,7 @@ class ResponseRunRealtimeHubTest {
             assertNotNull(hub.delta(run, "first"))
             val second = assertNotNull(hub.delta(run, "second"))
 
-            val replayed = hub.events(run.id, afterSeq = 1).take(1).toList()
+            val replayed = hub.events(run.id, afterAttempt = run.attempt, afterSeq = 1).take(1).toList()
 
             assertEquals(listOf(second), replayed)
         }
@@ -91,9 +98,137 @@ class ResponseRunRealtimeHubTest {
             val second = assertNotNull(boundedHub.delta(run, "two"))
             val third = assertNotNull(boundedHub.delta(run, "three"))
 
-            val replayed = boundedHub.events(run.id, afterSeq = 0).take(2).toList()
+            val replayed = boundedHub.events(run.id, afterAttempt = run.attempt, afterSeq = 0).take(2).toList()
 
             assertEquals(listOf(second, third), replayed)
+        }
+
+
+    @Test
+    fun `open subscriber receives next attempt after attempt advances`() =
+        runBlocking {
+            val run1 = responseRun(attempt = 1)
+            val first = assertNotNull(hub.delta(run1, "old"))
+            val subscriptionObserved = CompletableDeferred<ResponseRunEvent>()
+            val deferred = async {
+                val collected = mutableListOf<ResponseRunEvent>()
+                hub.events(run1.id, afterAttempt = 1, afterSeq = first.seq).take(3).collect { event ->
+                    collected += event
+                    if (event.attempt == 1 && event.payload is ResponseRunEventPayload.Delta) {
+                        subscriptionObserved.complete(event)
+                    }
+                }
+                collected
+            }
+            val liveOld = assertNotNull(hub.delta(run1, "live-old"))
+            assertEquals(liveOld, withTimeout(1_000) { subscriptionObserved.await() })
+
+            val run2 = run1.copy(attempt = 2)
+            hub.beginAttempt(run2)
+            val next = assertNotNull(hub.delta(run2, "new"))
+
+            val received = withTimeout(1_000) { deferred.await() }
+            assertEquals(liveOld, received[0])
+            assertEquals(ResponseRunEventPayload.Thinking, received[1].payload)
+            assertEquals(next, received[2])
+            val snapshot = assertNotNull(hub.snapshot(run2))
+            assertEquals(2, snapshot.attempt)
+            assertEquals("new", snapshot.partialText)
+        }
+
+    @Test
+    fun `old attempt publish cannot mutate new attempt after advance`() {
+        val run1 = responseRun(attempt = 1)
+        assertNotNull(hub.delta(run1, "old"))
+        val run2 = run1.copy(attempt = 2)
+        hub.beginAttempt(run2)
+
+        assertNull(hub.delta(run1, "late-old"))
+        val newDelta = assertNotNull(hub.delta(run2, "new"))
+
+        val snapshot = assertNotNull(hub.snapshot(run2))
+        assertEquals(2, newDelta.seq)
+        assertEquals("new", snapshot.partialText)
+        assertNull(hub.snapshot(run1))
+    }
+
+    @Test
+    fun `replay with previous attempt cursor returns current attempt from beginning`() =
+        runBlocking {
+            val run1 = responseRun(attempt = 1)
+            assertNotNull(hub.delta(run1, "old"))
+            val run2 = run1.copy(attempt = 2)
+            hub.beginAttempt(run2)
+            val first = assertNotNull(hub.delta(run2, "first"))
+            val second = assertNotNull(hub.delta(run2, "second"))
+
+            val replayed = hub.events(run2.id, afterAttempt = 1, afterSeq = 99).take(3).toList()
+
+            assertEquals(ResponseRunEventPayload.Thinking, replayed[0].payload)
+            assertEquals(listOf(first, second), replayed.drop(1))
+        }
+
+    @Test
+    fun `slow live subscriber is disconnected when its buffer overflows`() =
+        runBlocking {
+            val boundedHub = ResponseRunRealtimeHub(Clock.fixed(now, ZoneOffset.UTC), replayBufferSize = 128)
+            val run = responseRun(attempt = 1)
+            val firstObserved = CompletableDeferred<Unit>()
+            val keepCollectorBlocked = CompletableDeferred<Unit>()
+            val failure = async {
+                assertFailsWith<ResponseRunSubscriberOverflowException> {
+                    boundedHub.events(run.id, afterAttempt = run.attempt, afterSeq = 0).collect {
+                        firstObserved.complete(Unit)
+                        keepCollectorBlocked.await()
+                    }
+                }
+            }
+
+            assertNotNull(boundedHub.delta(run, "start"))
+            withTimeout(1_000) { firstObserved.await() }
+            repeat(256) { index ->
+                boundedHub.delta(run, "overflow-$index")
+            }
+            keepCollectorBlocked.complete(Unit)
+
+            withTimeout(1_000) { failure.await() }
+            val current = responseRun(attempt = 1)
+            assertNotNull(boundedHub.delta(current, "after-overflow"))
+            val snapshot = assertNotNull(boundedHub.snapshot(current))
+            assertTrue(snapshot.partialText.contains("after-overflow"))
+        }
+
+    @Test
+    fun `concurrent publishers deliver a complete monotonic live sequence`() =
+        runBlocking {
+            val run = responseRun(attempt = 1)
+            val expectedCount = 20
+            val ready = CompletableDeferred<Unit>()
+            val received = async {
+                val events = mutableListOf<ResponseRunEvent>()
+                hub.events(run.id, afterAttempt = run.attempt, afterSeq = 0).take(expectedCount).collect { event ->
+                    ready.complete(Unit)
+                    events += event
+                }
+                events
+            }
+            assertNotNull(hub.delta(run, "warmup"))
+            withTimeout(1_000) { ready.await() }
+            val start = CompletableDeferred<Unit>()
+            val jobs = (1 until expectedCount).map { index ->
+                launch(Dispatchers.Default) {
+                    start.await()
+                    assertNotNull(hub.delta(run, "delta-$index"))
+                }
+            }
+            start.complete(Unit)
+            jobs.forEach { it.join() }
+
+            val events = withTimeout(1_000) { received.await() }
+
+            assertEquals((1L..expectedCount.toLong()).toList(), events.map { it.seq })
+            assertEquals(List(expectedCount) { run.attempt }, events.map { it.attempt })
+            assertEquals(expectedCount, events.map { it.seq }.toSet().size)
         }
 
     @Test

@@ -158,7 +158,9 @@ fun Route.conversationRoutes(
                         conversationId = conversationId,
                         responseRunId = responseRunId,
                     )
-                    val afterSeq = call.lastResponseRunEventId(snapshot)
+                    val lastCursor = call.lastResponseRunEventId(snapshot)
+                    val afterAttempt = lastCursor?.attempt ?: snapshot.streamAttempt
+                    val afterSeq = lastCursor?.seq
                     connected = true
                     logger.logSse(
                         event = "response_run_sse_connected",
@@ -178,7 +180,7 @@ fun Route.conversationRoutes(
                         logger = logger,
                     )
                     lastSentSeq = snapshotEvent.seq
-                    responseRunService.events(responseRunId, afterSeq).collect { event ->
+                    responseRunService.events(responseRunId, afterAttempt, afterSeq).collect { event ->
                         val envelope = event.toResponse()
                         sendResponseRunEvent(
                             envelope = envelope,
@@ -307,12 +309,14 @@ private fun ApplicationCall.conversationIdParameter(): String =
 private fun ApplicationCall.responseRunIdParameter(): String =
     parameters["responseRunId"] ?: throw InvalidTaskRequestException("responseRunId is required")
 
-private fun ApplicationCall.lastResponseRunEventId(snapshot: ResponseRunSnapshot): Long? {
+private fun ApplicationCall.lastResponseRunEventId(snapshot: ResponseRunSnapshot): ParsedResponseRunEventId? {
     val raw = request.headers[LAST_EVENT_ID_HEADER] ?: return null
     val parsed = raw.parseResponseRunEventId() ?: return null
-    return parsed
-        .takeIf { it.runId == snapshot.run.id.value.toString() && it.attempt == snapshot.streamAttempt }
-        ?.seq
+    return parsed.takeIf {
+        it.runId == snapshot.run.id.value.toString() &&
+            it.attempt <= snapshot.streamAttempt &&
+            (it.attempt < snapshot.streamAttempt || it.seq <= snapshot.lastSeq)
+    }
 }
 
 private const val LAST_EVENT_ID_HEADER = "Last-Event-ID"

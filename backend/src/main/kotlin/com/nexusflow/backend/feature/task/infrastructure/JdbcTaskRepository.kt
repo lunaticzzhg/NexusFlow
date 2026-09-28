@@ -13,6 +13,7 @@ import com.nexusflow.backend.feature.task.domain.DeleteRequirementCommand
 import com.nexusflow.backend.feature.task.domain.DurationFact
 import com.nexusflow.backend.feature.task.domain.FactValue
 import com.nexusflow.backend.feature.task.domain.LocationFact
+import com.nexusflow.backend.feature.conversation.domain.ConversationMessage
 import com.nexusflow.backend.feature.conversation.domain.MessageId
 import com.nexusflow.backend.feature.conversation.domain.MessageRole
 import com.nexusflow.backend.feature.task.domain.MoneyFact
@@ -54,7 +55,6 @@ import com.nexusflow.backend.feature.task.domain.UserId
 import com.nexusflow.backend.feature.conversation.domain.ConversationId
 import com.nexusflow.backend.feature.conversation.domain.Conversation
 import com.nexusflow.backend.feature.conversation.domain.ConversationDetail
-import com.nexusflow.backend.feature.conversation.domain.ConversationMessage
 import com.nexusflow.backend.feature.responserun.domain.ConsumeResponseRunIgnoreReason
 import com.nexusflow.backend.feature.responserun.domain.ConsumeResponseRunResult
 import com.nexusflow.backend.feature.responserun.domain.ResponseRun
@@ -408,6 +408,15 @@ class JdbcTaskRepository(
         if (userMessage.aiRequestId != payload.aiRequestId) {
             return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.AiRequestMismatch)
         }
+        if (userMessage.turnIndex != run.turnIndex) {
+            return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.TurnIndexMismatch)
+        }
+        if (!payload.planningRequested && !payload.clarificationText.isNullOrBlank()) {
+            val existingAssistant = findAssistantMessage(run.conversationId, payload.aiRequestId)
+            if (existingAssistant != null && existingAssistant.turnIndex != run.turnIndex) {
+                return ConsumeResponseRunResult.Ignored(ConsumeResponseRunIgnoreReason.AssistantMessageConflict)
+            }
+        }
         val task = resolvePlanningTaskForUnderstanding(
             owner = conversation.owner,
             conversationId = run.conversationId,
@@ -482,6 +491,17 @@ class JdbcTaskRepository(
         }
         val applied = loadTaskDetail(conversation.owner, lockedTask.id)
             ?: error("task detail missing after planning understanding durable mutation")
+        if (!payload.planningRequested && !payload.clarificationText.isNullOrBlank()) {
+            return consumePlanningClarification(
+                conversation = conversation,
+                run = run,
+                result = result,
+                userMessage = userMessage,
+                payload = payload,
+                assistantMessageId = MessageId(command.assistantMessageId),
+                now = command.now,
+            )
+        }
         if (!preparePlanningStageFromResult(run.id, run.attempt, applied.task.id, applied.task.revision, command.now)) {
             error("response run was not queueable after planning understanding precondition passed")
         }
@@ -490,6 +510,47 @@ class JdbcTaskRepository(
         return ConsumeResponseRunResult.Consumed(
             loadConversationDetail(conversation.owner, run.conversationId)
                 ?: error("conversation detail missing after planning understanding consumption"),
+        )
+    }
+
+
+    private fun Connection.consumePlanningClarification(
+        conversation: Conversation,
+        run: ResponseRun,
+        result: ResponseRunResult,
+        userMessage: ConversationMessage,
+        payload: ResponseRunResultPayload.PlanningUnderstanding,
+        assistantMessageId: MessageId,
+        now: Instant,
+    ): ConsumeResponseRunResult {
+        val existingAssistant = findAssistantMessage(run.conversationId, payload.aiRequestId)
+        val finalAssistantId = existingAssistant?.id ?: assistantMessageId.also { id ->
+            insertConversationMessage(
+                ConversationMessage(
+                    id = id,
+                    conversationId = run.conversationId,
+                    role = MessageRole.Assistant,
+                    content = payload.clarificationText!!.trim(),
+                    clientMessageId = null,
+                    aiRequestId = payload.aiRequestId,
+                    turnIndex = run.turnIndex,
+                    understoodAt = now,
+                    createdAt = now,
+                ),
+            )
+        }
+        if (existingAssistant != null && existingAssistant.turnIndex != run.turnIndex) {
+            error("planning clarification assistant conflict after precondition check")
+        }
+        markMessageUnderstood(userMessage.id, payload.aiRequestId, now)
+        if (!completeTurnRunWithAssistantFromResult(run.id, run.attempt, finalAssistantId, now)) {
+            error("response run was not completable after planning clarification precondition passed")
+        }
+        markResponseRunResultConsumed(result.runId, result.attempt, now)
+        touchConversation(run.conversationId, now)
+        return ConsumeResponseRunResult.Consumed(
+            loadConversationDetail(conversation.owner, run.conversationId)
+                ?: error("conversation detail missing after planning clarification consumption"),
         )
     }
 
@@ -1105,7 +1166,7 @@ class JdbcTaskRepository(
             """
             SELECT id, conversation_id, user_message_id, turn_index, status, stage, attempt,
                    available_at, lease_owner, lease_expires_at, deadline_at, expected_task_id,
-                   expected_task_revision, assistant_message_id, failure_category, origin_trace_id, created_at,
+                   expected_task_revision, assistant_message_id, failure_category, origin_trace_id, time_zone_id, created_at,
                    started_at, updated_at, completed_at
             FROM response_runs
             WHERE conversation_id = ?
@@ -1125,7 +1186,7 @@ class JdbcTaskRepository(
             """
             SELECT id, conversation_id, user_message_id, turn_index, status, stage, attempt,
                    available_at, lease_owner, lease_expires_at, deadline_at, expected_task_id,
-                   expected_task_revision, assistant_message_id, failure_category, origin_trace_id, created_at,
+                   expected_task_revision, assistant_message_id, failure_category, origin_trace_id, time_zone_id, created_at,
                    started_at, updated_at, completed_at
             FROM response_runs
             WHERE id = ?
@@ -1209,6 +1270,92 @@ class JdbcTaskRepository(
             statement.setString(11, ResponseRunStage.Turn.toDatabaseValue())
             statement.executeUpdate() == 1
         }
+
+
+    private fun Connection.findAssistantMessage(
+        conversationId: ConversationId,
+        aiRequestId: String,
+    ): ConversationMessage? =
+        prepareStatement(
+            """
+            SELECT id, conversation_id, role, content, client_message_id, ai_request_id, turn_index, understood_at, created_at
+            FROM conversation_messages
+            WHERE conversation_id = ? AND role = ? AND ai_request_id = ?
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setObject(1, conversationId.value)
+            statement.setString(2, MessageRole.Assistant.name)
+            statement.setString(3, aiRequestId)
+            statement.executeQuery().use { result -> if (result.next()) result.conversationMessage() else null }
+        }
+
+    private fun Connection.insertConversationMessage(message: ConversationMessage) {
+        prepareStatement(
+            """
+            INSERT INTO conversation_messages (
+                id, conversation_id, role, content, client_message_id, ai_request_id, turn_index, understood_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setObject(1, message.id.value)
+            statement.setObject(2, message.conversationId.value)
+            statement.setString(3, message.role.name)
+            statement.setString(4, message.content)
+            statement.setString(5, message.clientMessageId)
+            statement.setString(6, message.aiRequestId)
+            statement.setLong(7, message.turnIndex)
+            statement.setInstant(8, message.understoodAt)
+            statement.setInstant(9, message.createdAt)
+            statement.executeUpdate()
+        }
+    }
+
+    private fun Connection.completeTurnRunWithAssistantFromResult(
+        runId: ResponseRunId,
+        attempt: Int,
+        assistantMessageId: MessageId,
+        now: Instant,
+    ): Boolean =
+        prepareStatement(
+            """
+            UPDATE response_runs
+            SET status = ?,
+                assistant_message_id = ?,
+                lease_owner = NULL,
+                lease_expires_at = NULL,
+                failure_category = NULL,
+                updated_at = ?,
+                completed_at = ?
+            WHERE id = ?
+              AND attempt = ?
+              AND status IN (?, ?)
+              AND stage = ?
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setString(1, ResponseRunStatus.Completed.toDatabaseValue())
+            statement.setObject(2, assistantMessageId.value)
+            statement.setInstant(3, now)
+            statement.setInstant(4, now)
+            statement.setObject(5, runId.value)
+            statement.setInt(6, attempt)
+            statement.setString(7, ResponseRunStatus.Processing.toDatabaseValue())
+            statement.setString(8, ResponseRunStatus.Streaming.toDatabaseValue())
+            statement.setString(9, ResponseRunStage.Turn.toDatabaseValue())
+            statement.executeUpdate() == 1
+        }
+
+    private fun Connection.touchConversation(
+        conversationId: ConversationId,
+        now: Instant,
+    ) {
+        prepareStatement("UPDATE conversations SET updated_at = ? WHERE id = ?").use { statement ->
+            statement.setInstant(1, now)
+            statement.setObject(2, conversationId.value)
+            statement.executeUpdate()
+        }
+    }
 
     private fun Connection.completePlanningRunFromResult(
         runId: ResponseRunId,
@@ -1434,6 +1581,7 @@ class JdbcTaskRepository(
             assistantMessageId = getObject("assistant_message_id", UUID::class.java)?.let(::MessageId),
             failureCategory = getString("failure_category")?.toResponseRunFailureCategory(),
             originTraceId = getString("origin_trace_id"),
+            timeZoneId = getString("time_zone_id"),
             createdAt = getTimestamp("created_at").toInstant(),
             startedAt = getTimestamp("started_at")?.toInstant(),
             updatedAt = getTimestamp("updated_at").toInstant(),

@@ -54,4 +54,6 @@ data class ResponseRun(
     val startedAt: Instant?,
     val updatedAt: Instant,
     val completedAt: Instant?,
+    val timeZoneId: String = "UTC",
+    val referenceTime: Instant = createdAt,
 )

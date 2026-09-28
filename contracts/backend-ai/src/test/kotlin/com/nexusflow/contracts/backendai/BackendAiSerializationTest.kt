@@ -21,6 +21,9 @@ import com.nexusflow.contracts.backendai.conversation.ConversationDecisionReques
 import com.nexusflow.contracts.backendai.conversation.ConversationDecisionResult
 import com.nexusflow.contracts.backendai.conversation.ConversationMessagePayload
 import com.nexusflow.contracts.backendai.conversation.ConversationMessageRole
+import com.nexusflow.contracts.backendai.conversation.ConversationTurnResult
+import com.nexusflow.contracts.backendai.conversation.ConversationTurnRequest
+import com.nexusflow.contracts.backendai.conversation.ConversationTurnMetadata
 import com.nexusflow.contracts.backendai.conversation.InformationNeedMode
 import com.nexusflow.contracts.backendai.conversation.InformationNeedProposal
 import com.nexusflow.contracts.backendai.conversation.ReadOnlyToolCallProposal
@@ -287,6 +290,91 @@ class BackendAiSerializationTest {
         assertEquals(request, json.decodeFromString<ConversationDecisionRequest>(json.encodeToString(request)))
         assertEquals(result, json.decodeFromString<ConversationDecisionResult>(json.encodeToString(result)))
         assertEquals("conversation_decision", json.encodeToString(StructuredModelCapability.ConversationDecision).trim('"'))
+    }
+
+    @Test
+    fun `conversation turn request and results serialize one pass outcome contract`() {
+        val request = ConversationTurnRequest(
+            aiRequestId = "turn-1",
+            conversationId = "conversation-1",
+            taskId = "task-1",
+            taskRevision = 7,
+            currentMessage = "预算300，今晚看电影",
+            recentMessages = listOf(ConversationMessagePayload(ConversationMessageRole.Assistant, "之前的回复")),
+            referenceTime = Now,
+            timeZoneId = "Asia/Shanghai",
+            availableReadTools = listOf(
+                ReadOnlyToolDefinitionPayload(
+                    toolKey = "movie.showtimes",
+                    description = "Read movie showtimes.",
+                    argumentHint = "movieTitle, location, date",
+                ),
+            ),
+            maxReadToolCalls = 2,
+            activePlanning = ActivePlanningContextPayload(
+                taskId = "task-1",
+                taskRevision = 7,
+                goal = "看电影",
+                requirements = listOf(CurrentRequirement(RequirementKind.BudgetLimit, RequirementValue.BudgetLimit(300, "CNY"), RequirementStrength.Must)),
+            ),
+        )
+        val metadata = ConversationTurnMetadata("test-provider", "test-model", "conversation-turn-v1", "provider-turn-1", 1)
+        val answer = ConversationTurnResult.Answer("可以，先选影院。", metadata)
+        val research = ConversationTurnResult.Research(
+            informationNeeds = listOf(
+                InformationNeedProposal(
+                    id = "need-showtimes",
+                    question = "确认今晚电影场次",
+                    mode = InformationNeedMode.TOOL_REQUIRED,
+                    toolCalls = listOf(ReadOnlyToolCallProposal("movie.showtimes", buildJsonObject { put("location", "Shanghai") })),
+                ),
+            ),
+            metadata = metadata,
+        )
+        val planning = ConversationTurnResult.Planning(
+            planningGoalPatch = "今晚看电影",
+            constraintDeltas = listOf(
+                ConstraintDeltaProposal(
+                    operation = ConstraintDeltaOperation.Upsert,
+                    kind = RequirementKind.BudgetLimit,
+                    value = RequirementValue.BudgetLimit(300, "CNY"),
+                    strength = RequirementStrength.Must,
+                    evidenceText = "预算300",
+                ),
+            ),
+            clarification = ClarificationProposal(false, emptyList(), ClarificationReasonCategory.None, null),
+            contextSelection = ContextSelectionProposal(),
+            metadata = metadata,
+        )
+
+        val requestElement = json.parseToJsonElement(json.encodeToString(request)).jsonObject
+        assertEquals("turn-1", requestElement.getValue("aiRequestId").jsonPrimitive.content)
+        assertEquals("conversation-1", requestElement.getValue("conversationId").jsonPrimitive.content)
+        assertEquals("task-1", requestElement.getValue("taskId").jsonPrimitive.content)
+        assertEquals(JsonPrimitive(7), requestElement.getValue("taskRevision"))
+        assertEquals("预算300，今晚看电影", requestElement.getValue("currentMessage").jsonPrimitive.content)
+        assertEquals("assistant", requestElement.getValue("recentMessages").jsonArray.single().jsonObject.getValue("role").jsonPrimitive.content)
+        assertEquals("2026-08-29T00:00:00Z", requestElement.getValue("referenceTime").jsonPrimitive.content)
+        assertEquals("Asia/Shanghai", requestElement.getValue("timeZoneId").jsonPrimitive.content)
+        assertEquals("movie.showtimes", requestElement.getValue("availableReadTools").jsonArray.first().jsonObject.getValue("toolKey").jsonPrimitive.content)
+        assertEquals(JsonPrimitive(2), requestElement.getValue("maxReadToolCalls"))
+        assertEquals("看电影", requestElement.getValue("activePlanning").jsonObject.getValue("goal").jsonPrimitive.content)
+        assertEquals("conversation_turn", json.encodeToString(StructuredModelCapability.ConversationTurn).trim('"'))
+        assertEquals(request, json.decodeFromString<ConversationTurnRequest>(json.encodeToString(request)))
+
+        val answerElement = json.parseToJsonElement(json.encodeToString<ConversationTurnResult>(answer)).jsonObject
+        val researchElement = json.parseToJsonElement(json.encodeToString<ConversationTurnResult>(research)).jsonObject
+        val planningElement = json.parseToJsonElement(json.encodeToString<ConversationTurnResult>(planning)).jsonObject
+
+        assertEquals("answer", answerElement.getValue("type").jsonPrimitive.content)
+        assertEquals("research", researchElement.getValue("type").jsonPrimitive.content)
+        assertEquals("planning", planningElement.getValue("type").jsonPrimitive.content)
+        assertEquals("可以，先选影院。", answerElement.getValue("answer").jsonPrimitive.content)
+        assertEquals("need-showtimes", researchElement.getValue("informationNeeds").jsonArray.single().jsonObject.getValue("id").jsonPrimitive.content)
+        assertEquals("今晚看电影", planningElement.getValue("planningGoalPatch").jsonPrimitive.content)
+        assertEquals(answer, json.decodeFromString<ConversationTurnResult>(json.encodeToString<ConversationTurnResult>(answer)))
+        assertEquals(research, json.decodeFromString<ConversationTurnResult>(json.encodeToString<ConversationTurnResult>(research)))
+        assertEquals(planning, json.decodeFromString<ConversationTurnResult>(json.encodeToString<ConversationTurnResult>(planning)))
     }
 
     @Test

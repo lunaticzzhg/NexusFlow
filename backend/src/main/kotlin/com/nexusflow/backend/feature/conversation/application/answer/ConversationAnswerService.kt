@@ -5,23 +5,18 @@ import com.nexusflow.backend.feature.research.application.ReadToolCatalog
 import com.nexusflow.backend.feature.research.application.ReadToolExecutor
 import com.nexusflow.contracts.backendai.answer.ConversationAnsweringCapability
 import com.nexusflow.contracts.backendai.answer.StreamingConversationAnsweringCapability
-import com.nexusflow.contracts.backendai.conversation.ConversationDecisionCapability
+import com.nexusflow.contracts.backendai.conversation.InformationNeedProposal
+import com.nexusflow.contracts.backendai.conversation.ReadOnlyToolDefinitionPayload
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
 
 class ConversationAnswerService(
-    conversationDecision: ConversationDecisionCapability?,
     conversationAnswering: ConversationAnsweringCapability?,
     streamingConversationAnswering: StreamingConversationAnsweringCapability? = null,
-    readToolCatalog: ReadToolCatalog,
-    readToolExecutor: ReadToolExecutor,
+    private val readToolCatalog: ReadToolCatalog,
+    private val readToolExecutor: ReadToolExecutor,
     private val logger: StructuredLogger? = null,
 ) {
-    private val decisionStep = ConversationDecisionStep(
-        conversationDecision = conversationDecision,
-        readToolCatalog = readToolCatalog,
-        readToolExecutor = readToolExecutor,
-    )
     private val researchCoordinator = ConversationResearchCoordinator(readToolExecutor)
     private val answerStep = ConversationAnswerStep(
         conversationAnswering = conversationAnswering,
@@ -32,49 +27,49 @@ class ConversationAnswerService(
         readToolExecutor = readToolExecutor,
     )
 
-    suspend fun answer(request: StandaloneConversationAnswerRequest): ConversationAnswerResult =
-        answer(request.toTurnRequest())
-
-    private suspend fun answer(request: ConversationAnswerTurnRequest): ConversationAnswerResult {
-        logStarted(request)
-        val result = when (val decision = decisionStep.decide(request)) {
-            ConversationDecisionStepResult.AiUnavailable -> {
-                logDecisionFinished(request, "ai_unavailable")
-                ConversationAnswerResult.aiUnavailable(request.assistantMessageId)
-            }
-            ConversationDecisionStepResult.InvalidAiResult -> {
-                logDecisionFinished(request, "invalid_ai_result")
-                ConversationAnswerResult.invalidAiResult(request.assistantMessageId)
-            }
-            is ConversationDecisionStepResult.Success -> {
-                logDecisionFinished(request, "success", decision.decision.informationNeeds.size)
-                answerDecision(request, decision)
-            }
+    fun availableReadTools(): List<ReadOnlyToolDefinitionPayload> =
+        readToolCatalog.definitions().map { definition ->
+            ReadOnlyToolDefinitionPayload(
+                toolKey = definition.key.value,
+                description = definition.description,
+                argumentHint = definition.argumentHint,
+            )
         }
-        logFinished(request, result)
+
+    fun maxReadToolCalls(): Int = readToolExecutor.maxCallsPerTurn
+
+    suspend fun answerKnownNeeds(
+        request: StandaloneConversationAnswerRequest,
+        needs: List<InformationNeedProposal>,
+    ): ConversationAnswerResult {
+        val turnRequest = request.toTurnRequest()
+        logStarted(turnRequest)
+        val result = answerKnownNeeds(turnRequest, needs)
+        logFinished(turnRequest, result)
         return result
     }
 
-    private suspend fun answerDecision(
+    private suspend fun answerKnownNeeds(
         request: ConversationAnswerTurnRequest,
-        decision: ConversationDecisionStepResult.Success,
+        needs: List<InformationNeedProposal>,
     ): ConversationAnswerResult {
-        val needs = validator.validateInformationNeeds(decision.decision)
-            ?: return ConversationAnswerResult.invalidAiResult(request.assistantMessageId)
+        val validatedNeeds = validator.validateInformationNeeds(
+            com.nexusflow.contracts.backendai.conversation.ConversationDecisionResult(needs),
+        ) ?: return ConversationAnswerResult.invalidAiResult(request.assistantMessageId)
         val research = try {
-            researchCoordinator.execute(request, needs)
+            researchCoordinator.execute(request, validatedNeeds)
         } catch (_: IllegalArgumentException) {
             return ConversationAnswerResult.invalid(request.assistantMessageId)
         }
         // The current decision contract exposes information needs only, so MODEL_ONLY still uses answer synthesis.
-        val answer = when (val generated = answerStep.generate(request, needs, research)) {
+        val answer = when (val generated = answerStep.generate(request, validatedNeeds, research)) {
             ConversationAnswerStepResult.AiUnavailable -> return ConversationAnswerResult.aiUnavailable(request.assistantMessageId)
             ConversationAnswerStepResult.InvalidAiResult -> return ConversationAnswerResult.invalidAiResult(request.assistantMessageId)
             is ConversationAnswerStepResult.Success -> generated.answer
         }
         logAnswerGenerated(request, answer.answer.length, research.size)
-        return if (validator.validateNeedCoverage(answer, needs, research)) {
-            validator.resultFromAnswer(request, answer, needs, research)
+        return if (validator.validateNeedCoverage(answer, validatedNeeds, research)) {
+            validator.resultFromAnswer(request, answer, validatedNeeds, research)
         } else {
             ConversationAnswerResult.invalidAiResult(request.assistantMessageId)
         }
@@ -89,25 +84,6 @@ class ConversationAnswerService(
                 "response_run_id" value request.operationLogContext?.operationId
                 "conversation_id" value request.conversationId
                 "task_id" value request.taskId
-            },
-        )
-    }
-
-    private fun logDecisionFinished(
-        request: ConversationAnswerTurnRequest,
-        outcome: String,
-        informationNeedCount: Int? = null,
-    ) {
-        logger?.info(
-            component = "answer",
-            event = "conversation_decision_finished",
-            fields = logFields {
-                addOperationFields(request.operationLogContext, step = "decision_finished", outcome = outcome)
-                "response_run_id" value request.operationLogContext?.operationId
-                "conversation_id" value request.conversationId
-                "task_id" value request.taskId
-                "task_revision" value request.taskRevision
-                "information_need_count" value informationNeedCount
             },
         )
     }

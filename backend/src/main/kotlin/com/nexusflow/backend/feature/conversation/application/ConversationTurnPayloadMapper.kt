@@ -48,7 +48,6 @@ import java.util.UUID
 internal class ConversationTurnPayloadMapper(
     private val clock: Clock,
     private val uuidFactory: () -> UUID,
-    private val timeZoneId: String,
 ) {
     fun conversationAnswerPayload(
         result: ConversationAnswerResult,
@@ -69,6 +68,7 @@ internal class ConversationTurnPayloadMapper(
         userMessage: ConversationMessage,
         currentTask: TaskDetail?,
         understanding: AiUnderstandMessageResult,
+        timeZoneId: String,
     ): ResponseRunResultPayload.PlanningUnderstanding =
         ResponseRunResultPayload.PlanningUnderstanding(
             conversationId = detail.conversation.id.value.toString(),
@@ -80,7 +80,7 @@ internal class ConversationTurnPayloadMapper(
             expectedTaskRevision = currentTask?.task?.revision,
             intentPatch = understanding.planningGoalPatch,
             requirements = understanding.constraintDeltas.mapNotNull { delta ->
-                delta.toRequirementWritePayloadOrNull()
+                delta.toRequirementWritePayloadOrNull(timeZoneId)
             },
             removedRequirementKinds = understanding.constraintDeltas
                 .filter { it.operation == ConstraintDeltaOperation.Remove }
@@ -113,24 +113,26 @@ internal class ConversationTurnPayloadMapper(
         detail: ConversationDetail,
         userMessage: ConversationMessage,
         currentTask: TaskDetail?,
+        referenceTime: java.time.Instant,
+        timeZoneId: String,
     ): AiUnderstandMessageRequest =
         AiUnderstandMessageRequest(
             aiRequestId = userMessage.aiRequestId ?: "",
             currentMessage = userMessage.content,
-            referenceTime = clock.instant().toContractInstant(),
+            referenceTime = referenceTime.toContractInstant(),
             timeZoneId = timeZoneId,
-            activePlanning = currentTask?.activePlanningPayload(),
+            activePlanning = currentTask?.let(::activePlanningPayload),
             optionalContext = emptyList(),
             availableContextDefinitions = emptyList(),
             diagnostics = StructuredModelRequestDiagnostics(),
         )
 
-    private fun TaskDetail.activePlanningPayload(): AiActivePlanningContextPayload =
+    internal fun activePlanningPayload(detail: TaskDetail): AiActivePlanningContextPayload =
         AiActivePlanningContextPayload(
-            taskId = task.id.value.toString(),
-            taskRevision = task.revision,
-            goal = task.intent,
-            requirements = requirements.map { it.toAiCurrentRequirement() },
+            taskId = detail.task.id.value.toString(),
+            taskRevision = detail.task.revision,
+            goal = detail.task.intent,
+            requirements = detail.requirements.map { it.toAiCurrentRequirement() },
         )
 
     private fun Requirement.toAiCurrentRequirement(): AiCurrentRequirement =
@@ -177,14 +179,14 @@ internal class ConversationTurnPayloadMapper(
             RequirementStrength.Prefer -> AiRequirementStrength.Prefer
         }
 
-    private fun ConstraintDeltaProposal.toRequirementWritePayloadOrNull(): RequirementWritePayload? {
+    private fun ConstraintDeltaProposal.toRequirementWritePayloadOrNull(timeZoneId: String): RequirementWritePayload? {
         if (operation != ConstraintDeltaOperation.Upsert) return null
         val proposedValue = value ?: return null
         val proposedStrength = strength ?: return null
         return RequirementWritePayload(
             id = uuidFactory().toString(),
             kind = kind.toBackendRequirementKind().name,
-            value = proposedValue.toRequirementValuePayload(),
+            value = proposedValue.toRequirementValuePayload(timeZoneId),
             strength = proposedStrength.toBackendRequirementStrength().name,
         )
     }
@@ -208,7 +210,7 @@ internal class ConversationTurnPayloadMapper(
             AiRequirementStrength.Prefer -> RequirementStrength.Prefer
         }
 
-    private fun AiRequirementValue.toRequirementValuePayload(): RequirementValuePayload =
+    private fun AiRequirementValue.toRequirementValuePayload(timeZoneId: String): RequirementValuePayload =
         when (this) {
             is AiRequirementValue.TimeWindow -> RequirementValuePayload.TimeWindow(
                 startAt = startAt?.toString(),

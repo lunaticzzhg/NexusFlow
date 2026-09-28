@@ -46,7 +46,7 @@ Then build, install, and start the app with the target-aware helper:
 # Detect the selected target automatically.
 scripts/run_android_debug.sh
 
-# Require an Android emulator; it uses http://10.0.2.2:8080.
+# Require an Android emulator; it configures adb reverse for 127.0.0.1:8080.
 scripts/run_android_debug.sh --emulator
 
 # Require a physical device; it configures adb reverse for 127.0.0.1:8080.

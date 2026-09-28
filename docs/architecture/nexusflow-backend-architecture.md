@@ -304,6 +304,12 @@ Backend 日志和 trace 要能定位 flow，但不能泄漏敏感内容。
 
 Secret 来自 runtime/environment 或 secret manager；不得写入 repository、Docker image、frontend config 或日志。`BackendRuntimeConfig` 当前体现了 database、JWT、Google audience 等配置边界：数据库和 JWT secret 是 runtime 注入；Google audience / client id 属于非秘密配置，但仍应避免散落在 feature 代码中。
 
+Backend runtime env 治理只覆盖 Backend 进程启动、认证、AI provider、Response Run worker、外部读取源和日志配置。触发证据是已有 runtime keys 曾缺失于 `.env.example`，且部分显式 malformed / blank typed value 会静默回退默认。边界是 secret value 只存在于 runtime/ignored `.env` 或 secret manager，tracked example 只记录 key、空占位或安全默认值；feature 代码不得绕过 `BackendRuntimeConfig` / `BackendRuntimeProfile` 直接散落读取环境变量。
+
+- 非目标：引入配置框架、registry、环境矩阵，或把 Compose/App/AI module 配置纳入 Backend authority。
+- 反例：新增 `SOME_TIMEOUT_MS` 后只在某个 feature 里 `System.getenv()`，并让空字符串回退默认，会隐藏部署错误且绕过启动期验证。
+- 验证：backend config tests 覆盖 default / blank / invalid / conditional 语义，并用 `.env.example` contract test 对静态 Backend env key 做包含与去重检查。
+
 ### 11.1 AI Model Context 边界
 
 Backend owns model Context construction. AI/provider code may receive only a bounded snapshot prepared for the current capability; it must not query Backend repositories, conversation storage, external services, MCP tools, credentials or user profile storage.

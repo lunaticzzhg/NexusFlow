@@ -190,7 +190,7 @@ class TaskRoutesTest {
                 )
                 services.drainResponseRuns()
                 val sentDetail = getJson<ConversationDetailResponse>("/v1/conversations/${sent.data.conversation.id}")
-                assertEquals(ResponseRunStatusResponse.Completed, sentDetail.data.conversation.responseRuns.last().status)
+                assertEquals(ResponseRunStatusResponse.Failed, sentDetail.data.conversation.responseRuns.last().status)
                 val pending = sent.data.conversation.messages.single { it.clientMessageId == "route-pending" }
                 assertEquals(null, pending.understoodAt)
             }

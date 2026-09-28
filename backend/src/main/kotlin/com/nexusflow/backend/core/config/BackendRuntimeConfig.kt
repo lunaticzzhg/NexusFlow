@@ -25,34 +25,70 @@ data class BackendRuntimeConfig(
     val devLoginPassword: String?,
 ) {
     companion object {
-        fun fromEnvironment(environment: Map<String, String> = System.getenv()): BackendRuntimeConfig = BackendRuntimeConfig(
-            databaseUrl = required(environment, "DATABASE_URL"),
-            databaseUser = required(environment, "DATABASE_USER"),
-            databasePassword = required(environment, "DATABASE_PASSWORD"),
-            jwtIssuer = required(environment, "AUTH_JWT_ISSUER"),
-            jwtAudience = required(environment, "AUTH_JWT_AUDIENCE"),
-            jwtKeyId = required(environment, "AUTH_JWT_KEY_ID"),
-            jwtPrivateKeyPemBase64 = required(environment, "AUTH_JWT_PRIVATE_KEY_PEM_BASE64"),
-            jwtPublicKeyPemBase64 = required(environment, "AUTH_JWT_PUBLIC_KEY_PEM_BASE64"),
-            googleAllowedAudiences = required(environment, "GOOGLE_ALLOWED_AUDIENCES")
-                .split(',')
-                .map(String::trim)
-                .filter(String::isNotBlank)
-                .toSet(),
-            accessLifetime = Duration.ofSeconds(required(environment, "AUTH_ACCESS_TTL_SECONDS").toLong()),
-            refreshLifetime = Duration.ofDays(required(environment, "AUTH_REFRESH_TTL_DAYS").toLong()),
-            ai = aiRuntimeConfig(environment),
-            responseRun = responseRunRuntimeConfig(environment),
-            externalSources = externalSourcesRuntimeConfig(environment),
-            logging = loggingRuntimeConfig(environment),
-            devLoginEnabled = environment["ORBIT_DEV_LOGIN_ENABLED"]?.toBooleanStrictOrNull() ?: false,
-            devLoginEmail = environment["ORBIT_DEV_LOGIN_EMAIL"]?.takeIf(String::isNotBlank),
-            devLoginPassword = environment["ORBIT_DEV_LOGIN_PASSWORD"]?.takeIf(String::isNotBlank),
-        )
+        fun fromEnvironment(environment: Map<String, String> = System.getenv()): BackendRuntimeConfig {
+            val devLoginEnabled = optionalBoolean(environment, "ORBIT_DEV_LOGIN_ENABLED") ?: false
+            val devLoginEmail = environment["ORBIT_DEV_LOGIN_EMAIL"]?.takeIf(String::isNotBlank)
+            val devLoginPassword = environment["ORBIT_DEV_LOGIN_PASSWORD"]?.takeIf(String::isNotBlank)
+            if (devLoginEnabled) {
+                require(!devLoginEmail.isNullOrBlank()) { "ORBIT_DEV_LOGIN_EMAIL must be configured when ORBIT_DEV_LOGIN_ENABLED is true" }
+                require(!devLoginPassword.isNullOrBlank()) { "ORBIT_DEV_LOGIN_PASSWORD must be configured when ORBIT_DEV_LOGIN_ENABLED is true" }
+            }
+            return BackendRuntimeConfig(
+                databaseUrl = required(environment, "DATABASE_URL"),
+                databaseUser = required(environment, "DATABASE_USER"),
+                databasePassword = required(environment, "DATABASE_PASSWORD"),
+                jwtIssuer = required(environment, "AUTH_JWT_ISSUER"),
+                jwtAudience = required(environment, "AUTH_JWT_AUDIENCE"),
+                jwtKeyId = required(environment, "AUTH_JWT_KEY_ID"),
+                jwtPrivateKeyPemBase64 = required(environment, "AUTH_JWT_PRIVATE_KEY_PEM_BASE64"),
+                jwtPublicKeyPemBase64 = required(environment, "AUTH_JWT_PUBLIC_KEY_PEM_BASE64"),
+                googleAllowedAudiences = required(environment, "GOOGLE_ALLOWED_AUDIENCES")
+                    .split(',')
+                    .map(String::trim)
+                    .filter(String::isNotBlank)
+                    .toSet(),
+                accessLifetime = Duration.ofSeconds(requiredPositiveLong(environment, "AUTH_ACCESS_TTL_SECONDS")),
+                refreshLifetime = Duration.ofDays(requiredPositiveLong(environment, "AUTH_REFRESH_TTL_DAYS")),
+                ai = aiRuntimeConfig(environment),
+                responseRun = responseRunRuntimeConfig(environment),
+                externalSources = externalSourcesRuntimeConfig(environment),
+                logging = loggingRuntimeConfig(environment),
+                devLoginEnabled = devLoginEnabled,
+                devLoginEmail = devLoginEmail,
+                devLoginPassword = devLoginPassword,
+            )
+        }
 
         private fun required(environment: Map<String, String>, name: String): String = environment[name]
             ?.takeIf(String::isNotBlank)
             ?: error("$name must be configured")
+
+        private fun optionalTypedValue(environment: Map<String, String>, name: String): String? =
+            environment[name]?.also { require(it.isNotBlank()) { "$name must not be blank" } }?.trim()
+
+        private fun optionalBoolean(environment: Map<String, String>, name: String): Boolean? =
+            optionalTypedValue(environment, name)
+                ?.let { value ->
+                    value.toBooleanStrictOrNull()
+                        ?: error("$name must be true or false")
+                }
+
+        private fun optionalPositiveInt(environment: Map<String, String>, name: String): Int? =
+            optionalTypedValue(environment, name)
+                ?.toIntOrNull()
+                ?.also { require(it > 0) { "$name must be positive" } }
+                ?: environment[name]?.let { error("$name must be a number") }
+
+        private fun requiredPositiveLong(environment: Map<String, String>, name: String): Long =
+            required(environment, name)
+                .toLongOrNull()
+                ?.also { require(it > 0) { "$name must be positive" } }
+                ?: error("$name must be a number")
+
+        private fun optionalLong(environment: Map<String, String>, name: String): Long? =
+            optionalTypedValue(environment, name)
+                ?.toLongOrNull()
+                ?: environment[name]?.let { error("$name must be a number") }
 
         private fun aiRuntimeConfig(environment: Map<String, String>): AiRuntimeConfig? {
             val providerText = environment["AI_PROVIDER"]?.trim()?.takeIf(String::isNotBlank)
@@ -63,9 +99,7 @@ data class BackendRuntimeConfig(
                 apiKey = required(environment, "AI_API_KEY"),
                 baseUrl = required(environment, "AI_BASE_URL"),
                 model = required(environment, "AI_MODEL"),
-                requestTimeout = environment["AI_REQUEST_TIMEOUT_MS"]
-                    ?.takeIf(String::isNotBlank)
-                    ?.toLong()
+                requestTimeout = optionalLong(environment, "AI_REQUEST_TIMEOUT_MS")
                     ?.also { require(it > 0) { "AI_REQUEST_TIMEOUT_MS must be positive" } }
                     ?.let(Duration::ofMillis)
                     ?: Duration.ofSeconds(90),
@@ -77,8 +111,7 @@ data class BackendRuntimeConfig(
             provider: AiProvider,
             environment: Map<String, String>,
         ): Boolean? =
-            environment["AI_ENABLE_THINKING"]
-                ?.takeIf(String::isNotBlank)
+            optionalTypedValue(environment, "AI_ENABLE_THINKING")
                 ?.let { value ->
                     value.toBooleanStrictOrNull()
                         ?: error("AI_ENABLE_THINKING must be true or false")
@@ -92,13 +125,9 @@ data class BackendRuntimeConfig(
 
         private fun externalSourcesRuntimeConfig(environment: Map<String, String>): ExternalSourcesRuntimeConfig =
             ExternalSourcesRuntimeConfig(
-                mode = environment["ORBIT_OPPORTUNITY_SOURCE_MODE"]
-                    ?.takeIf(String::isNotBlank)
-                    ?.toOpportunitySourceMode()
+                mode = optionalTypedValue(environment, "ORBIT_OPPORTUNITY_SOURCE_MODE")?.toOpportunitySourceMode()
                     ?: OpportunitySourceMode.External,
-                requestTimeout = environment["EXTERNAL_SOURCE_REQUEST_TIMEOUT_MS"]
-                    ?.takeIf(String::isNotBlank)
-                    ?.toLong()
+                requestTimeout = optionalLong(environment, "EXTERNAL_SOURCE_REQUEST_TIMEOUT_MS")
                     ?.also { require(it > 0) { "EXTERNAL_SOURCE_REQUEST_TIMEOUT_MS must be positive" } }
                     ?.let(Duration::ofMillis)
                     ?: Duration.ofSeconds(8),
@@ -173,16 +202,13 @@ data class BackendRuntimeConfig(
 
         private fun responseRunRuntimeConfig(environment: Map<String, String>): ResponseRunRuntimeConfig =
             ResponseRunRuntimeConfig(
-                workerEnabled = environment["RESPONSE_RUN_WORKER_ENABLED"]?.toBooleanStrictOrNull() ?: false,
+                workerEnabled = optionalBoolean(environment, "RESPONSE_RUN_WORKER_ENABLED") ?: false,
                 pollInterval = positiveMillis(environment, "RESPONSE_RUN_POLL_INTERVAL_MS", Duration.ofSeconds(1)),
                 leaseDuration = positiveMillis(environment, "RESPONSE_RUN_LEASE_DURATION_MS", Duration.ofSeconds(30)),
                 heartbeatInterval = positiveMillis(environment, "RESPONSE_RUN_HEARTBEAT_INTERVAL_MS", Duration.ofSeconds(10)),
                 retryBackoff = nonNegativeMillis(environment, "RESPONSE_RUN_RETRY_BACKOFF_MS", Duration.ofSeconds(5)),
-                maxAttempts = environment["RESPONSE_RUN_MAX_ATTEMPTS"]
-                    ?.takeIf(String::isNotBlank)
-                    ?.toInt()
-                    ?.also { require(it > 0) { "RESPONSE_RUN_MAX_ATTEMPTS must be positive" } }
-                    ?: 3,
+                maxAttempts = optionalPositiveInt(environment, "RESPONSE_RUN_MAX_ATTEMPTS") ?: 3,
+                workerParallelism = optionalPositiveInt(environment, "RESPONSE_RUN_WORKER_PARALLELISM") ?: 2,
                 maxDuration = positiveMillis(environment, "RESPONSE_RUN_MAX_DURATION_MS", Duration.ofMinutes(30)),
             )
 
@@ -191,9 +217,7 @@ data class BackendRuntimeConfig(
             name: String,
             default: Duration,
         ): Duration =
-            environment[name]
-                ?.takeIf(String::isNotBlank)
-                ?.toLong()
+            optionalLong(environment, name)
                 ?.also { require(it > 0) { "$name must be positive" } }
                 ?.let(Duration::ofMillis)
                 ?: default
@@ -203,9 +227,7 @@ data class BackendRuntimeConfig(
             name: String,
             default: Duration,
         ): Duration =
-            environment[name]
-                ?.takeIf(String::isNotBlank)
-                ?.toLong()
+            optionalLong(environment, name)
                 ?.also { require(it >= 0) { "$name must not be negative" } }
                 ?.let(Duration::ofMillis)
                 ?: default
@@ -226,9 +248,11 @@ data class BackendRuntimeConfig(
 
         private fun loggingRuntimeConfig(environment: Map<String, String>): LoggingRuntimeConfig =
             LoggingRuntimeConfig(
-                environment = environment["APP_ENV"]?.toRuntimeEnvironment() ?: RuntimeEnvironment.Local,
-                level = environment["LOG_LEVEL"]?.toLogLevelOrNull() ?: LogLevel.INFO,
-                format = environment["LOG_FORMAT"]?.toLogFormat() ?: LogFormat.Pretty,
+                environment = optionalTypedValue(environment, "APP_ENV")?.toRuntimeEnvironment() ?: RuntimeEnvironment.Local,
+                level = optionalTypedValue(environment, "LOG_LEVEL")
+                    ?.let { it.toLogLevelOrNull() ?: error("LOG_LEVEL must be one of debug, info, warn, warning, error") }
+                    ?: LogLevel.INFO,
+                format = optionalTypedValue(environment, "LOG_FORMAT")?.toLogFormat() ?: LogFormat.Pretty,
                 serviceName = environment["SERVICE_NAME"]?.takeIf(String::isNotBlank) ?: "nexusflow-backend",
             )
 
@@ -256,10 +280,12 @@ data class ResponseRunRuntimeConfig(
     val heartbeatInterval: Duration,
     val retryBackoff: Duration,
     val maxAttempts: Int,
+    val workerParallelism: Int = 2,
     val maxDuration: Duration,
 ) {
     init {
         require(heartbeatInterval < leaseDuration) { "RESPONSE_RUN_HEARTBEAT_INTERVAL_MS must be shorter than lease duration" }
+        require(workerParallelism > 0) { "RESPONSE_RUN_WORKER_PARALLELISM must be positive" }
     }
 }
 

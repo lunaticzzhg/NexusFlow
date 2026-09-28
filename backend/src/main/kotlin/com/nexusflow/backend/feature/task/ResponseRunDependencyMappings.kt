@@ -11,4 +11,5 @@ internal fun ResponseRunRuntimeConfig.toWorkerConfig(): ResponseRunWorkerConfig 
         heartbeatInterval = heartbeatInterval,
         retryBackoff = retryBackoff,
         maxAttempts = maxAttempts,
+        parallelism = workerParallelism,
     )

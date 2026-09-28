@@ -1,0 +1,4 @@
+interface:
+  display_name: "NexusFlow Architecture First Delivery"
+  short_description: "Explain ownership and flow before deriving a landing plan"
+  default_prompt: "Use $nexusflow-architecture-first-delivery to examine the current NexusFlow flow, present the architecture first when requested, and derive implementation details only after the architecture boundary is settled."

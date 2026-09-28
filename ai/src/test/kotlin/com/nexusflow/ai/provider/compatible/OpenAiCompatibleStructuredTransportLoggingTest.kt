@@ -1,11 +1,15 @@
 package com.nexusflow.ai.provider.compatible
 
 import com.nexusflow.ai.provider.ProviderUnauthorizedException
+import com.nexusflow.ai.provider.ProviderRequestException
 import com.nexusflow.contracts.backendai.common.StructuredModelCapability
 import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.contracts.backendai.common.StructuredModelRequestDiagnostics
 import com.nexusflow.ai.provider.StructuredModelRequestMetadata
 import com.nexusflow.ai.provider.StructuredOutputSchema
+import com.nexusflow.ai.provider.TurnModelRequest
+import com.nexusflow.ai.provider.TurnModelRequestMetadata
+import com.nexusflow.ai.provider.TurnModelTool
 import com.nexusflow.observability.LogFields
 import com.nexusflow.observability.LogLevel
 import com.nexusflow.observability.StructuredLogger
@@ -21,6 +25,8 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -94,6 +100,96 @@ class OpenAiCompatibleStructuredTransportLoggingTest {
             assertEquals("diagnostic-request-id", failure.fields["ai_request_id"])
             assertEquals("openai", failure.fields["provider"])
             assertTrue(failure.fields.containsKey("duration_ms"))
+            assertNoSensitiveLogContent(logger)
+        }
+
+    @Test
+    fun `deterministic provider request failure logs once without raw body`() =
+        runBlocking {
+            val logger = RecordingLogger()
+            val transport =
+                transport(
+                    logger = logger,
+                    engine =
+                        MockEngine {
+                            respond(
+                                content = """{"error":{"code":"invalid_parameter","message":"raw schema body"}}""",
+                                status = HttpStatusCode.BadRequest,
+                                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                            )
+                        },
+                )
+
+            assertFailsWith<ProviderRequestException> {
+                transport.generate(request())
+            }
+
+            assertEquals(listOf("ai_request_started", "ai_request_failed"), logger.entries.map { it.event })
+            val failure = logger.entries.last()
+            assertEquals("provider_request", failure.fields["failure_category"])
+            assertEquals("400", failure.fields["provider_http_status"])
+            assertEquals("invalid_parameter", failure.fields["provider_error_code"])
+            assertEquals("ProviderRequestException", failure.errorType)
+            assertNoSensitiveLogContent(logger)
+        }
+
+    @Test
+    fun `oversized provider request failure keeps status and omits provider error code`() =
+        runBlocking {
+            val logger = RecordingLogger()
+            val oversizedBody = """{"error":{"code":"invalid_parameter","padding":"${"x".repeat(5_000)}"}}"""
+            val transport =
+                transport(
+                    logger = logger,
+                    engine =
+                        MockEngine {
+                            respond(
+                                content = oversizedBody,
+                                status = HttpStatusCode.BadRequest,
+                                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                            )
+                        },
+                )
+
+            assertFailsWith<ProviderRequestException> {
+                transport.generate(request())
+            }
+
+            assertEquals(listOf("ai_request_started", "ai_request_failed"), logger.entries.map { it.event })
+            val failure = logger.entries.last()
+            assertEquals("provider_request", failure.fields["failure_category"])
+            assertEquals("400", failure.fields["provider_http_status"])
+            assertFalse(failure.fields.containsKey("provider_error_code"))
+            assertNoSensitiveLogContent(logger)
+        }
+
+    @Test
+    fun `stream turn provider request failure logs once with safe diagnostics`() =
+        runBlocking {
+            val logger = RecordingLogger()
+            val transport =
+                transport(
+                    logger = logger,
+                    engine =
+                        MockEngine {
+                            respond(
+                                content = """{"error":{"code":"invalid_tool_schema","message":"raw tool schema body"}}""",
+                                status = HttpStatusCode.BadRequest,
+                                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                            )
+                        },
+                )
+
+            assertFailsWith<ProviderRequestException> {
+                transport.streamTurn(turnRequest()) { }
+            }
+
+            assertEquals(listOf("ai_request_started", "ai_request_failed"), logger.entries.map { it.event })
+            val failure = logger.entries.last()
+            assertEquals("provider_request", failure.fields["failure_category"])
+            assertEquals("400", failure.fields["provider_http_status"])
+            assertEquals("invalid_tool_schema", failure.fields["provider_error_code"])
+            assertEquals("ProviderRequestException", failure.errorType)
             assertNoSensitiveLogContent(logger)
         }
 
@@ -208,6 +304,29 @@ class OpenAiCompatibleStructuredTransportLoggingTest {
                             fullUserPayloadSerializedChars = 123,
                         ),
                 ),
+        )
+
+    private fun turnRequest(): TurnModelRequest =
+        TurnModelRequest(
+            systemPrompt = "system prompt with secret",
+            userPayload = JsonObject(mapOf("message" to JsonPrimitive("raw user secret"))),
+            tools = listOf(
+                TurnModelTool(
+                    name = "research",
+                    description = "Research current facts.",
+                    parameters = buildJsonObject {
+                        put("type", "object")
+                        put("additionalProperties", true)
+                    },
+                ),
+            ),
+            metadata = TurnModelRequestMetadata(
+                requestId = "turn-diagnostic-request-id",
+                promptVersion = "turn-prompt-v1",
+                capability = StructuredModelCapability.ConversationTurn,
+                attemptNumber = 1,
+                diagnostics = StructuredModelRequestDiagnostics(fullUserPayloadSerializedChars = 42),
+            ),
         )
 
     private fun assertNoSensitiveLogContent(logger: RecordingLogger) {

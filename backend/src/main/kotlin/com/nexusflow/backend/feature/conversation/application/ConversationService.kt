@@ -55,7 +55,7 @@ class ConversationService(
         val owner = actor.taskOwner()
         val requestId = clientRequestId.requireBounded("clientRequestId", MAX_ID_LENGTH)
         val trimmedMessage = message.requireBounded("message", MAX_MESSAGE_LENGTH)
-        timeZoneId.requireBounded("timeZoneId", MAX_TIME_ZONE_LENGTH).requireValidTimeZoneId()
+        val validatedTimeZoneId = timeZoneId.requireBounded("timeZoneId", MAX_TIME_ZONE_LENGTH).requireValidTimeZoneId()
         val aiRequestId = "understand-${uuidFactory()}"
         val now = clock.instant()
         val originTraceId = BackendTraceContext.currentTraceId()?.value
@@ -71,6 +71,7 @@ class ConversationService(
                     aiRequestId = aiRequestId,
                     responseRunId = ResponseRunId(uuidFactory()),
                     responseDeadlineAt = responseDeadlineAt(now),
+                    timeZoneId = validatedTimeZoneId,
                     originTraceId = originTraceId,
                     now = now,
                 ),
@@ -103,7 +104,7 @@ class ConversationService(
         val parsedConversationId = conversationId.toConversationId()
         val parsedClientMessageId = clientMessageId.requireBounded("clientMessageId", MAX_ID_LENGTH)
         val trimmedText = text.requireBounded("text", MAX_MESSAGE_LENGTH)
-        timeZoneId.requireBounded("timeZoneId", MAX_TIME_ZONE_LENGTH).requireValidTimeZoneId()
+        val validatedTimeZoneId = timeZoneId.requireBounded("timeZoneId", MAX_TIME_ZONE_LENGTH).requireValidTimeZoneId()
         val aiRequestId = "understand-${uuidFactory()}"
         val now = clock.instant()
         val originTraceId = BackendTraceContext.currentTraceId()?.value
@@ -118,6 +119,7 @@ class ConversationService(
                     aiRequestId = aiRequestId,
                     responseRunId = ResponseRunId(uuidFactory()),
                     responseDeadlineAt = responseDeadlineAt(now),
+                    timeZoneId = validatedTimeZoneId,
                     originTraceId = originTraceId,
                     now = now,
                 ),

@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class BackendRuntimeConfigTest {
     @Test
@@ -32,6 +33,7 @@ class BackendRuntimeConfigTest {
         assertEquals(10_000, config.responseRun.heartbeatInterval.toMillis())
         assertEquals(5_000, config.responseRun.retryBackoff.toMillis())
         assertEquals(3, config.responseRun.maxAttempts)
+        assertEquals(2, config.responseRun.workerParallelism)
         assertEquals(30 * 60 * 1_000, config.responseRun.maxDuration.toMillis())
         assertEquals(false, config.devLoginEnabled)
         assertNull(config.devLoginEmail)
@@ -48,6 +50,7 @@ class BackendRuntimeConfigTest {
                 "RESPONSE_RUN_HEARTBEAT_INTERVAL_MS" to "1000",
                 "RESPONSE_RUN_RETRY_BACKOFF_MS" to "750",
                 "RESPONSE_RUN_MAX_ATTEMPTS" to "4",
+                "RESPONSE_RUN_WORKER_PARALLELISM" to "3",
                 "RESPONSE_RUN_MAX_DURATION_MS" to "60000",
             ),
         )
@@ -58,6 +61,7 @@ class BackendRuntimeConfigTest {
         assertEquals(1_000, config.responseRun.heartbeatInterval.toMillis())
         assertEquals(750, config.responseRun.retryBackoff.toMillis())
         assertEquals(4, config.responseRun.maxAttempts)
+        assertEquals(3, config.responseRun.workerParallelism)
         assertEquals(60_000, config.responseRun.maxDuration.toMillis())
 
         assertFailsWith<IllegalArgumentException> {
@@ -70,6 +74,9 @@ class BackendRuntimeConfigTest {
         }
         assertFailsWith<IllegalArgumentException> {
             BackendRuntimeConfig.fromEnvironment(baseEnvironment() + mapOf("RESPONSE_RUN_MAX_ATTEMPTS" to "0"))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            BackendRuntimeConfig.fromEnvironment(baseEnvironment() + mapOf("RESPONSE_RUN_WORKER_PARALLELISM" to "0"))
         }
     }
 
@@ -192,6 +199,9 @@ class BackendRuntimeConfigTest {
         assertFailsWith<IllegalStateException> {
             BackendRuntimeConfig.fromEnvironment(baseEnvironment() + mapOf("APP_ENV" to "qa"))
         }
+        assertFailsWith<IllegalStateException> {
+            BackendRuntimeConfig.fromEnvironment(baseEnvironment() + mapOf("LOG_LEVEL" to "verbose"))
+        }
     }
 
     @Test
@@ -297,6 +307,98 @@ class BackendRuntimeConfigTest {
         }
     }
 
+    @Test
+    fun `present blank typed settings are rejected instead of silently using defaults`() {
+        listOf(
+            "ORBIT_DEV_LOGIN_ENABLED",
+            "AI_REQUEST_TIMEOUT_MS",
+            "AI_ENABLE_THINKING",
+            "ORBIT_OPPORTUNITY_SOURCE_MODE",
+            "EXTERNAL_SOURCE_REQUEST_TIMEOUT_MS",
+            "RESPONSE_RUN_WORKER_ENABLED",
+            "RESPONSE_RUN_POLL_INTERVAL_MS",
+            "RESPONSE_RUN_LEASE_DURATION_MS",
+            "RESPONSE_RUN_HEARTBEAT_INTERVAL_MS",
+            "RESPONSE_RUN_RETRY_BACKOFF_MS",
+            "RESPONSE_RUN_MAX_ATTEMPTS",
+            "RESPONSE_RUN_WORKER_PARALLELISM",
+            "RESPONSE_RUN_MAX_DURATION_MS",
+            "APP_ENV",
+            "LOG_LEVEL",
+            "LOG_FORMAT",
+        ).forEach { name ->
+            val environment = if (name == "AI_ENABLE_THINKING" || name == "AI_REQUEST_TIMEOUT_MS") {
+                baseAiEnvironment()
+            } else {
+                baseEnvironment()
+            }
+            assertFailsWith<IllegalArgumentException>(message = "$name should reject blank values") {
+                BackendRuntimeConfig.fromEnvironment(environment + mapOf(name to ""))
+            }
+        }
+    }
+
+    @Test
+    fun `numeric settings fail with keyed diagnostics`() {
+        listOf(
+            "AUTH_ACCESS_TTL_SECONDS",
+            "AUTH_REFRESH_TTL_DAYS",
+            "AI_REQUEST_TIMEOUT_MS",
+            "EXTERNAL_SOURCE_REQUEST_TIMEOUT_MS",
+            "RESPONSE_RUN_POLL_INTERVAL_MS",
+            "RESPONSE_RUN_MAX_ATTEMPTS",
+        ).forEach { name ->
+            val environment = if (name == "AI_REQUEST_TIMEOUT_MS") {
+                baseAiEnvironment()
+            } else {
+                baseEnvironment()
+            }
+            val failure = assertFailsWith<IllegalStateException>(message = "$name should name the invalid numeric key") {
+                BackendRuntimeConfig.fromEnvironment(environment + mapOf(name to "not-a-number"))
+            }
+
+            assertTrue(failure.message?.contains(name) == true)
+        }
+    }
+
+    @Test
+    fun `present invalid typed booleans are rejected`() {
+        assertFailsWith<IllegalStateException> {
+            BackendRuntimeConfig.fromEnvironment(baseEnvironment() + mapOf("ORBIT_DEV_LOGIN_ENABLED" to "yes"))
+        }
+        assertFailsWith<IllegalStateException> {
+            BackendRuntimeConfig.fromEnvironment(baseEnvironment() + mapOf("RESPONSE_RUN_WORKER_ENABLED" to "yes"))
+        }
+    }
+
+    @Test
+    fun `dev login credentials are required only when dev login is enabled`() {
+        val disabled = BackendRuntimeConfig.fromEnvironment(
+            baseEnvironment() + mapOf("ORBIT_DEV_LOGIN_ENABLED" to "false"),
+        )
+
+        assertEquals(false, disabled.devLoginEnabled)
+        assertNull(disabled.devLoginEmail)
+        assertNull(disabled.devLoginPassword)
+
+        assertFailsWith<IllegalArgumentException> {
+            BackendRuntimeConfig.fromEnvironment(
+                baseEnvironment() + mapOf(
+                    "ORBIT_DEV_LOGIN_ENABLED" to "true",
+                    "ORBIT_DEV_LOGIN_EMAIL" to "dev@nexusflow.local",
+                ),
+            )
+        }
+        assertFailsWith<IllegalArgumentException> {
+            BackendRuntimeConfig.fromEnvironment(
+                baseEnvironment() + mapOf(
+                    "ORBIT_DEV_LOGIN_ENABLED" to "true",
+                    "ORBIT_DEV_LOGIN_PASSWORD" to "devpass",
+                ),
+            )
+        }
+    }
+
     private fun baseEnvironment(): Map<String, String> =
         mapOf(
             "DATABASE_URL" to "jdbc:postgresql://localhost:5432/nexusflow",
@@ -311,4 +413,13 @@ class BackendRuntimeConfigTest {
             "AUTH_ACCESS_TTL_SECONDS" to "900",
             "AUTH_REFRESH_TTL_DAYS" to "30",
         )
+
+    private fun baseAiEnvironment(): Map<String, String> =
+        baseEnvironment() +
+            mapOf(
+                "AI_PROVIDER" to "qwen",
+                "AI_API_KEY" to "test-ai-key",
+                "AI_BASE_URL" to "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "AI_MODEL" to "qwen3.8-flash",
+            )
 }

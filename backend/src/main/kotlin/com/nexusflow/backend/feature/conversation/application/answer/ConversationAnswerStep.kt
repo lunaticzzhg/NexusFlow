@@ -42,7 +42,8 @@ internal class ConversationAnswerStep(
             }
         } catch (error: CancellationException) {
             throw error
-        } catch (_: InvalidCapabilityResultException) {
+        } catch (error: InvalidCapabilityResultException) {
+            if (usesStreamingAnswerer) throw error
             return ConversationAnswerStepResult.InvalidAiResult
         } catch (error: AiCapabilityException) {
             if (usesStreamingAnswerer) throw error

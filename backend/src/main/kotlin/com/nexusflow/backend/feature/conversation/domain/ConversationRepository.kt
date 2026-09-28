@@ -32,6 +32,7 @@ data class CreateConversationCommand(
     val now: Instant,
     val responseRunId: ResponseRunId = ResponseRunId(UUID.randomUUID()),
     val responseDeadlineAt: Instant = now.plusSeconds(DEFAULT_RESPONSE_RUN_DEADLINE_SECONDS),
+    val timeZoneId: String = "UTC",
     val originTraceId: String? = null,
 )
 
@@ -58,6 +59,7 @@ data class AppendConversationUserMessageCommand(
     val now: Instant,
     val responseRunId: ResponseRunId = ResponseRunId(UUID.randomUUID()),
     val responseDeadlineAt: Instant = now.plusSeconds(DEFAULT_RESPONSE_RUN_DEADLINE_SECONDS),
+    val timeZoneId: String = "UTC",
     val originTraceId: String? = null,
 )
 

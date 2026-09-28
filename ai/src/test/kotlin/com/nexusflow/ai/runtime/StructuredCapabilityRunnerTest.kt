@@ -2,12 +2,14 @@ package com.nexusflow.ai.runtime
 
 import com.nexusflow.ai.provider.InvalidStructuredOutputException
 import com.nexusflow.ai.provider.ProviderRateLimitedException
+import com.nexusflow.ai.provider.ProviderRequestException
 import com.nexusflow.ai.provider.StructuredModelProvider
 import com.nexusflow.ai.provider.StructuredModelRequest
 import com.nexusflow.ai.provider.StructuredModelRequestMetadata
 import com.nexusflow.ai.provider.StructuredModelResult
 import com.nexusflow.ai.provider.StructuredModelResultMetadata
 import com.nexusflow.ai.provider.StructuredOutputSchema
+import com.nexusflow.contracts.backendai.common.CapabilityProviderRequestException
 import com.nexusflow.contracts.backendai.common.CapabilityRateLimitedException
 import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
 import com.nexusflow.contracts.backendai.common.StructuredModelCapability
@@ -80,6 +82,22 @@ class StructuredCapabilityRunnerTest {
             val runner = StructuredCapabilityRunner(provider)
 
             assertFailsWith<CapabilityRateLimitedException> {
+                runner.execute(
+                    operation = operation(providerInvalidOutputFailureStage = "provider_invalid"),
+                    request = ::request,
+                    decode = { "unused" },
+                )
+            }
+            assertEquals(1, provider.requests.size)
+        }
+
+    @Test
+    fun `maps deterministic provider request failure without repair retry`() =
+        runBlocking {
+            val provider = FailingProvider(ProviderRequestException())
+            val runner = StructuredCapabilityRunner(provider)
+
+            assertFailsWith<CapabilityProviderRequestException> {
                 runner.execute(
                     operation = operation(providerInvalidOutputFailureStage = "provider_invalid"),
                     request = ::request,

@@ -17,6 +17,7 @@ Skill 负责工作流与专题步骤，不复制、绕开或弱化 authority 文
 ## 2. Skill Routing
 
 - 开始需求开发、复杂 review、结构性重构或执行 Work Order 前，先读 `.agents/skills/INDEX.md`。
+- 用户要求先看/确认架构再倒推方案时，使用 `nexusflow-architecture-first-delivery` 先交付简明 Architecture Brief；独立架构决策仍遵守下述 External Architect Gate。
 - 新页面、功能、API 接入、bug fix、状态流、序列化、依赖注入、Compose UI、Backend 行为、Contracts 变更、AI/planning 边界或其它用户可见产品行为修改，使用 `nexusflow-feature-development`，并按 touched scope 读取对应 architecture authority。
 - 用户明确要求将 NexusFlow 任务交给另一个 AI，或某个 workflow 需要独立 AI judgment 时，使用 `nexusflow-ai-handoff` 生成通用项目上下文与 Task Contract bundle。Handoff 只传输 context 和 intent，不预设 plan/review/code/docs/Work Order。
 - cross-owner architecture、owner/lifecycle 不清、durable workflow/state machine、复杂 recovery/duplicate/late-result 或 Human Traceability 结构决策，仍需独立 architecture decision。使用 `nexusflow-ai-handoff` 时将 Task Contract 明确为 `Receiver Role: External Architect`、`Requested Action: reconstruct the real flow and make architecture / ownership / lifecycle decisions`、`Expected Deliverable: self-contained WORK_ORDER.md`；拿到自包含 Work Order 后，再使用 `orbit-work-order-executor` 执行。

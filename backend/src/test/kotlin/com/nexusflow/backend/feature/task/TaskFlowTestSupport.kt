@@ -21,6 +21,11 @@ import com.nexusflow.contracts.backendai.answer.ComposeConversationAnswerResult
 import com.nexusflow.contracts.backendai.answer.ConversationAnsweringCapability
 import com.nexusflow.contracts.backendai.answer.StreamingConversationAnsweringCapability
 import com.nexusflow.contracts.backendai.conversation.ConversationDecisionCapability
+import com.nexusflow.contracts.backendai.conversation.ConversationMessagePayload
+import com.nexusflow.contracts.backendai.conversation.ConversationTurnCapability
+import com.nexusflow.contracts.backendai.conversation.ConversationTurnMetadata
+import com.nexusflow.contracts.backendai.conversation.ConversationTurnRequest
+import com.nexusflow.contracts.backendai.conversation.ConversationTurnResult
 import com.nexusflow.contracts.backendai.conversation.ConversationDecisionRequest
 import com.nexusflow.contracts.backendai.conversation.ConversationDecisionResult
 import com.nexusflow.contracts.backendai.conversation.InformationNeedMode
@@ -175,7 +180,6 @@ internal fun createTaskServices(
         planExplainer = planExplainer,
         clock = clock,
         uuidFactory = planIds::next,
-        timeZoneId = "Asia/Shanghai",
         logger = logger,
     )
     val taskService = TaskService(
@@ -188,13 +192,14 @@ internal fun createTaskServices(
 
 internal fun createConversationServices(
     dataSource: DataSource,
-    understanding: UserMessageUnderstanding?,
+    understanding: UserMessageUnderstanding? = null,
     planningResearch: PlanningResearchCapability = RecordingPlanningResearch(),
     readToolCatalog: ReadToolCatalog = defaultPlanningReadToolCatalog(),
     readToolExecutor: ReadToolExecutor = ReadToolExecutor(readToolCatalog),
     planComposer: RecordingPlanComposer = RecordingPlanComposer(),
     planExplainer: RecordingPlanExplainer = RecordingPlanExplainer(),
     conversationAnswerService: ConversationAnswerService? = null,
+    conversationTurn: ConversationTurnCapability? = understanding?.let(::UnderstandingBackedConversationTurn),
     taskIds: UuidSequence = UuidSequence(),
     planIds: UuidSequence = UuidSequence(500),
     clock: Clock = TaskFlowIds.FixedClock,
@@ -214,7 +219,6 @@ internal fun createConversationServices(
         planExplainer = planExplainer,
         clock = clock,
         uuidFactory = planIds::next,
-        timeZoneId = "Asia/Shanghai",
         logger = logger,
     )
     val conversationService = ConversationService(
@@ -222,7 +226,6 @@ internal fun createConversationServices(
         conversationTurnStartCommitter = conversationTurnStartCommitter,
         taskRepository = repository,
         planningService = planningService,
-        understanding = understanding,
         conversationAnswerService = conversationAnswerService,
         clock = clock,
         uuidFactory = taskIds::next,
@@ -234,12 +237,11 @@ internal fun createConversationServices(
         processor = ConversationTurnProcessor(
             conversationRepository = conversationRepository,
             taskRepository = repository,
-            understanding = understanding,
             conversationAnswerService = conversationAnswerService,
+            conversationTurn = conversationTurn,
             planningService = planningService,
             clock = clock,
             uuidFactory = taskIds::next,
-            timeZoneId = "Asia/Shanghai",
         ),
         resultConsumer = ResponseRunResultConsumer(JdbcConversationAnswerCommitter(dataSource), repository, clock),
         config = ResponseRunWorkerConfig(
@@ -290,6 +292,103 @@ internal class ScriptedUnderstanding(
         return steps[index](context)
     }
 }
+
+
+
+internal class ScriptedConversationTurn(
+    private vararg val steps: suspend (ConversationTurnRequest, suspend (String) -> Unit) -> ConversationTurnResult,
+) : ConversationTurnCapability {
+    val requests = mutableListOf<ConversationTurnRequest>()
+
+    override suspend fun execute(
+        request: ConversationTurnRequest,
+        onAnswerDelta: suspend (String) -> Unit,
+    ): ConversationTurnResult {
+        requests += request
+        val index = requests.lastIndex.coerceAtMost(steps.lastIndex)
+        return steps[index](request, onAnswerDelta)
+    }
+}
+
+internal class UnderstandingBackedConversationTurn(
+    private val understanding: UserMessageUnderstanding,
+) : ConversationTurnCapability {
+    override suspend fun execute(
+        request: ConversationTurnRequest,
+        onAnswerDelta: suspend (String) -> Unit,
+    ): ConversationTurnResult {
+        val result = understanding.understand(
+            UnderstandMessageRequest(
+                aiRequestId = request.aiRequestId,
+                currentMessage = request.currentMessage,
+                referenceTime = request.referenceTime,
+                timeZoneId = request.timeZoneId,
+                activePlanning = request.activePlanning,
+                optionalContext = request.optionalContext,
+                diagnostics = request.diagnostics,
+            ),
+        )
+        return when (result.turnIntent) {
+            TurnIntent.Planning -> ConversationTurnResult.Planning(
+                planningGoalPatch = result.planningGoalPatch,
+                constraintDeltas = result.constraintDeltas,
+                clarification = result.clarification,
+                contextSelection = result.contextSelection,
+                metadata = ConversationTurnMetadata(
+                    provider = result.metadata.provider,
+                    model = result.metadata.model,
+                    promptVersion = result.metadata.promptVersion,
+                    providerRequestId = result.metadata.providerRequestId,
+                    attemptCount = result.metadata.attemptCount,
+                    usage = result.metadata.usage,
+                    diagnostics = result.metadata.diagnostics,
+                ),
+            )
+            TurnIntent.Conversation -> ConversationTurnResult.Answer(
+                answer = "Test conversation answer",
+                metadata = ConversationTurnMetadata(
+                    provider = result.metadata.provider,
+                    model = result.metadata.model,
+                    promptVersion = result.metadata.promptVersion,
+                    providerRequestId = result.metadata.providerRequestId,
+                    attemptCount = result.metadata.attemptCount,
+                    usage = result.metadata.usage,
+                    diagnostics = result.metadata.diagnostics,
+                ),
+            )
+        }
+    }
+}
+
+internal fun answerTurn(answer: String): ConversationTurnCapability =
+    ScriptedConversationTurn({ _: ConversationTurnRequest, onAnswerDelta: suspend (String) -> Unit ->
+        onAnswerDelta(answer)
+        ConversationTurnResult.Answer(answer)
+    })
+
+internal fun researchTurn(vararg needs: InformationNeedProposal): ConversationTurnCapability =
+    ScriptedConversationTurn({ _: ConversationTurnRequest, _: suspend (String) -> Unit ->
+        ConversationTurnResult.Research(needs.toList())
+    })
+
+internal fun planningTurn(result: UnderstandMessageResult): ConversationTurnCapability =
+    ScriptedConversationTurn({ _: ConversationTurnRequest, _: suspend (String) -> Unit ->
+        ConversationTurnResult.Planning(
+            planningGoalPatch = result.planningGoalPatch,
+            constraintDeltas = result.constraintDeltas,
+            clarification = result.clarification,
+            contextSelection = result.contextSelection,
+            metadata = ConversationTurnMetadata(
+                provider = result.metadata.provider,
+                model = result.metadata.model,
+                promptVersion = result.metadata.promptVersion,
+                providerRequestId = result.metadata.providerRequestId,
+                attemptCount = result.metadata.attemptCount,
+                usage = result.metadata.usage,
+                diagnostics = result.metadata.diagnostics,
+            ),
+        )
+    })
 
 internal class RecordingConversationDecision(
     private vararg val steps: suspend (ConversationDecisionRequest) -> ConversationDecisionResult,
@@ -370,7 +469,6 @@ internal fun conversationAnswerService(
     logger: StructuredLogger? = null,
 ): ConversationAnswerService =
     ConversationAnswerService(
-        conversationDecision = decision,
         conversationAnswering = answering,
         streamingConversationAnswering = streamingAnswering,
         readToolCatalog = catalog,
