@@ -17,6 +17,7 @@ import com.nexusflow.backend.core.config.TicketmasterRuntimeConfig
 import com.nexusflow.backend.core.config.TmdbRuntimeConfig
 import com.nexusflow.backend.core.config.TrailSplitsRuntimeConfig
 import com.nexusflow.backend.core.external.ExternalSourceHttpClient
+import com.nexusflow.backend.core.external.hasPublicSourceContact
 import com.nexusflow.backend.core.external.SourceCacheStore
 import com.nexusflow.backend.feature.research.application.ReadTool
 import com.nexusflow.backend.feature.research.application.ReadToolCatalog
@@ -184,6 +185,8 @@ internal fun readToolCatalogForExternalSources(
         fields = logFields {
             "tool_count" value definitions.size
             "available_tool_keys" value definitions.joinToString(",") { definition -> definition.key.value }
+            "disabled_public_sources" value if (config.externalSources.userAgent.hasPublicSourceContact()) "" else "musicbrainz,nominatim,met-no"
+            "disabled_reason" value if (config.externalSources.userAgent.hasPublicSourceContact()) null else "contact_user_agent_required"
         },
     )
     return catalog

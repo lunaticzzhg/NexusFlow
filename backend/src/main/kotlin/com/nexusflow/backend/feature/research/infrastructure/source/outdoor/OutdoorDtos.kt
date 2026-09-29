@@ -27,19 +27,27 @@ internal data class OverpassCenterDto(
 
 @Serializable
 internal data class TrailSplitsTrailSearchResponse(
-    val trails: List<TrailSplitsTrailDto> = emptyList(),
+    val features: List<TrailSplitsTrailDto>?,
 )
 
 @Serializable
 internal data class TrailSplitsTrailDto(
-    val id: String? = null,
+    val properties: TrailSplitsTrailPropertiesDto? = null,
+    val geometry: TrailSplitsGeometryDto? = null,
+)
+
+@Serializable
+internal data class TrailSplitsTrailPropertiesDto(
+    @SerialName("osm_relation_id") val osmRelationId: Long? = null,
     val name: String? = null,
-    val type: String? = null,
-    val distanceMeters: Int? = null,
-    val elevationGainMeters: Int? = null,
-    val latitude: Double? = null,
-    val longitude: Double? = null,
-    val url: String? = null,
+    @SerialName("route_type") val routeType: String? = null,
+    @SerialName("distance_m") val distanceMeters: Double? = null,
+    @SerialName("distance_km") val distanceKilometers: Double? = null,
+)
+
+@Serializable
+internal data class TrailSplitsGeometryDto(
+    val coordinates: List<Double> = emptyList(),
 )
 
 @Serializable
@@ -78,17 +86,12 @@ internal data class NominatimPlaceDto(
 )
 
 @Serializable
-internal data class RouteFeatureCollectionDto(
-    val features: List<RouteFeatureDto> = emptyList(),
+internal data class OpenRouteServiceRouteResponse(
+    val routes: List<OpenRouteServiceRouteDto>?,
 )
 
 @Serializable
-internal data class RouteFeatureDto(
-    val properties: RoutePropertiesDto? = null,
-)
-
-@Serializable
-internal data class RoutePropertiesDto(
+internal data class OpenRouteServiceRouteDto(
     val summary: RouteSummaryDto? = null,
 )
 
@@ -100,13 +103,13 @@ internal data class RouteSummaryDto(
 
 @Serializable
 internal data class TrailSplitsRouteResponse(
-    val routes: List<TrailSplitsRouteDto> = emptyList(),
+    val routes: List<TrailSplitsRouteDto>?,
 )
 
 @Serializable
 internal data class TrailSplitsRouteDto(
-    val distanceMeters: Int? = null,
-    val durationSeconds: Int? = null,
+    val distance: Double? = null,
+    val duration: Double? = null,
 )
 
 @Serializable

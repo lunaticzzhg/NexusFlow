@@ -8,6 +8,8 @@ import com.nexusflow.backend.core.config.OverpassRuntimeConfig
 import com.nexusflow.backend.core.config.TrailSplitsRuntimeConfig
 import com.nexusflow.backend.core.external.ExternalSourceHttpClient
 import com.nexusflow.backend.core.external.ExternalSourceInvalidPayloadException
+import com.nexusflow.backend.core.external.ExternalSourcePolicyRateLimitedException
+import com.nexusflow.backend.core.external.ExternalSourceDisabledException
 import com.nexusflow.backend.core.external.ExternalSourceRateLimitedException
 import com.nexusflow.backend.core.external.ExternalSourceUnauthorizedException
 import com.nexusflow.backend.core.external.ExternalSourceUnavailableException
@@ -19,6 +21,10 @@ import com.nexusflow.backend.feature.task.domain.source.PlaceLookupQuery
 import com.nexusflow.backend.feature.task.domain.source.RouteQuery
 import com.nexusflow.backend.feature.task.domain.source.TrailDiscoveryQuery
 import com.nexusflow.backend.feature.task.domain.source.WeatherQuery
+import com.nexusflow.backend.feature.research.application.source.OutdoorAcquirer
+import com.nexusflow.observability.LogFields
+import com.nexusflow.observability.LogLevel
+import com.nexusflow.observability.StructuredLogger
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
@@ -28,6 +34,7 @@ import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headers
+import io.ktor.http.content.TextContent
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -50,6 +57,82 @@ class OutdoorSourceTest {
     private val placeQuery = PlaceLookupQuery(text = "Dragon Back", near = "Hong Kong")
     private val routeQuery = RouteQuery(destination = GeoPoint(22.236, 114.242), origin = GeoPoint(22.300, 114.170))
     private val weatherQuery = WeatherQuery(point = GeoPoint(22.236, 114.242))
+
+    @Test
+    fun `200 text payload is invalid and exposes only safe response metadata`() = runBlocking {
+        val logFields = mutableListOf<LogFields>()
+        val logger = object : StructuredLogger {
+            override fun log(level: LogLevel, component: String, event: String, fields: LogFields, cause: Throwable?) {
+                if (event == "source_acquisition_failed") logFields += fields
+            }
+        }
+        val failure = assertFailsWith<ExternalSourceInvalidPayloadException> {
+            TrailSplitsTrailSource(
+                http = ExternalSourceHttpClient(testHttpClient(MockEngine {
+                    respond("SECRET_RESPONSE_BODY", headers = headers { append(HttpHeaders.ContentType, "text/plain") })
+                })),
+                config = TrailSplitsRuntimeConfig(baseUrl = "https://trailsplits.test"),
+                logger = logger,
+            ).search(trailQuery.copy(keyword = "SECRET_QUERY"))
+        }
+        assertEquals(200, failure.httpStatus)
+        assertEquals("text/plain", failure.contentType)
+        assertEquals("invalid_payload", failure.failureCategory)
+        assertEquals("200", logFields.single().values["http_status"])
+        assertEquals("text/plain", logFields.single().values["content_type"])
+        assertFalse(logFields.single().values.toString().contains("SECRET"))
+    }
+
+    @Test
+    fun `bad primary content type falls through to TrailSplits evidence`() = runBlocking {
+        val acquirer = OutdoorAcquirer(
+            trailPrimary = overpassSource(MockEngine {
+                respond("provider error", headers = headers { append(HttpHeaders.ContentType, "text/plain") })
+            }),
+            trailSecondary = trailSplitsTrailSource(MockEngine { respondJson(trailSplitsTrailPayload("safe")) }),
+            placePrimary = null,
+            placeSecondary = null,
+            routePrimary = null,
+            routeSecondary = null,
+            weatherPrimary = null,
+            weatherSecondary = null,
+            webDiscoverySource = null,
+        )
+        val opportunities = acquirer.acquire(trailQuery, now)
+        assertEquals("Dragon Back Trail", opportunities.single().title)
+        assertEquals("trailsplits", opportunities.single().sources.single().sourceId)
+    }
+
+    @Test
+    fun `Nominatim local admission and contact policy prevent extra requests`() = runBlocking {
+        var requestCount = 0
+        val http = ExternalSourceHttpClient(
+            testHttpClient(MockEngine { requestCount++; respondJson(nominatimPayload("safe")) }),
+            "NexusFlow Test/1.0 (test@example.com)",
+        )
+        val source = NominatimPlaceSource(http, NominatimRuntimeConfig(baseUrl = "https://nominatim.test"))
+        source.find(placeQuery)
+        assertFailsWith<ExternalSourcePolicyRateLimitedException> { source.find(placeQuery.copy(text = "New place")) }
+        assertEquals(1, requestCount)
+
+        val disabled = NominatimPlaceSource(
+            ExternalSourceHttpClient(testHttpClient(MockEngine { requestCount++; respondJson(nominatimPayload("safe")) })),
+            NominatimRuntimeConfig(baseUrl = "https://nominatim.test"),
+        )
+        assertFailsWith<ExternalSourceDisabledException> { disabled.find(placeQuery) }
+        assertEquals(1, requestCount)
+    }
+
+    @Test
+    fun `MET coordinates are truncated to four fractional digits`() = runBlocking {
+        val source = metNoSource(MockEngine { request ->
+            assertEquals("22.2367", request.url.parameters["lat"])
+            assertEquals("-114.2429", request.url.parameters["lon"])
+            respondJson(metNoPayload("safe"))
+        })
+        source.forecast(WeatherQuery(GeoPoint(22.236789, -114.242987)))
+        Unit
+    }
 
     @Test
     fun `Overpass projects valid payload and separates empty status and invalid outcomes`() = runBlocking {
@@ -112,25 +195,35 @@ class OutdoorSourceTest {
     @Test
     fun `TrailSplits trail source projects valid payload and separates empty status and invalid outcomes`() = runBlocking {
         val source = trailSplitsTrailSource(MockEngine { request ->
-            assertEquals("/v1/trails/search", request.url.encodedPath)
+            assertEquals("/trails/v1/search", request.url.encodedPath)
             assertEquals("Dragon Back", request.url.parameters["q"])
+            assertEquals("hiking", request.url.parameters["type"])
+            assertNull(request.url.parameters["near"])
             respondJson(trailSplitsTrailPayload(rawMarker = "RAW_TRAILSPLITS_TRAIL_SHOULD_NOT_CACHE"))
         })
 
         val candidates = source.search(trailQuery)
 
-        assertEquals("trail-1001", candidates.single().externalTrailId)
+        assertEquals("1001", candidates.single().externalTrailId)
         assertEquals("Dragon Back Trail", candidates.single().name)
+        assertEquals(8_500, candidates.single().distanceMeters)
+        assertEquals(GeoPoint(22.236, 114.242), candidates.single().startLocation)
         assertEquals(SourceAuthority.StructuredSecondary, candidates.single().sources.single().authority)
 
-        assertEquals(emptyList(), trailSplitsTrailSource(MockEngine { respondJson("""{"trails":[]}""") }).search(trailQuery))
+        assertEquals(emptyList(), trailSplitsTrailSource(MockEngine { respondJson("""{"features":[]}""") }).search(trailQuery))
         assertIs<ExternalSourceUnauthorizedException>(trailSplitsTrailFailure(HttpStatusCode.Unauthorized))
         assertIs<ExternalSourceUnauthorizedException>(trailSplitsTrailFailure(HttpStatusCode.Forbidden))
         assertIs<ExternalSourceRateLimitedException>(trailSplitsTrailFailure(HttpStatusCode.TooManyRequests))
         assertIs<ExternalSourceUnavailableException>(trailSplitsTrailFailure(HttpStatusCode.ServiceUnavailable))
         assertFailsWith<ExternalSourceInvalidPayloadException> {
-            trailSplitsTrailSource(MockEngine { respondJson("""{"trails":[{"id":"trail-1001"}]}""") }).search(trailQuery)
+            trailSplitsTrailSource(MockEngine { respondJson("""{"features":[{"properties":{"osm_relation_id":1001}}]}""") }).search(trailQuery)
         }
+        assertEquals(
+            emptyList(),
+            trailSplitsTrailSource(MockEngine {
+                respondJson(trailSplitsTrailPayload("safe").replace("[114.242, 22.236]", "[2.35, 48.86]"))
+            }).search(trailQuery),
+        )
         Unit
     }
 
@@ -177,20 +270,27 @@ class OutdoorSourceTest {
         assertEquals(150, orsFact?.commuteMinutes)
 
         val trailSplits = trailSplitsRouteSource(MockEngine { request ->
-            assertEquals("/v1/routes/hiking", request.url.encodedPath)
+            assertEquals("/route/v1", request.url.encodedPath)
+            assertEquals("POST", request.method.value)
+            val requestJson = (request.body as TextContent).text
+            assertTrue(requestJson.contains("\"costing\":\"pedestrian\""))
+            assertTrue(requestJson.contains("\"lat\":22.3,\"lon\":114.17"))
             respondJson(trailSplitsRoutePayload(rawMarker = "RAW_TRAILSPLITS_ROUTE_SHOULD_NOT_CACHE"))
         })
         val trailSplitsFact = trailSplits.route(routeQuery)
         assertEquals(146, trailSplitsFact?.durationMinutes)
         assertEquals(146, trailSplitsFact?.commuteMinutes)
 
-        assertNull(orsRouteSource(MockEngine { respondJson("""{"features":[]}""") }).route(routeQuery))
+        assertNull(orsRouteSource(MockEngine { respondJson("""{"routes":[]}""") }).route(routeQuery))
         assertNull(trailSplitsRouteSource(MockEngine { respondJson("""{"routes":[]}""") }).route(routeQuery))
         assertIs<ExternalSourceUnauthorizedException>(orsRouteFailure(HttpStatusCode.Unauthorized))
         assertIs<ExternalSourceRateLimitedException>(trailSplitsRouteFailure(HttpStatusCode.TooManyRequests))
         assertIs<ExternalSourceUnavailableException>(orsRouteFailure(HttpStatusCode.ServiceUnavailable))
         assertFailsWith<ExternalSourceInvalidPayloadException> {
-            orsRouteSource(MockEngine { respondJson("""{"features":[{"properties":{"summary":{"distance":"bad"}}}]}""") }).route(routeQuery)
+            orsRouteSource(MockEngine { respondJson("""{"routes":[{"summary":{"distance":"bad"}}]}""") }).route(routeQuery)
+        }
+        assertFailsWith<ExternalSourceInvalidPayloadException> {
+            trailSplitsRouteSource(MockEngine { respondJson("""{"routes":[{"distance":123.0}]}""") }).route(routeQuery)
         }
         Unit
     }
@@ -229,7 +329,7 @@ class OutdoorSourceTest {
 
         val metNo = metNoSource(MockEngine { request ->
             assertEquals("/weatherapi/locationforecast/2.0/compact", request.url.encodedPath)
-            assertEquals("NexusFlow Test/1.0", request.headers[HttpHeaders.UserAgent])
+            assertEquals("NexusFlow Test/1.0 (test@example.com)", request.headers[HttpHeaders.UserAgent])
             respondJson(metNoPayload(rawMarker = "RAW_MET_NO_SHOULD_NOT_CACHE"))
         })
         val metNoFact = metNo.forecast(weatherQuery)
@@ -418,16 +518,12 @@ class OutdoorSourceTest {
     private fun trailSplitsTrailPayload(rawMarker: String): String =
         """
         {
-          "trails": [
+          "type": "FeatureCollection",
+          "features": [
             {
-              "id": "trail-1001",
-              "name": "Dragon Back Trail",
-              "type": "hiking",
-              "distanceMeters": 8500,
-              "elevationGainMeters": 300,
-              "latitude": 22.236,
-              "longitude": 114.242,
-              "url": "https://trailsplits.test/trails/trail-1001",
+              "type": "Feature",
+              "properties": {"osm_relation_id": 1001, "name": "Dragon Back Trail", "route_type": "hiking", "distance_km": 8.5},
+              "geometry": {"type": "Point", "coordinates": [114.242, 22.236]},
               "raw_marker": "$rawMarker"
             }
           ]
@@ -463,25 +559,12 @@ class OutdoorSourceTest {
 
     private fun routePayload(rawMarker: String): String =
         """
-        {
-          "features": [
-            {
-              "properties": {
-                "summary": {"distance": 8500.0, "duration": 9000.0}
-              },
-              "raw_marker": "$rawMarker"
-            }
-          ]
-        }
+        {"routes":[{"summary":{"distance":8500.0,"duration":9000.0},"raw_marker":"$rawMarker"}]}
         """.trimIndent()
 
     private fun trailSplitsRoutePayload(rawMarker: String): String =
         """
-        {
-          "routes": [
-            {"distanceMeters": 8400, "durationSeconds": 8760, "raw_marker": "$rawMarker"}
-          ]
-        }
+        {"routes":[{"distance":8400.0,"duration":8760.0,"raw_marker":"$rawMarker"}]}
         """.trimIndent()
 
     private fun openMeteoPayload(rawMarker: String): String =
@@ -552,7 +635,7 @@ class OutdoorSourceTest {
         cacheStore: SourceCacheStore? = null,
     ): NominatimPlaceSource =
         NominatimPlaceSource(
-            http = ExternalSourceHttpClient(testHttpClient(engine)),
+            http = ExternalSourceHttpClient(testHttpClient(engine), "NexusFlow Test/1.0 (test@example.com)"),
             config = NominatimRuntimeConfig(baseUrl = "https://nominatim.test"),
             cacheStore = cacheStore,
             clock = Clock.fixed(now, ZoneOffset.UTC),
@@ -599,7 +682,7 @@ class OutdoorSourceTest {
         MetNoWeatherSource(
             http = ExternalSourceHttpClient(testHttpClient(engine)),
             config = MetNoRuntimeConfig(baseUrl = "https://met-no.test"),
-            userAgent = "NexusFlow Test/1.0",
+            userAgent = "NexusFlow Test/1.0 (test@example.com)",
             cacheStore = cacheStore,
             clock = clock,
         )

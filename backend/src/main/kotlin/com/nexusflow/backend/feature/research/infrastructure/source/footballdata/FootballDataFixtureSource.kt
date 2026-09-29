@@ -18,7 +18,7 @@ import com.nexusflow.backend.feature.task.domain.source.FootballFixtureQuery
 import com.nexusflow.backend.feature.task.domain.source.FootballFixtureSource
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
-import io.ktor.client.call.body
+import com.nexusflow.backend.core.external.externalBody
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -49,7 +49,7 @@ class FootballDataFixtureSource(
             return cached
         }
 
-        val candidates = executeExternalSourceRequest(PROVIDER, "search") {
+        val candidates = executeExternalSourceRequest(logger, PROVIDER, "search") {
             val response = http.client.get("${config.baseUrl.trimEnd('/')}/matches") {
                 header("X-Auth-Token", config.apiToken)
                 query.dateFrom?.let { parameter("dateFrom", it.toString()) }
@@ -57,7 +57,7 @@ class FootballDataFixtureSource(
                 query.league?.toFootballDataCompetitionCode()?.let { parameter("competitions", it) }
             }
             response.rejectKnownExternalSourceStatus(PROVIDER, "search")
-            val body = response.body<FootballDataMatchesResponse>()
+            val body = response.externalBody<FootballDataMatchesResponse>()
             val observedAt = clock.instant()
             val matches = body.matches ?: throw IllegalArgumentException("football-data matches missing")
             matches.map { it.toFootballFixtureCandidate(observedAt) }

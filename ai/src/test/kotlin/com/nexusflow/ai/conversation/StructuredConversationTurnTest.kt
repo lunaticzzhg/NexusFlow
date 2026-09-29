@@ -40,6 +40,18 @@ import kotlin.test.assertIs
 
 class StructuredConversationTurnTest {
     @Test
+    fun `invalid first candidate receives one correction then returns direct answer`() = runBlocking {
+        val provider = RecordingTurnProvider { request, _ ->
+            TurnModelResult.Text(if (request.metadata.attemptNumber == 1) " " else "A reliable answer", metadata())
+        }
+
+        val answer = assertIs<ConversationTurnResult.Answer>(StructuredConversationTurn(provider).execute(request()) {})
+
+        assertEquals("A reliable answer", answer.answer)
+        assertEquals(listOf(1, 2), provider.requests.map { it.metadata.attemptNumber })
+    }
+
+    @Test
     fun `direct text result streams deltas and returns matching final answer`() = runBlocking {
         val provider = RecordingTurnProvider { _, onDelta ->
             onDelta("Hello")
@@ -55,7 +67,7 @@ class StructuredConversationTurnTest {
         assertEquals("Hello, Shanghai", answer.answer)
         assertEquals(answer.answer, deltas.joinToString(separator = ""))
         assertEquals("test-provider", answer.metadata.provider)
-        assertEquals("conversation-turn-v1", answer.metadata.promptVersion)
+        assertEquals("conversation-turn-v2", answer.metadata.promptVersion)
         assertEquals(1, provider.requests.size)
         assertEquals(StructuredModelCapability.ConversationTurn, provider.requests.single().metadata.capability)
     }
@@ -118,7 +130,7 @@ class StructuredConversationTurnTest {
         val result = assertIs<ConversationTurnResult.Research>(turn.execute(request()) {})
 
         val need = result.informationNeeds.first()
-        assertEquals("need-weather", need.id)
+        assertEquals("need-1", need.id)
         assertEquals(InformationNeedMode.TOOL_REQUIRED, need.mode)
         assertEquals("weather.forecast", need.toolCalls.single().toolKey)
         assertEquals(InformationNeedMode.MODEL_ONLY, result.informationNeeds[1].mode)
@@ -133,19 +145,7 @@ class StructuredConversationTurnTest {
                 researchNeed("need-b", "Check B", arguments = """{"city":"B"}"""),
             ),
             researchPayload(
-                researchNeed("same", "Check A", mode = "model_only", toolKey = null),
-                researchNeed("same", "Check B", mode = "model_only", toolKey = null),
-            ),
-            researchPayload(
                 researchNeed("need-weather", "Check weather", mode = "model_only"),
-            ),
-            researchPayload(
-                researchNeed(
-                    id = "need-weather",
-                    question = "Check weather",
-                    mode = "tool_required",
-                    toolKey = null,
-                ),
             ),
         )
 
@@ -156,9 +156,8 @@ class StructuredConversationTurnTest {
                 },
             )
 
-            assertFailsWith<InvalidCapabilityResultException> {
-                turn.execute(request(maxReadToolCalls = 1)) {}
-            }
+            val recovered = assertIs<ConversationTurnResult.Research>(turn.execute(request(maxReadToolCalls = 1)) {})
+            assertEquals(emptyList(), recovered.informationNeeds.flatMap { it.toolCalls })
         }
     }
 
@@ -241,6 +240,25 @@ class StructuredConversationTurnTest {
     }
 
     @Test
+    fun `malformed planning date receives one correction and remains invalid`() = runBlocking {
+        val payload = planningPayload(
+            constraintDeltas = """
+                [{"operation":"upsert","kind":"time_window","value":{"type":"time_window","startAt":"bad-date","endAt":null,"timeZoneId":"Asia/Shanghai"},"strength":"must","evidenceText":"今晚"}]
+            """.trimIndent(),
+        )
+        val provider = RecordingTurnProvider { _, _ ->
+            TurnModelResult.ToolCall(name = "planning", argumentsJson = payload, metadata = metadata())
+        }
+
+        val error = assertFailsWith<InvalidCapabilityResultException> {
+            StructuredConversationTurn(provider).execute(request(currentMessage = "今晚看电影")) {}
+        }
+
+        assertEquals("invalid_planning_time", error.failureStage)
+        assertEquals(listOf(1, 2), provider.requests.map { it.metadata.attemptNumber })
+    }
+
+    @Test
     fun `provider dependency structured output and cancellation map to capability outcomes`() = runBlocking {
         assertFailsWith<CapabilityProviderRequestException> {
             StructuredConversationTurn(ThrowingTurnProvider(ProviderRequestException())).execute(request()) {}
@@ -248,11 +266,12 @@ class StructuredConversationTurnTest {
         assertFailsWith<CapabilityTimeoutException> {
             StructuredConversationTurn(ThrowingTurnProvider(ProviderTimeoutException())).execute(request()) {}
         }
-        assertFailsWith<InvalidCapabilityResultException> {
+        val providerError = assertFailsWith<InvalidCapabilityResultException> {
             StructuredConversationTurn(
-                ThrowingTurnProvider(InvalidStructuredOutputException("bad turn")),
+                ThrowingTurnProvider(InvalidStructuredOutputException("bad turn", failureStage = "invalid_stream_json")),
             ).execute(request()) {}
         }
+        assertEquals("invalid_stream_json", providerError.failureStage)
         assertFailsWith<CancellationException> {
             StructuredConversationTurn(ThrowingTurnProvider(CancellationException("cancelled"))).execute(request()) {}
         }
@@ -267,9 +286,10 @@ class StructuredConversationTurnTest {
             },
         )
 
-        assertFailsWith<InvalidCapabilityResultException> {
+        val error = assertFailsWith<InvalidCapabilityResultException> {
             turn.execute(request()) {}
         }
+        assertEquals("unknown_turn_operation", error.failureStage)
         Unit
     }
 
@@ -311,7 +331,6 @@ class StructuredConversationTurnTest {
         val toolCalls = toolKey?.let { """[{"toolKey":"$it","arguments":$arguments}]""" } ?: "[]"
         return """
             {
-              "id":"$id",
               "question":"$question",
               "mode":"$mode",
               "toolCalls":$toolCalls

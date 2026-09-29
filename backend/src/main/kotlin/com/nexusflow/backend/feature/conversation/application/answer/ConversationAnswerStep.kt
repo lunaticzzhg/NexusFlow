@@ -31,7 +31,6 @@ internal class ConversationAnswerStep(
         research: List<NeedResearch>,
     ): ConversationAnswerStepResult {
         val answerRequest = request.toAnswerRequest(needs, research)
-        val usesStreamingAnswerer = streamingConversationAnswering != null
         val answer = try {
             when (val streamingAnswerer = streamingConversationAnswering) {
                 null -> {
@@ -43,11 +42,9 @@ internal class ConversationAnswerStep(
         } catch (error: CancellationException) {
             throw error
         } catch (error: InvalidCapabilityResultException) {
-            if (usesStreamingAnswerer) throw error
             return ConversationAnswerStepResult.InvalidAiResult
         } catch (error: AiCapabilityException) {
-            if (usesStreamingAnswerer) throw error
-            return ConversationAnswerStepResult.AiUnavailable
+            throw error
         }
         return ConversationAnswerStepResult.Success(answer)
     }

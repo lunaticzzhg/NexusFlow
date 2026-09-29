@@ -61,7 +61,7 @@ fun createAiTaskCapabilities(
         StructuredConversationAnswerer(structuredProvider, logger = logger)
     }
     val conversationTurn = if (structuredProvider is StreamingTurnModelProvider) {
-        StructuredConversationTurn(structuredProvider)
+        StructuredConversationTurn(structuredProvider, logger = logger)
     } else {
         null
     }

@@ -2,12 +2,11 @@ package com.nexusflow.ai.conversation
 
 import com.nexusflow.ai.understanding.enumString
 import com.nexusflow.ai.understanding.jsonArray
-import com.nexusflow.ai.understanding.nullableStringSchema
 import com.nexusflow.ai.understanding.stringSchema
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-internal const val CONVERSATION_DECISION_PROMPT_VERSION = "conversation-decision-v1"
+internal const val CONVERSATION_DECISION_PROMPT_VERSION = "conversation-decision-v2"
 internal const val CONVERSATION_DECISION_SCHEMA_NAME = "orbit_r1_conversation_decision"
 
 internal val ConversationDecisionSchema =
@@ -28,15 +27,13 @@ internal val ConversationDecisionSchema =
                             "items",
                             buildJsonObject {
                                 put("type", "object")
-                                put("required", jsonArray("id", "question", "mode", "toolCalls", "requestedCapabilityHint"))
+                                put("required", jsonArray("question", "mode", "toolCalls"))
                                 put("additionalProperties", false)
                                 put(
                                     "properties",
                                     buildJsonObject {
-                                        put("id", stringSchema())
                                         put("question", stringSchema())
                                         put("mode", enumString("model_only", "tool_enhanced", "tool_required"))
-                                        put("requestedCapabilityHint", nullableStringSchema())
                                         put(
                                             "toolCalls",
                                             buildJsonObject {

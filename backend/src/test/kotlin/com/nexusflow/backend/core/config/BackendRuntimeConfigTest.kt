@@ -1,5 +1,6 @@
 package com.nexusflow.backend.core.config
 
+import com.nexusflow.backend.core.external.hasPublicSourceContact
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -20,6 +21,7 @@ class BackendRuntimeConfigTest {
         assertEquals(OpportunitySourceMode.External, config.externalSources.mode)
         assertEquals(8_000, config.externalSources.requestTimeout.toMillis())
         assertEquals("NexusFlow/0.1", config.externalSources.userAgent)
+        assertFalse(config.externalSources.userAgent.hasPublicSourceContact())
         assertNull(config.externalSources.tavily)
         assertEquals("https://musicbrainz.org/ws/2", config.externalSources.musicBrainz.baseUrl)
         assertEquals("3", config.externalSources.theSportsDb.apiKey)
@@ -244,7 +246,7 @@ class BackendRuntimeConfigTest {
                     mapOf(
                         "ORBIT_OPPORTUNITY_SOURCE_MODE" to "external",
                         "EXTERNAL_SOURCE_REQUEST_TIMEOUT_MS" to "2500",
-                        "EXTERNAL_SOURCE_USER_AGENT" to "NexusFlow Test/1.0",
+                        "EXTERNAL_SOURCE_USER_AGENT" to "NexusFlow Test/1.0 (test@example.com)",
                         "TAVILY_API_KEY" to "tv-k",
                         "TICKETMASTER_API_KEY" to "tm-k",
                         "THESPORTSDB_API_KEY" to "ts-k",
@@ -264,7 +266,8 @@ class BackendRuntimeConfigTest {
 
         assertEquals(OpportunitySourceMode.External, config.externalSources.mode)
         assertEquals(2_500, config.externalSources.requestTimeout.toMillis())
-        assertEquals("NexusFlow Test/1.0", config.externalSources.userAgent)
+        assertEquals("NexusFlow Test/1.0 (test@example.com)", config.externalSources.userAgent)
+        assertTrue(config.externalSources.userAgent.hasPublicSourceContact())
         assertEquals("tv-k", config.externalSources.tavily?.apiKey)
         assertEquals("tm-k", config.externalSources.ticketmaster?.apiKey)
         assertEquals("ts-k", config.externalSources.theSportsDb.apiKey)

@@ -332,7 +332,7 @@ fun Application.configureTaskDependencies() {
             )
         }
         provide {
-            ReadToolExecutor(resolve<ReadToolCatalog>())
+            ReadToolExecutor(resolve<ReadToolCatalog>(), logger = resolve<StructuredLogger>())
         }
         provide {
             ConversationAnswerService(

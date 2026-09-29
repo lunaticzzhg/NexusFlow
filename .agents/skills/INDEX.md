@@ -33,7 +33,7 @@ Architecture
 
 | 任务信号 | 使用 Skill | 核心产物 |
 | --- | --- | --- |
-| 用户要求先看/确认架构再倒推方案，或方案的职责边界尚未厘清 | `nexusflow-architecture-first-delivery/SKILL.md` | 基于真实 owner 与权威事实的简明 Architecture Brief；架构边界确认后再出 Landing Plan |
+| 用户要求先看/确认架构再倒推方案，或方案的职责边界尚未厘清 | `nexusflow-architecture-first-delivery/SKILL.md` | 第一步交付分别标明的架构图与流程图；架构边界确认后，第二步交付可直接实施的文件级 Landing Plan |
 | 产品需求、用户可见行为变化、API-connected feature、owner 尚未证明的行为 bug、可能跨 App/Contracts/Backend/AI 的 feature | `nexusflow-feature-development/SKILL.md` | User Flow Discovery、Scope Matrix、Full-stack Traceability Design Card、薄切片、Human Takeover Check |
 | 用户希望把当前 NexusFlow 任务交给另一个 AI，或 workflow 需要独立 AI judgment | `nexusflow-ai-handoff/SKILL.md` | Generic AI Handoff Bundle |
 | 非轻量结构决策、复杂 bug、结构性重构、Human Traceability 目标、owner/lifecycle 不清 | 先经 `nexusflow-feature-development/SKILL.md` 做 feature reconnaissance；若需要独立 architecture decision，使用 `nexusflow-ai-handoff/SKILL.md`，并在 Task Contract 中指定 External Architect + architecture/ownership/lifecycle decisions + self-contained WORK_ORDER.md | Generic AI Handoff Bundle containing an architecture Work Order request |
@@ -45,7 +45,7 @@ Architecture
 
 ## 路由原则
 
-- **先架构，后落地方案。** 用户明确要求先审视架构时，用 `nexusflow-architecture-first-delivery` 先交付结论、职责图、典型流程和少量关键决策；不在同一份简报中展开文件清单与薄切片。用户已授权实现且未要求单独确认时，不增加重复确认门槛。命中独立架构决策 Gate 时，仍按 `AGENTS.md` 交给 External Architect，不能由执行者自行批准 owner。
+- **先架构，后落地方案。** 用户明确要求先审视架构时，用 `nexusflow-architecture-first-delivery` 先交付只有组件分组与职责、没有箭头的架构图，另交付单次请求流程图和少量关键决策；调用、提交、重试等执行动作只属于流程图。用户随后要求方案时，按已确认架构交付具体文件改动、影响和验证。用户已授权实现且未要求单独确认时，不增加重复确认门槛。命中独立架构决策 Gate 时，仍按 `AGENTS.md` 交给 External Architect，不能由执行者自行批准 owner。
 - **先 Flow，后 Class。** 跨多个 Controller/Runtime/StateHolder 的问题先走 Human Traceability Review，不要直接做单类重构。
 - **产品需求先 Scope Matrix。** 通过 `nexusflow-feature-development` 判断 App / Contracts / Backend / AI 哪些区域真实需要变化；`NO CHANGE` 是有效结论。
 - **Handoff 只传输任务合同和上下文。** `nexusflow-ai-handoff` 不预设接收方是 Architect、Reviewer、Planner 或 Implementation Agent，也不预设产物是 Work Order。

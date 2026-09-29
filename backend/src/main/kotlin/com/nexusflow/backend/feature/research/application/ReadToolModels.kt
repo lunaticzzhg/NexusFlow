@@ -58,6 +58,7 @@ interface ReadTool {
 data class ReadToolExecutionContext(
     val referenceTime: Instant,
     val timeZoneId: String,
+    val responseRunId: String? = null,
     val actorTenantId: String? = null,
     val actorUserId: String? = null,
     val conversationId: String? = null,

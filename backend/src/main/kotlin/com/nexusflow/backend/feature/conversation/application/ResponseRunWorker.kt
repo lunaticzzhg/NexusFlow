@@ -244,6 +244,8 @@ class ResponseRunWorker(
                             fields = logFields {
                                 addRunFields(claimed.run, step = "retry", outcome = "retry_scheduled")
                                 "failure_category" value failureCategory.logValue()
+                                (error as? InvalidCapabilityResultException)?.failureStage?.let { "failure_stage" value it }
+                                "error_type" value (error::class.simpleName ?: "UnknownThrowable")
                                 "retry_at" value now.plus(config.retryBackoff).toString()
                             },
                         )
@@ -267,13 +269,17 @@ class ResponseRunWorker(
                             failureCategory = failureCategory,
                         ),
                     )
-                    logger?.warn(
+                    logger?.error(
                         component = LOG_COMPONENT,
                         event = "response_run_terminal_failure_marked",
                         fields = logFields {
                             addRunFields(claimed.run, step = "failed", outcome = if (failed) "failed" else "stale")
                             "failure_category" value failureCategory.logValue()
+                            (error as? InvalidCapabilityResultException)?.failureStage?.let { "failure_stage" value it }
+                            "error_origin" value error.stackTrace.firstOrNull { it.className.startsWith("com.nexusflow.") }
+                                ?.let { "${it.className}.${it.methodName}:${it.lineNumber}" }
                         },
+                        cause = error,
                     )
                     responseRunStore.findResponseRun(claimed.run.id)?.let {
                         logTerminal(it)

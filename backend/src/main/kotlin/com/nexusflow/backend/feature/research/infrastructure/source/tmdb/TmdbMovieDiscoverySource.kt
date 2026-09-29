@@ -16,7 +16,7 @@ import com.nexusflow.backend.feature.task.domain.source.MovieDiscoverySource
 import com.nexusflow.backend.feature.research.infrastructure.source.CachedSourceRefDocument
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
-import io.ktor.client.call.body
+import com.nexusflow.backend.core.external.externalBody
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
@@ -48,7 +48,7 @@ class TmdbMovieDiscoverySource(
             return cached
         }
 
-        val candidates = executeExternalSourceRequest(PROVIDER, query.mode.operationName()) {
+        val candidates = executeExternalSourceRequest(logger, PROVIDER, query.mode.operationName()) {
             val response = http.client.get("${config.baseUrl.trimEnd('/')}/${query.mode.path()}") {
                 bearerAuth(config.apiReadToken)
                 query.language?.let { parameter("language", it) }
@@ -57,7 +57,7 @@ class TmdbMovieDiscoverySource(
                 }
             }
             response.rejectKnownExternalSourceStatus(PROVIDER, query.mode.operationName())
-            val body = response.body<TmdbSearchResponse>()
+            val body = response.externalBody<TmdbSearchResponse>()
             val observedAt = clock.instant()
             val summaries = body.results ?: throw IllegalArgumentException("TMDB results missing")
             summaries

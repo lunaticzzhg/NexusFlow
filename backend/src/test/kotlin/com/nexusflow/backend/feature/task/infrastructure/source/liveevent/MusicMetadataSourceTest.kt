@@ -3,6 +3,8 @@ package com.nexusflow.backend.feature.research.infrastructure.source.liveevent
 import com.nexusflow.backend.core.config.MusicBrainzRuntimeConfig
 import com.nexusflow.backend.core.external.ExternalSourceHttpClient
 import com.nexusflow.backend.core.external.ExternalSourceInvalidPayloadException
+import com.nexusflow.backend.core.external.ExternalSourcePolicyRateLimitedException
+import com.nexusflow.backend.core.external.ExternalSourceDisabledException
 import com.nexusflow.backend.core.external.ExternalSourceRateLimitedException
 import com.nexusflow.backend.core.external.ExternalSourceUnauthorizedException
 import com.nexusflow.backend.core.external.ExternalSourceUnavailableException
@@ -11,6 +13,8 @@ import com.nexusflow.backend.core.external.SourceCacheStore
 import com.nexusflow.backend.feature.task.domain.SourceAuthority
 import com.nexusflow.backend.feature.task.domain.source.MusicMetadataQuery
 import com.nexusflow.backend.feature.task.domain.source.MusicMetadataSearchType
+import com.nexusflow.backend.feature.task.domain.source.LiveMusicEventQuery
+import com.nexusflow.backend.feature.research.infrastructure.source.musicbrainz.MusicBrainzLiveMusicEventSource
 import com.nexusflow.backend.feature.research.infrastructure.source.musicbrainz.MusicBrainzMetadataSource
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -39,10 +43,40 @@ class MusicMetadataSourceTest {
     private val now = Instant.parse("2026-09-06T00:00:00Z")
 
     @Test
+    fun `MusicBrainz metadata and event sources share one local admission gate`() = runBlocking {
+        var requestCount = 0
+        val http = ExternalSourceHttpClient(testHttpClient(MockEngine {
+            requestCount++
+            respondJson(releasePayload("safe"))
+        }))
+        val config = MusicBrainzRuntimeConfig(baseUrl = "https://musicbrainz.test")
+        val agent = "NexusFlow Test/1.0 (test@example.com)"
+        MusicBrainzMetadataSource(http, config, agent).search(MusicMetadataQuery("Radiohead", MusicMetadataSearchType.Release))
+        assertFailsWith<ExternalSourcePolicyRateLimitedException> {
+            MusicBrainzLiveMusicEventSource(http, config, agent).search(LiveMusicEventQuery("Radiohead"))
+        }
+        assertEquals(1, requestCount)
+    }
+
+    @Test
+    fun `MusicBrainz without contact is disabled before network request`() = runBlocking {
+        var requestCount = 0
+        val source = MusicBrainzMetadataSource(
+            ExternalSourceHttpClient(testHttpClient(MockEngine { requestCount++; respondJson(releasePayload("safe")) })),
+            MusicBrainzRuntimeConfig(baseUrl = "https://musicbrainz.test"),
+            "NexusFlow/0.1",
+        )
+        assertFailsWith<ExternalSourceDisabledException> {
+            source.search(MusicMetadataQuery("Radiohead", MusicMetadataSearchType.Release))
+        }
+        assertEquals(0, requestCount)
+    }
+
+    @Test
     fun `MusicBrainz release metadata projects typed fields`() = runBlocking {
         val source = musicMetadataSource(
             engine = MockEngine { request ->
-                assertEquals("NexusFlow Test/1.0", request.headers[HttpHeaders.UserAgent])
+                assertEquals("NexusFlow Test/1.0 (test@example.com)", request.headers[HttpHeaders.UserAgent])
                 assertEquals("/release/", request.url.encodedPath)
                 assertEquals("Radiohead", request.url.parameters["query"])
                 assertEquals("json", request.url.parameters["fmt"])
@@ -190,9 +224,9 @@ class MusicMetadataSourceTest {
         cacheStore: SourceCacheStore? = null,
     ): MusicBrainzMetadataSource =
         MusicBrainzMetadataSource(
-            http = ExternalSourceHttpClient(testHttpClient(engine)),
+            http = ExternalSourceHttpClient(testHttpClient(engine), musicBrainzRequestGate = com.nexusflow.backend.core.external.RequestIntervalGate(0)),
             config = MusicBrainzRuntimeConfig(baseUrl = "https://musicbrainz.test"),
-            userAgent = "NexusFlow Test/1.0",
+            userAgent = "NexusFlow Test/1.0 (test@example.com)",
             cacheStore = cacheStore,
             clock = Clock.fixed(now, ZoneOffset.UTC),
         )

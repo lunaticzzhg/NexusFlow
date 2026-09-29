@@ -1,5 +1,7 @@
 package com.nexusflow.backend.feature.research.application
 
+import com.nexusflow.observability.StructuredLogger
+import com.nexusflow.observability.logFields
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -11,6 +13,7 @@ class ReadToolExecutor(
     private val catalog: ReadToolCatalog,
     val maxCallsPerTurn: Int = DEFAULT_MAX_CALLS_PER_TURN,
     private val maxConcurrentCalls: Int = maxCallsPerTurn,
+    private val logger: StructuredLogger? = null,
 ) {
     init {
         require(maxCallsPerTurn > 0) { "maxCallsPerTurn must be positive" }
@@ -38,10 +41,10 @@ class ReadToolExecutor(
 
         val semaphore = Semaphore(maxConcurrentCalls)
         return coroutineScope {
-            calls.map { call ->
+            calls.mapIndexed { index, call ->
                 async {
                     semaphore.withPermit {
-                        executeOne(call, context, observer)
+                        executeOne(call, index + 1, context, observer)
                     }
                 }
             }.awaitAll()
@@ -50,6 +53,7 @@ class ReadToolExecutor(
 
     private suspend fun executeOne(
         call: ReadToolCall,
+        callIndex: Int,
         context: ReadToolExecutionContext,
         observer: ReadToolExecutionObserver?,
     ): ReadToolExecution {
@@ -62,10 +66,42 @@ class ReadToolExecutor(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
+            logger?.error(
+                component = "read_tool",
+                event = "read_tool_execution_failed",
+                fields = logFields {
+                    "response_run_id" value context.responseRunId
+                    "conversation_id" value context.conversationId
+                    "tool_key" value definition.key.value
+                    "tool_call_index" value callIndex
+                    "failure_stage" value "tool_execute"
+                    "error_origin" value error.stackTrace.firstOrNull { it.className.startsWith("com.nexusflow.") }
+                        ?.let { "${it.className}.${it.methodName}:${it.lineNumber}" }
+                },
+                cause = error,
+            )
             observer?.onFinished(call, definition, ReadToolOutcome.Unavailable("read tool execution failed"))
             throw error
         }
         observer?.onFinished(call, definition, outcome)
+        logger?.info(
+            component = "read_tool",
+            event = "read_tool_execution_finished",
+            fields = logFields {
+                "response_run_id" value context.responseRunId
+                "conversation_id" value context.conversationId
+                "tool_key" value definition.key.value
+                "tool_call_index" value callIndex
+                "outcome" value when (outcome) {
+                    is ReadToolOutcome.Success -> "success"
+                    ReadToolOutcome.Empty -> "empty"
+                    is ReadToolOutcome.Unavailable -> "unavailable"
+                    is ReadToolOutcome.MissingInput -> "missing_input"
+                    is ReadToolOutcome.InvalidArguments -> "invalid_arguments"
+                }
+                "evidence_count" value (outcome as? ReadToolOutcome.Success)?.payload?.evidence?.size
+            },
+        )
         return ReadToolExecution(
             call = call,
             outcome = outcome,

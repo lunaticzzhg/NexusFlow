@@ -6,6 +6,7 @@ import com.nexusflow.ai.provider.ProviderRequestException as ProviderRequestMode
 import com.nexusflow.ai.provider.ProviderTimeoutException as ProviderTimeoutModelException
 import com.nexusflow.ai.provider.ProviderUnauthorizedException as ProviderUnauthorizedModelException
 import com.nexusflow.ai.provider.ProviderUnavailableException as ProviderUnavailableModelException
+import com.nexusflow.ai.provider.InvalidStructuredOutputException
 import com.nexusflow.ai.provider.StructuredModelException
 import com.nexusflow.ai.provider.StreamingTextModelProvider
 import com.nexusflow.ai.provider.TextModelRequest
@@ -189,6 +190,11 @@ class StreamingConversationAnswerer(
             is ProviderTimeoutModelException -> CapabilityTimeoutException(this)
             is ProviderRefusedModelException -> CapabilityRefusedException()
             is ProviderUnavailableModelException -> CapabilityUnavailableException(this)
+            is InvalidStructuredOutputException -> InvalidCapabilityResultException(
+                message ?: "Invalid conversation answer output",
+                this,
+                failureStage = failureStage ?: "provider_invalid_answer_output",
+            )
             else -> CapabilityUnavailableException(this)
         }
 }

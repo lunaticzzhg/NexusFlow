@@ -45,7 +45,7 @@ class StructuredConversationDecisionTest {
             val result = StructuredConversationDecision(provider).decide(request(currentMessage = "你好"))
 
             val need = result.informationNeeds.single()
-            assertEquals("need-greeting", need.id)
+            assertEquals("need-1", need.id)
             assertEquals(InformationNeedMode.MODEL_ONLY, need.mode)
             assertEquals(emptyList(), need.toolCalls)
             assertEquals(CONVERSATION_DECISION_PROMPT_VERSION, result.metadata.promptVersion)
@@ -107,7 +107,7 @@ class StructuredConversationDecisionTest {
             val need = result.informationNeeds.single()
             assertEquals(InformationNeedMode.TOOL_REQUIRED, need.mode)
             assertEquals(emptyList(), need.toolCalls)
-            assertEquals("sports fixtures", need.requestedCapabilityHint)
+            assertEquals(null, need.requestedCapabilityHint)
             assertFalse(provider.requests.single().systemPrompt.contains("Repair only"))
         }
 
@@ -134,7 +134,7 @@ class StructuredConversationDecisionTest {
                 request(currentMessage = "今晚下雨吗？下雨做什么？", availableTools = defaultTools()),
             )
 
-            assertEquals(listOf("need-weather", "need-activities"), result.informationNeeds.map { it.id })
+            assertEquals(listOf("need-1", "need-2"), result.informationNeeds.map { it.id })
             assertEquals(listOf(InformationNeedMode.TOOL_REQUIRED, InformationNeedMode.MODEL_ONLY), result.informationNeeds.map { it.mode })
         }
 
@@ -245,7 +245,7 @@ class StructuredConversationDecisionTest {
                 request(currentMessage = "天气", availableTools = defaultTools(), maxReadToolCalls = 1),
             )
 
-            assertEquals(listOf("need-rain", "need-temperature"), duplicateResult.informationNeeds.map { it.id })
+            assertEquals(listOf("need-1", "need-2"), duplicateResult.informationNeeds.map { it.id })
             assertEquals(
                 listOf("深圳", "深圳"),
                 duplicateResult.informationNeeds.map {
@@ -349,11 +349,9 @@ private fun needPayload(
     requestedCapabilityHint: String? = null,
 ): InformationNeedPayload =
     InformationNeedPayload(
-        id = id,
         question = question,
         mode = mode,
         toolCalls = toolCalls,
-        requestedCapabilityHint = requestedCapabilityHint,
     )
 
 private fun toolCallPayload(

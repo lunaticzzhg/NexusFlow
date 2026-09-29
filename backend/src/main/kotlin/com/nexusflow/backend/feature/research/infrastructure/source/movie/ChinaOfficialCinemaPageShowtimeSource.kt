@@ -64,7 +64,7 @@ class ChinaOfficialCinemaPageShowtimeSource(
             return cached
         }
 
-        val candidates = executeExternalSourceRequest(PROVIDER, "search") {
+        val candidates = executeExternalSourceRequest(logger, PROVIDER, "search") {
             config.pageUrls
                 .flatMap { pageUrl -> fetchPageCandidates(pageUrl, query) }
                 .distinctBy { it.externalShowtimeId }

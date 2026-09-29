@@ -91,6 +91,7 @@ import com.nexusflow.contracts.backendai.conversation.InformationNeedMode
 import com.nexusflow.contracts.backendai.conversation.InformationNeedProposal
 import com.nexusflow.contracts.backendai.answer.ResearchIssueType
 import com.nexusflow.contracts.backendai.answer.StreamingConversationAnsweringCapability
+import com.nexusflow.contracts.backendai.answer.ComposeConversationAnswerResult
 import com.nexusflow.contracts.backendai.common.CapabilityProviderRequestException
 import com.nexusflow.contracts.backendai.common.CapabilityUnavailableException
 import com.nexusflow.observability.DefaultStructuredLogger
@@ -1429,21 +1430,97 @@ class JdbcResponseRunResultBusTest {
                 "Asia/Shanghai",
             )
             val realtimeHub = ResponseRunRealtimeHub(TaskFlowIds.FixedClock)
+            val log = jsonRecordingLogger()
             val processor = conversationAnswerProcessor(
                 answerService = answerService,
                 realtimeHub = realtimeHub,
                 turn = researchTurn(*directConversationDecision("Answer conversationally").informationNeeds.toTypedArray()),
             )
 
-            assertEquals(true, worker(processor, realtimeHub).runOnce())
+            assertEquals(true, worker(processor, realtimeHub, logger = log.logger).runOnce())
 
             val run = assertNotNull(responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id))
             assertEquals(ResponseRunStatus.Failed, run.status)
             assertEquals(ResponseRunFailureCategory.InternalInvariant, run.failureCategory)
+            val failure = log.records().single { it.field("event") == "response_run_terminal_failure_marked" }
+            assertEquals("CapabilityProviderRequestException", failure.field("error_type"))
+            assertEquals("internal_invariant", failure.field("failure_category"))
             val detail = assertNotNull(repository.findConversationDetail(owner(), accepted.detail.conversation.id))
             assertEquals(listOf(MessageRole.User), detail.messages.map { it.role })
             assertEquals("partial", assertNotNull(realtimeHub.snapshot(run.copy(status = ResponseRunStatus.Processing))).partialText)
         }
+
+    @Test
+    fun `invalid conversation turn stage reaches worker terminal log`() =
+        runBlocking {
+            val turn = ConversationTurnCapability { _, _ ->
+                throw com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException(
+                    "private model response",
+                    failureStage = "invalid_stream_event_shape",
+                )
+            }
+            val services = createConversationServices(
+                dataSource = dataSource,
+                conversationTurn = turn,
+            )
+            val accepted = services.conversationService.createConversation(
+                taskActor(),
+                "invalid-conversation-turn-output",
+                "Answer conversationally",
+                "Asia/Shanghai",
+            )
+            val log = jsonRecordingLogger()
+            val processor = ConversationTurnProcessor(
+                conversationRepository = repository,
+                taskRepository = taskRepository,
+                conversationTurn = turn,
+                clock = TaskFlowIds.FixedClock,
+                uuidFactory = { UUID.randomUUID() },
+                logger = log.logger,
+            )
+
+            assertEquals(true, worker(processor, logger = log.logger).runOnce())
+
+            val run = assertNotNull(responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id))
+            assertEquals(ResponseRunStatus.Completed, run.status)
+            val recovery = log.records().single { it.field("event") == "conversation_turn_recovered" }
+            assertEquals("invalid_stream_event_shape", recovery.field("failure_stage"))
+            assertEquals("committable_fallback", recovery.field("recovery_outcome"))
+            assertTrue(log.sink.lines.none { it.contains("private model response") })
+            val detail = assertNotNull(repository.findConversationDetail(owner(), accepted.detail.conversation.id))
+            assertEquals(listOf(MessageRole.User, MessageRole.Assistant), detail.messages.map { it.role })
+        }
+
+    @Test
+    fun `model only answer commits despite invalid coverage metadata`() = runBlocking {
+        val decision = directConversationDecision("Explain this concept")
+        val answering = StreamingConversationAnsweringCapability { _, _ ->
+            ComposeConversationAnswerResult(answer = "A concise explanation.", coverage = emptyList())
+        }
+        val catalog = ReadToolCatalog(emptyList())
+        val answerService = conversationAnswerService(
+            decision = RecordingConversationDecision({ decision }),
+            answering = answering,
+            catalog = catalog,
+            executor = ReadToolExecutor(catalog),
+        )
+        val services = createConversationServices(dataSource = dataSource, conversationAnswerService = answerService)
+        val accepted = services.conversationService.createConversation(
+            taskActor(), "model-only-coverage", "Explain this concept", "Asia/Shanghai",
+        )
+        val processor = conversationAnswerProcessor(
+            answerService = answerService,
+            realtimeHub = ResponseRunRealtimeHub(TaskFlowIds.FixedClock),
+            turn = researchTurn(*decision.informationNeeds.toTypedArray()),
+        )
+
+        assertEquals(true, worker(processor).runOnce())
+
+        val run = assertNotNull(responseRunRepository.findResponseRun(accepted.detail.responseRuns.single().id))
+        assertEquals(ResponseRunStatus.Completed, run.status)
+        val detail = assertNotNull(repository.findConversationDetail(owner(), accepted.detail.conversation.id))
+        assertEquals("A concise explanation.", detail.messages.last().content)
+    }
 
     @Test
     fun `unavailable tool emits failed activity but fallback answer can complete the run`() =

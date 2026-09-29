@@ -2,6 +2,8 @@ package com.nexusflow.backend.feature.research.infrastructure.source.musicbrainz
 
 import com.nexusflow.backend.core.config.MusicBrainzRuntimeConfig
 import com.nexusflow.backend.core.external.ExternalSourceHttpClient
+import com.nexusflow.backend.core.external.ExternalSourcePolicyRateLimitedException
+import com.nexusflow.backend.core.external.requirePublicSourceContact
 import com.nexusflow.backend.core.external.SourceCacheCodec
 import com.nexusflow.backend.core.external.SourceCacheKey
 import com.nexusflow.backend.core.external.SourceCacheResultKind
@@ -16,7 +18,7 @@ import com.nexusflow.backend.feature.task.domain.source.LiveMusicEventSource
 import com.nexusflow.backend.feature.research.infrastructure.source.CachedSourceRefDocument
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
-import io.ktor.client.call.body
+import com.nexusflow.backend.core.external.externalBody
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -49,7 +51,9 @@ class MusicBrainzLiveMusicEventSource(
             return cached
         }
 
-        val candidates = executeExternalSourceRequest(PROVIDER, "search") {
+        val candidates = executeExternalSourceRequest(logger, PROVIDER, "search") {
+            requirePublicSourceContact(userAgent, PROVIDER, "search")
+            if (!http.musicBrainzRequestGate.tryAcquire()) throw ExternalSourcePolicyRateLimitedException(PROVIDER, "search")
             val response = http.client.get("${config.baseUrl.trimEnd('/')}/event/") {
                 header(HttpHeaders.UserAgent, userAgent)
                 parameter("query", query.toMusicBrainzQuery())
@@ -58,7 +62,7 @@ class MusicBrainzLiveMusicEventSource(
             }
             response.rejectKnownExternalSourceStatus(PROVIDER, "search")
             val observedAt = clock.instant()
-            response.body<MusicBrainzEventSearchResponse>()
+            response.externalBody<MusicBrainzEventSearchResponse>()
                 .events
                 .map { it.toLiveMusicEventCandidate(observedAt) }
                 .take(MAX_RESULTS)

@@ -2,6 +2,8 @@ package com.nexusflow.backend.feature.research.infrastructure.source.musicbrainz
 
 import com.nexusflow.backend.core.config.MusicBrainzRuntimeConfig
 import com.nexusflow.backend.core.external.ExternalSourceHttpClient
+import com.nexusflow.backend.core.external.ExternalSourcePolicyRateLimitedException
+import com.nexusflow.backend.core.external.requirePublicSourceContact
 import com.nexusflow.backend.core.external.SourceCacheCodec
 import com.nexusflow.backend.core.external.SourceCacheKey
 import com.nexusflow.backend.core.external.SourceCacheResultKind
@@ -16,7 +18,7 @@ import com.nexusflow.backend.feature.task.domain.source.MusicMetadataSource
 import com.nexusflow.backend.feature.research.infrastructure.source.CachedSourceRefDocument
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
-import io.ktor.client.call.body
+import com.nexusflow.backend.core.external.externalBody
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -50,7 +52,9 @@ class MusicBrainzMetadataSource(
             return cached
         }
 
-        val candidates = executeExternalSourceRequest(PROVIDER, "search") {
+        val candidates = executeExternalSourceRequest(logger, PROVIDER, "search") {
+            requirePublicSourceContact(userAgent, PROVIDER, "search")
+            if (!http.musicBrainzRequestGate.tryAcquire()) throw ExternalSourcePolicyRateLimitedException(PROVIDER, "search")
             val observedAt = clock.instant()
             when (effectiveType) {
                 MusicMetadataSearchType.Artist -> searchArtists(query, observedAt)
@@ -79,7 +83,7 @@ class MusicBrainzMetadataSource(
             parameter("limit", query.maxResults.toString())
         }
         response.rejectKnownExternalSourceStatus(PROVIDER, "search")
-        return response.body<MusicBrainzArtistSearchResponse>()
+        return response.externalBody<MusicBrainzArtistSearchResponse>()
             .artists
             .map { artist -> artist.toMusicMetadataCandidate(observedAt) }
     }
@@ -95,7 +99,7 @@ class MusicBrainzMetadataSource(
             parameter("limit", query.maxResults.toString())
         }
         response.rejectKnownExternalSourceStatus(PROVIDER, "search")
-        return response.body<MusicBrainzReleaseSearchResponse>()
+        return response.externalBody<MusicBrainzReleaseSearchResponse>()
             .releases
             .map { release -> release.toMusicMetadataCandidate(observedAt) }
     }
@@ -111,7 +115,7 @@ class MusicBrainzMetadataSource(
             parameter("limit", query.maxResults.toString())
         }
         response.rejectKnownExternalSourceStatus(PROVIDER, "search")
-        return response.body<MusicBrainzRecordingSearchResponse>()
+        return response.externalBody<MusicBrainzRecordingSearchResponse>()
             .recordings
             .map { recording -> recording.toMusicMetadataCandidate(observedAt) }
     }

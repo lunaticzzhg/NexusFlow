@@ -109,7 +109,11 @@ class ProviderRefusedException : StructuredModelException(
     "Structured model provider refused the request",
 )
 
-class InvalidStructuredOutputException(message: String, cause: Throwable? = null) : StructuredModelException(
+class InvalidStructuredOutputException(
+    message: String,
+    cause: Throwable? = null,
+    val failureStage: String? = null,
+) : StructuredModelException(
     StructuredModelFailureCategory.InvalidStructuredOutput,
     message,
     cause,

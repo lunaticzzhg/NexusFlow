@@ -2,37 +2,26 @@ package com.nexusflow.backend.feature.research.infrastructure.source.web
 
 import com.nexusflow.backend.core.config.TavilyRuntimeConfig
 import com.nexusflow.backend.core.external.ExternalSourceHttpClient
-import com.nexusflow.backend.core.external.ExternalSourceInvalidPayloadException
-import com.nexusflow.backend.core.external.ExternalSourceRateLimitedException
-import com.nexusflow.backend.core.external.ExternalSourceTimeoutException
-import com.nexusflow.backend.core.external.ExternalSourceUnauthorizedException
-import com.nexusflow.backend.core.external.ExternalSourceUnavailableException
 import com.nexusflow.backend.core.external.SourceCacheCodec
 import com.nexusflow.backend.core.external.SourceCacheKey
 import com.nexusflow.backend.core.external.SourceCacheResultKind
 import com.nexusflow.backend.core.external.SourceCacheStore
 import com.nexusflow.backend.core.external.SourceCacheTtlPolicy
+import com.nexusflow.backend.core.external.executeExternalSourceRequest
+import com.nexusflow.backend.core.external.rejectKnownExternalSourceStatus
 import com.nexusflow.backend.feature.task.domain.source.WebDiscoverySource
 import com.nexusflow.backend.feature.task.domain.source.WebExtractedPage
 import com.nexusflow.backend.feature.task.domain.source.WebSearchHit
 import com.nexusflow.backend.feature.task.domain.source.WebSearchQuery
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
-import io.ktor.client.call.body
-import io.ktor.client.network.sockets.ConnectTimeoutException
-import io.ktor.client.network.sockets.SocketTimeoutException
-import io.ktor.client.plugins.HttpRequestTimeoutException
+import com.nexusflow.backend.core.external.externalBody
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
-import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import io.ktor.serialization.ContentConvertException
-import kotlinx.coroutines.CancellationException
-import kotlinx.io.IOException
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.SerializationException
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.security.MessageDigest
@@ -65,18 +54,8 @@ class TavilyWebDiscoverySource(
                 contentType(ContentType.Application.Json)
                 setBody(TavilySearchRequest(query = request.query, maxResults = request.maxResults))
             }
-            when (response.status) {
-                HttpStatusCode.Unauthorized,
-                HttpStatusCode.Forbidden,
-                -> throw ExternalSourceUnauthorizedException(PROVIDER, "search")
-                HttpStatusCode.TooManyRequests -> throw ExternalSourceRateLimitedException(PROVIDER, "search")
-                in HttpStatusCode.InternalServerError..HttpStatusCode.GatewayTimeout ->
-                    throw ExternalSourceUnavailableException(PROVIDER, "search")
-                else -> {
-                    if (response.status.value !in 200..299) throw ExternalSourceUnavailableException(PROVIDER, "search")
-                    response.body<TavilySearchResponse>().toWebSearchHits()
-                }
-            }
+            response.rejectKnownExternalSourceStatus(PROVIDER, "search")
+            response.externalBody<TavilySearchResponse>().toWebSearchHits()
         }
 
         cacheStore?.put(
@@ -112,18 +91,8 @@ class TavilyWebDiscoverySource(
                 contentType(ContentType.Application.Json)
                 setBody(TavilyExtractRequest(urls = missingUrls))
             }
-            when (response.status) {
-                HttpStatusCode.Unauthorized,
-                HttpStatusCode.Forbidden,
-                -> throw ExternalSourceUnauthorizedException(PROVIDER, "extract")
-                HttpStatusCode.TooManyRequests -> throw ExternalSourceRateLimitedException(PROVIDER, "extract")
-                in HttpStatusCode.InternalServerError..HttpStatusCode.GatewayTimeout ->
-                    throw ExternalSourceUnavailableException(PROVIDER, "extract")
-                else -> {
-                    if (response.status.value !in 200..299) throw ExternalSourceUnavailableException(PROVIDER, "extract")
-                    response.body<TavilyExtractResponse>().toWebExtractedPages(clock.instant())
-                }
-            }
+            response.rejectKnownExternalSourceStatus(PROVIDER, "extract")
+            response.externalBody<TavilyExtractResponse>().toWebExtractedPages(clock.instant())
         }
         fetched.forEach { page ->
             cacheStore?.put(
@@ -139,26 +108,7 @@ class TavilyWebDiscoverySource(
     private suspend fun <T> execute(
         operation: String,
         block: suspend () -> T,
-    ): T =
-        try {
-            block()
-        } catch (cause: CancellationException) {
-            throw cause
-        } catch (cause: HttpRequestTimeoutException) {
-            throw ExternalSourceTimeoutException(PROVIDER, operation, cause)
-        } catch (cause: ConnectTimeoutException) {
-            throw ExternalSourceTimeoutException(PROVIDER, operation, cause)
-        } catch (cause: SocketTimeoutException) {
-            throw ExternalSourceTimeoutException(PROVIDER, operation, cause)
-        } catch (cause: ContentConvertException) {
-            throw ExternalSourceInvalidPayloadException(PROVIDER, operation, cause)
-        } catch (cause: SerializationException) {
-            throw ExternalSourceInvalidPayloadException(PROVIDER, operation, cause)
-        } catch (cause: IllegalArgumentException) {
-            throw ExternalSourceInvalidPayloadException(PROVIDER, operation, cause)
-        } catch (cause: IOException) {
-            throw ExternalSourceUnavailableException(PROVIDER, operation, cause)
-        }
+    ): T = executeExternalSourceRequest(logger, PROVIDER, operation, block)
 
     private fun TavilySearchResponse.toWebSearchHits(): List<WebSearchHit> {
         val projected = results ?: throw IllegalArgumentException("results missing")

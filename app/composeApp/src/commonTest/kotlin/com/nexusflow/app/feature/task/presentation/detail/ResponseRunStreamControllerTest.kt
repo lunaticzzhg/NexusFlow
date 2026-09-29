@@ -42,6 +42,37 @@ import kotlin.test.assertEquals
 
 class ResponseRunStreamControllerTest {
     @Test
+    fun `retryable failure polls without replay and connects after next attempt`() =
+        runTest {
+            val retryable = responseRun(status = ResponseRunStatus.FailedRetryable, attempt = 1)
+            val processing = retryable.copy(status = ResponseRunStatus.Processing, attempt = 2, retryable = false)
+            val completed = processing.copy(status = ResponseRunStatus.Completed, assistantMessageId = "assistant-1")
+            val repository =
+                ControllerRepository(
+                    listOf(
+                        responseRunSnapshot(retryable, conversation(retryable)),
+                        responseRunSnapshot(retryable, conversation(retryable)),
+                        responseRunSnapshot(processing, conversation(processing)),
+                        responseRunSnapshot(completed, conversation(completed, assistantText = "done")),
+                    ),
+                )
+            val requests = mutableListOf<RealtimeSseRequest>()
+            val controller = controller(repository, scope = this, requests = requests)
+
+            controller.start(conversation(retryable).id, retryable)
+            advanceUntilIdle()
+
+            assertEquals(2, controller.state.value.attempt)
+            assertEquals(1, requests.size)
+            controller.handleEvent(event(processing, attempt = 2, seq = 1, payload = ResponseRunEventPayload.Completed("assistant-1")))
+            advanceUntilIdle()
+
+            assertEquals(listOf(retryable.id, retryable.id, retryable.id, retryable.id), repository.snapshotCommands)
+            assertEquals(ResponseRunStatus.Completed, controller.state.value.terminalStatus)
+            controller.stop()
+        }
+
+    @Test
     fun `applies thinking tool and delta while ignoring duplicate and stale attempt`() =
         runTest {
             val run = responseRun(status = ResponseRunStatus.Streaming, attempt = 1)

@@ -38,14 +38,6 @@ internal class ConversationAnswerValidator(
         ) {
             return null
         }
-        if (needs.any { need ->
-                need.mode == InformationNeedMode.TOOL_REQUIRED &&
-                    need.toolCalls.isEmpty() &&
-                    need.requestedCapabilityHint == null
-            }
-        ) {
-            return null
-        }
         return needs
     }
 

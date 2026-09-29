@@ -46,22 +46,27 @@ internal fun OverpassElementDto.toTrailCandidate(observedAt: Instant): TrailCand
 }
 
 internal fun TrailSplitsTrailDto.toTrailCandidate(observedAt: Instant): TrailCandidate {
-    val trailId = id?.boundedId() ?: throw IllegalArgumentException("TrailSplits trail id missing")
-    val title = name.boundedText(MAX_NAME_CHARS) ?: throw IllegalArgumentException("TrailSplits trail name missing")
-    val point = GeoPoint.from(latitude, longitude)
+    val props = properties ?: throw IllegalArgumentException("TrailSplits trail properties missing")
+    val trailId = props.osmRelationId?.takeIf { it > 0 }?.toString()
+        ?: throw IllegalArgumentException("TrailSplits trail id missing")
+    val title = props.name.boundedText(MAX_NAME_CHARS) ?: throw IllegalArgumentException("TrailSplits trail name missing")
+    val point = geometry?.coordinates.toGeoPointFromLonLat()
+        ?: throw IllegalArgumentException("TrailSplits trail point missing")
+    val distance = props.distanceMeters ?: props.distanceKilometers?.times(1000.0)
+    val publicUrl = "https://www.openstreetmap.org/relation/$trailId"
     return TrailCandidate(
         externalTrailId = trailId,
         name = title,
-        routeType = type.boundedText(MAX_TYPE_CHARS),
-        distanceMeters = distanceMeters?.takeIf { it >= 0 },
-        elevationGainMeters = elevationGainMeters?.takeIf { it >= 0 },
+        routeType = props.routeType.boundedText(MAX_TYPE_CHARS),
+        distanceMeters = distance?.takeIf { it.isFinite() && it >= 0 }?.roundToInt(),
+        elevationGainMeters = null,
         startLocation = point,
-        summary = type.boundedText(MAX_TYPE_CHARS),
-        publicUrl = url.boundedUrl(),
+        summary = props.routeType.boundedText(MAX_TYPE_CHARS),
+        publicUrl = publicUrl,
         sources = listOf(
             SourceRef(
                 label = "TrailSplits",
-                uri = url.boundedUrl(),
+                uri = publicUrl,
                 sourceUpdatedAt = observedAt,
                 sourceId = "trailsplits",
                 authority = SourceAuthority.StructuredSecondary,
@@ -129,6 +134,8 @@ internal fun RouteSummaryDto.toRouteFact(
     label: String,
     authority: SourceAuthority,
 ): RouteFact {
+    require(distance != null && distance.isFinite() && distance >= 0.0) { "$sourceId route distance missing" }
+    require(duration != null && duration.isFinite() && duration >= 0.0) { "$sourceId route duration missing" }
     val durationMinutes = duration?.takeIf { it >= 0.0 }?.secondsToMinutes()
     return RouteFact(
         distanceMeters = distance?.takeIf { it >= 0.0 }?.roundToInt(),
@@ -146,9 +153,11 @@ internal fun RouteSummaryDto.toRouteFact(
 }
 
 internal fun TrailSplitsRouteDto.toRouteFact(observedAt: Instant): RouteFact {
-    val durationMinutes = durationSeconds?.takeIf { it >= 0 }?.toDouble()?.secondsToMinutes()
+    require(distance != null && distance.isFinite() && distance >= 0.0) { "TrailSplits route distance missing" }
+    require(duration != null && duration.isFinite() && duration >= 0.0) { "TrailSplits route duration missing" }
+    val durationMinutes = duration.secondsToMinutes()
     return RouteFact(
-        distanceMeters = distanceMeters?.takeIf { it >= 0 },
+        distanceMeters = distance.roundToInt(),
         durationMinutes = durationMinutes,
         commuteMinutes = durationMinutes,
         source = SourceRef(

@@ -13,6 +13,9 @@ import kotlinx.serialization.json.Json
 
 class ExternalSourceHttpClient(
     val client: HttpClient,
+    val userAgent: String = "",
+    val musicBrainzRequestGate: RequestIntervalGate = RequestIntervalGate(),
+    val nominatimRequestGate: RequestIntervalGate = RequestIntervalGate(),
 ) : AutoCloseable {
     override fun close() {
         client.close()
@@ -42,6 +45,7 @@ class ExternalSourceHttpClient(
                         }
                     }
                 },
+                config.userAgent,
             )
     }
 }

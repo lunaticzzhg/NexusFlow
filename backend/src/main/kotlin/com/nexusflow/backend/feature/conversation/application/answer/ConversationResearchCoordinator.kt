@@ -10,6 +10,7 @@ import com.nexusflow.backend.feature.research.application.ReadToolOutcome
 import com.nexusflow.contracts.backendai.answer.ResearchIssuePayload
 import com.nexusflow.contracts.backendai.answer.ResearchIssueType
 import com.nexusflow.contracts.backendai.conversation.InformationNeedProposal
+import com.nexusflow.contracts.backendai.conversation.InformationNeedMode
 
 internal class ConversationResearchCoordinator(
     private val readToolExecutor: ReadToolExecutor,
@@ -35,6 +36,7 @@ internal class ConversationResearchCoordinator(
                 context = ReadToolExecutionContext(
                     referenceTime = request.referenceTime,
                     timeZoneId = request.timeZoneId,
+                    responseRunId = request.operationLogContext?.operationId,
                     actorTenantId = request.actorTenantId,
                     actorUserId = request.actorUserId,
                     conversationId = request.conversationId,
@@ -48,7 +50,7 @@ internal class ConversationResearchCoordinator(
             val callsForNeed = needCalls.filter { it.needId == need.id }
             val evidence = mutableListOf<ReadToolEvidence>()
             val issues = mutableListOf<ResearchIssuePayload>()
-            if (callsForNeed.isEmpty() && need.requestedCapabilityHint != null) {
+            if (callsForNeed.isEmpty() && need.mode == InformationNeedMode.TOOL_REQUIRED) {
                 issues += ResearchIssuePayload(ResearchIssueType.NO_SUITABLE_TOOL)
             }
             callsForNeed.forEach { needCall ->

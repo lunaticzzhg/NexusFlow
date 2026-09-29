@@ -174,8 +174,9 @@ private fun ConversationDetail.activeResponseUiState(streamState: ResponseRunStr
             when {
                 terminalStatus == ResponseRunStatus.Cancelled -> ActiveResponseStatus.Cancelled
                 terminalStatus == ResponseRunStatus.TimedOut -> ActiveResponseStatus.TimedOut
-                terminalStatus == ResponseRunStatus.FailedRetryable || terminalStatus == ResponseRunStatus.Failed ->
+                terminalStatus == ResponseRunStatus.Failed ->
                     ActiveResponseStatus.Failed
+                run.status == ResponseRunStatus.FailedRetryable -> ActiveResponseStatus.Thinking
                 partialText.isNotBlank() -> ActiveResponseStatus.Streaming
                 streamBelongsToRun && streamState.activities.isNotEmpty() -> ActiveResponseStatus.Thinking
                 else -> ActiveResponseStatus.Queued
@@ -184,8 +185,7 @@ private fun ConversationDetail.activeResponseUiState(streamState: ResponseRunStr
         activities = if (streamBelongsToRun) streamState.activities else emptyList(),
         canCancel = run.status.isStreamOpen(),
         canRetry =
-            run.status == ResponseRunStatus.FailedRetryable ||
-                run.status == ResponseRunStatus.Failed ||
+            run.status == ResponseRunStatus.Failed ||
                 run.status == ResponseRunStatus.TimedOut,
     )
 }

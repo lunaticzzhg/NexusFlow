@@ -73,6 +73,7 @@ class OpenAiCompatibleStreamingTransportTest {
             assertEquals(result.outputText, deltas.joinToString(separator = ""))
             assertEquals("provider-request-1", result.metadata.providerRequestId)
             assertEquals(5, result.metadata.usage?.totalTokens)
+            assertEquals(true, Json.parseToJsonElement(requestBody).jsonObject.getValue("stream_options").jsonObject.getValue("include_usage").jsonPrimitive.content.toBoolean())
         }
 
 
@@ -301,6 +302,26 @@ class OpenAiCompatibleStreamingTransportTest {
         }
 
     @Test
+    fun `invalid stream JSON has a distinct safe stage`() =
+        runBlocking {
+            val transport = transport(
+                mode = OpenAiCompatibleMode.Responses,
+                engine = MockEngine {
+                    respond(
+                        content = "data: {private invalid payload}\n\n",
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "text/event-stream"),
+                    )
+                },
+            )
+
+            val error = assertFailsWith<InvalidStructuredOutputException> {
+                transport.stream(request()) { }
+            }
+            assertEquals("invalid_stream_json", error.failureStage)
+        }
+
+    @Test
     fun `responses text stream rejects function call events`() =
         runBlocking {
             val transport = transport(
@@ -319,9 +340,10 @@ class OpenAiCompatibleStreamingTransportTest {
                 },
             )
 
-            assertFailsWith<InvalidStructuredOutputException> {
+            val error = assertFailsWith<InvalidStructuredOutputException> {
                 transport.stream(request()) { }
             }
+            assertEquals("unexpected_tool_call", error.failureStage)
             Unit
         }
 
@@ -335,11 +357,13 @@ class OpenAiCompatibleStreamingTransportTest {
                     requestBody = (request.body as TextContent).text
                     respond(
                         content = """
-                            data: {"id":"chat-request-1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_123","type":"function","function":{"name":"research","arguments":"{\"q\""}}]},"finish_reason":null}]}
+                            data: {"id":"chat-request-1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_123","type":"function","function":{"name":"rese","arguments":"{\"q\""}}]},"finish_reason":null}]}
 
-                            data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\"x\"}"}}]},"finish_reason":null}]}
+                            data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","function":{"name":"arch","arguments":":\"x\"}"}}]},"finish_reason":null}]}
 
-                            data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}
+                            data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+                            data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}
 
                             data: [DONE]
 
@@ -355,10 +379,12 @@ class OpenAiCompatibleStreamingTransportTest {
             val call = assertTrueResultTool(result)
             assertEquals("research", call.name)
             assertEquals("{\"q\":\"x\"}", call.argumentsJson)
+            assertEquals(3, call.metadata.usage?.totalTokens)
             val body = Json.parseToJsonElement(requestBody).jsonObject
             val tool = body.getValue("tools").jsonArray.single().jsonObject
             assertEquals("function", tool.getValue("type").jsonPrimitive.content)
             assertEquals(false, body.getValue("parallel_tool_calls").jsonPrimitive.content.toBoolean())
+            assertEquals(true, body.getValue("stream_options").jsonObject.getValue("include_usage").jsonPrimitive.content.toBoolean())
             assertEquals(false, tool.getValue("function").jsonObject.getValue("strict").jsonPrimitive.content.toBoolean())
         }
 
@@ -400,6 +426,51 @@ class OpenAiCompatibleStreamingTransportTest {
             assertEquals(false, body.getValue("parallel_tool_calls").jsonPrimitive.content.toBoolean())
             assertEquals(false, tool.getValue("strict").jsonPrimitive.content.toBoolean())
         }
+
+    @Test
+    fun `chat turn rejects a second tool index even when call ids are empty`() = runBlocking {
+        val transport = transport(
+            mode = OpenAiCompatibleMode.ChatJsonSchema,
+            engine = MockEngine {
+                respond(
+                    content = """
+                        data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"research","arguments":"{}"}}]}}]}
+
+                        data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"","function":{"arguments":"{}"}}]}}]}
+
+                    """.trimIndent(),
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "text/event-stream"),
+                )
+            },
+        )
+
+        val error = assertFailsWith<InvalidStructuredOutputException> { transport.streamTurn(turnRequest()) { } }
+        assertEquals("multiple_tool_calls", error.failureStage)
+    }
+
+    @Test
+    fun `oversized single line and multiline SSE events fail before JSON parsing`() = runBlocking {
+        val oversizedSingleLine = "data: " + "private payload".repeat(19_000) + "\n\n"
+        val oversizedMultiline = buildString {
+            repeat(3) { append("data: ").append("private payload".repeat(7_000)).append('\n') }
+            append('\n')
+        }
+        listOf(oversizedSingleLine, oversizedMultiline).forEach { content ->
+            val transport = transport(
+                mode = OpenAiCompatibleMode.ChatJsonSchema,
+                engine = MockEngine {
+                    respond(
+                        content = content,
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "text/event-stream"),
+                    )
+                },
+            )
+            val error = assertFailsWith<InvalidStructuredOutputException> { transport.streamTurn(turnRequest()) { } }
+            assertEquals("stream_event_too_large", error.failureStage)
+        }
+    }
 
     @Test
     fun `responses turn rejects mismatched done arguments`() =
@@ -447,9 +518,10 @@ class OpenAiCompatibleStreamingTransportTest {
                 },
             )
 
-            assertFailsWith<InvalidStructuredOutputException> {
+            val error = assertFailsWith<InvalidStructuredOutputException> {
                 transport.streamTurn(turnRequest()) { }
             }
+            assertEquals("incomplete_stream", error.failureStage)
             Unit
         }
 
@@ -563,9 +635,10 @@ class OpenAiCompatibleStreamingTransportTest {
                 },
             )
 
-            assertFailsWith<InvalidStructuredOutputException> {
+            val error = assertFailsWith<InvalidStructuredOutputException> {
                 transport.streamTurn(turnRequest()) { }
             }
+            assertEquals("multiple_tool_calls", error.failureStage)
             Unit
         }
 

@@ -169,7 +169,7 @@ class LiveEventSourceTest {
     fun `MusicBrainz projects valid and separates failure outcomes`() = runBlocking {
         val source = musicBrainzSource(
             engine = MockEngine { request ->
-                assertEquals("NexusFlow Test/1.0", request.headers[HttpHeaders.UserAgent])
+                assertEquals("NexusFlow Test/1.0 (test@example.com)", request.headers[HttpHeaders.UserAgent])
                 assertEquals("/event/", request.url.encodedPath)
                 assertEquals("json", request.url.parameters["fmt"])
                 respondJson(musicBrainzEventPayload())
@@ -342,7 +342,7 @@ class LiveEventSourceTest {
         MusicBrainzLiveMusicEventSource(
             http = ExternalSourceHttpClient(testHttpClient(engine)),
             config = MusicBrainzRuntimeConfig(baseUrl = "https://musicbrainz.test"),
-            userAgent = "NexusFlow Test/1.0",
+            userAgent = "NexusFlow Test/1.0 (test@example.com)",
             clock = Clock.fixed(now, ZoneOffset.UTC),
         )
 

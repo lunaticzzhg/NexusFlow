@@ -24,6 +24,8 @@ import com.nexusflow.backend.feature.research.application.readtool.RouteEstimate
 import com.nexusflow.backend.feature.research.application.readtool.SportsEventsKey
 import com.nexusflow.backend.feature.research.application.readtool.SportsFixturesKey
 import com.nexusflow.backend.feature.research.application.readtool.WeatherForecastKey
+import com.nexusflow.backend.feature.research.application.ReadToolExecutionContext
+import com.nexusflow.backend.feature.research.application.ReadToolOutcome
 import com.nexusflow.backend.feature.research.application.readtool.WebSearchKey
 import com.nexusflow.backend.feature.task.domain.source.WebDiscoverySource
 import com.nexusflow.backend.feature.task.domain.source.WebExtractedPage
@@ -38,12 +40,36 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.coroutines.runBlocking
+import java.time.Instant
 import java.time.Duration
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 
 class TaskDependenciesTest {
+    @Test
+    fun `catalog keeps MusicBrainz tool available but disables calls without contact user agent`() = runBlocking {
+        var requests = 0
+        val config = runtimeConfig(OpportunitySourceMode.External)
+        val catalog = readToolCatalogForExternalSources(
+            config = config,
+            externalHttpClient = externalHttpClient(MockEngine { requests++; respond("""{"releases":[]}""") }),
+            cacheStore = null,
+            webDiscoverySource = null,
+            logger = null,
+        )
+        val outcome = catalog.tool(MusicMetadataKey)!!.execute(
+            buildJsonObject { put("query", "Radiohead") },
+            ReadToolExecutionContext(Instant.parse("2026-09-29T00:00:00Z"), "UTC"),
+        )
+        assertIs<ReadToolOutcome.Unavailable>(outcome)
+        assertEquals(0, requests)
+    }
+
     @Test
     fun `external source wiring keeps web search independent from movie discovery without TMDB`() {
         val catalog = readToolCatalogForExternalSources(
@@ -243,6 +269,8 @@ class TaskDependenciesTest {
         assertEquals("read_tool", entry.component)
         assertEquals("read_tool_catalog_initialized", entry.event)
         assertEquals("10", entry.fields.values["tool_count"])
+        assertEquals("musicbrainz,nominatim,met-no", entry.fields.values["disabled_public_sources"])
+        assertEquals("contact_user_agent_required", entry.fields.values["disabled_reason"])
         assertEquals(
             listOf(
                 MovieDetailsKey.value,
@@ -259,7 +287,7 @@ class TaskDependenciesTest {
                 .joinToString(","),
             entry.fields.values["available_tool_keys"],
         )
-        assertEquals(setOf("tool_count", "available_tool_keys"), entry.fields.values.keys)
+        assertEquals(setOf("tool_count", "available_tool_keys", "disabled_public_sources", "disabled_reason"), entry.fields.values.keys)
     }
 
     @Test

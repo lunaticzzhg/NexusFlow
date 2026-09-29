@@ -17,7 +17,7 @@ import com.nexusflow.backend.feature.task.domain.source.MovieMetadataQuery
 import com.nexusflow.backend.feature.task.domain.source.MovieMetadataSource
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
-import io.ktor.client.call.body
+import com.nexusflow.backend.core.external.externalBody
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import kotlinx.serialization.Serializable
@@ -48,14 +48,14 @@ class OmdbMovieMetadataSource(
             return cached
         }
 
-        val candidates = executeExternalSourceRequest(PROVIDER, "search") {
+        val candidates = executeExternalSourceRequest(logger, PROVIDER, "search") {
             val searchResponse = http.client.get(config.baseUrl) {
                 parameter("apikey", config.apiKey)
                 parameter("s", query.title)
                 parameter("type", "movie")
             }
             searchResponse.rejectKnownExternalSourceStatus(PROVIDER, "search")
-            val search = searchResponse.body<OmdbSearchResponse>()
+            val search = searchResponse.externalBody<OmdbSearchResponse>()
             if (search.response.equals("False", ignoreCase = true)) {
                 emptyList()
             } else {
@@ -76,14 +76,14 @@ class OmdbMovieMetadataSource(
     }
 
     private suspend fun fetchByImdbId(imdbId: String): MovieMetadataCandidate? =
-        executeExternalSourceRequest(PROVIDER, "lookup") {
+        executeExternalSourceRequest(logger, PROVIDER, "lookup") {
             val response = http.client.get(config.baseUrl) {
                 parameter("apikey", config.apiKey)
                 parameter("i", imdbId)
                 parameter("plot", "short")
             }
             response.rejectKnownExternalSourceStatus(PROVIDER, "lookup")
-            response.body<OmdbMovieResponse>().toMovieMetadataCandidate(clock.instant())
+            response.externalBody<OmdbMovieResponse>().toMovieMetadataCandidate(clock.instant())
         }
 
     private fun logAcquisition(

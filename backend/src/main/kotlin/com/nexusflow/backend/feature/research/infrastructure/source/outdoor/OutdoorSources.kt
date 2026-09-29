@@ -8,6 +8,8 @@ import com.nexusflow.backend.core.config.OverpassRuntimeConfig
 import com.nexusflow.backend.core.config.TrailSplitsRuntimeConfig
 import com.nexusflow.backend.core.external.ExternalSourceHttpClient
 import com.nexusflow.backend.core.external.ExternalSourceUnavailableException
+import com.nexusflow.backend.core.external.ExternalSourcePolicyRateLimitedException
+import com.nexusflow.backend.core.external.requirePublicSourceContact
 import com.nexusflow.backend.core.external.SourceCacheCodec
 import com.nexusflow.backend.core.external.SourceCacheKey
 import com.nexusflow.backend.core.external.SourceCacheResultKind
@@ -30,7 +32,7 @@ import com.nexusflow.backend.feature.task.domain.source.WeatherQuery
 import com.nexusflow.backend.feature.task.domain.source.WeatherSource
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
-import io.ktor.client.call.body
+import com.nexusflow.backend.core.external.externalBody
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -51,6 +53,14 @@ import java.time.Instant
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
+import kotlin.math.asin
+import kotlin.math.cos
+import kotlin.math.min
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
+import java.math.BigDecimal
+import java.math.RoundingMode
 
 class OverpassTrailSource(
     private val http: ExternalSourceHttpClient,
@@ -72,13 +82,13 @@ class OverpassTrailSource(
             return cached
         }
 
-        val candidates = executeExternalSourceRequest("overpass", "search") {
+        val candidates = executeExternalSourceRequest(logger, "overpass", "search") {
             val response = http.client.post("${config.baseUrl.trimEnd('/')}/interpreter") {
                 parameter("data", query.toOverpassQuery())
             }
             response.rejectKnownExternalSourceStatus("overpass", "search")
             val observedAt = clock.instant()
-            response.body<OverpassResponse>()
+            response.externalBody<OverpassResponse>()
                 .elements
                 .map { it.toTrailCandidate(observedAt) }
                 .take(MAX_RESULTS)
@@ -120,17 +130,18 @@ class TrailSplitsTrailSource(
             return cached
         }
 
-        val candidates = executeExternalSourceRequest("trailsplits", "search") {
-            val response = http.client.get("${config.baseUrl.trimEnd('/')}/v1/trails/search") {
+        val candidates = executeExternalSourceRequest(logger, "trailsplits", "search") {
+            val response = http.client.get("${config.baseUrl.trimEnd('/')}/trails/v1/search") {
                 parameter("q", query.keyword)
-                query.near?.let { parameter("near", it) }
+                parameter("type", "hiking")
                 parameter("limit", MAX_RESULTS.toString())
             }
             response.rejectKnownExternalSourceStatus("trailsplits", "search")
             val observedAt = clock.instant()
-            response.body<TrailSplitsTrailSearchResponse>()
-                .trails
+            (response.externalBody<TrailSplitsTrailSearchResponse>().features
+                ?: throw IllegalArgumentException("TrailSplits features missing"))
                 .map { it.toTrailCandidate(observedAt) }
+                .filter { candidate -> query.center?.let { center -> candidate.startLocation?.withinMeters(center, query.radiusMeters) == true } ?: true }
                 .take(MAX_RESULTS)
         }
 
@@ -156,7 +167,7 @@ class OpenRouteServicePlaceSource(
             return cached
         }
 
-        val candidates = executeExternalSourceRequest("openrouteservice-geocode", "find") {
+        val candidates = executeExternalSourceRequest(logger, "openrouteservice-geocode", "find") {
             val response = http.client.get("${config.geocodeBaseUrl.trimEnd('/')}/geocode/search") {
                 parameter("api_key", config.apiKey)
                 parameter("text", listOfNotNull(query.text, query.near).joinToString(" "))
@@ -164,7 +175,7 @@ class OpenRouteServicePlaceSource(
             }
             response.rejectKnownExternalSourceStatus("openrouteservice-geocode", "find")
             val observedAt = clock.instant()
-            response.body<OpenRouteServiceGeocodeResponse>()
+            response.externalBody<OpenRouteServiceGeocodeResponse>()
                 .features
                 .map { it.toPlaceCandidate(observedAt) }
                 .take(MAX_RESULTS)
@@ -192,7 +203,9 @@ class NominatimPlaceSource(
             return cached
         }
 
-        val candidates = executeExternalSourceRequest("nominatim", "find") {
+        val candidates = executeExternalSourceRequest(logger, "nominatim", "find") {
+            requirePublicSourceContact(http.userAgent, "nominatim", "find")
+            if (!http.nominatimRequestGate.tryAcquire()) throw ExternalSourcePolicyRateLimitedException("nominatim", "find")
             val response = http.client.get("${config.baseUrl.trimEnd('/')}/search") {
                 parameter("q", listOfNotNull(query.text, query.near).joinToString(" "))
                 parameter("format", "jsonv2")
@@ -200,7 +213,7 @@ class NominatimPlaceSource(
             }
             response.rejectKnownExternalSourceStatus("nominatim", "find")
             val observedAt = clock.instant()
-            response.body<List<NominatimPlaceDto>>()
+            response.externalBody<List<NominatimPlaceDto>>()
                 .map { it.toPlaceCandidate(observedAt) }
                 .take(MAX_RESULTS)
         }
@@ -231,7 +244,7 @@ class OpenRouteServiceRouteSource(
             return cached
         }
 
-        val fact = executeExternalSourceRequest("openrouteservice-route", "route") {
+        val fact = executeExternalSourceRequest(logger, "openrouteservice-route", "route") {
             val response = http.client.post("${config.routingBaseUrl.trimEnd('/')}/v2/directions/foot-hiking") {
                 header(HttpHeaders.Authorization, config.apiKey)
                 contentType(ContentType.Application.Json)
@@ -239,12 +252,13 @@ class OpenRouteServiceRouteSource(
             }
             response.rejectKnownExternalSourceStatus("openrouteservice-route", "route")
             val observedAt = clock.instant()
-            response.body<RouteFeatureCollectionDto>()
-                .features
+            (response.externalBody<OpenRouteServiceRouteResponse>().routes
+                ?: throw IllegalArgumentException("OpenRouteService routes missing"))
                 .firstOrNull()
-                ?.properties
-                ?.summary
-                ?.toRouteFact(observedAt, "openrouteservice-route", "openrouteservice Routing", SourceAuthority.StructuredPrimary)
+                ?.let { route ->
+                    (route.summary ?: throw IllegalArgumentException("OpenRouteService route summary missing"))
+                        .toRouteFact(observedAt, "openrouteservice-route", "openrouteservice Routing", SourceAuthority.StructuredPrimary)
+                }
         }
 
         cacheStore?.put(key, RouteFactNullableCacheCodec.encode(fact), cachePolicy.ttlFor(if (fact == null) SourceCacheResultKind.SuccessEmpty else SourceCacheResultKind.Success))
@@ -273,15 +287,15 @@ class TrailSplitsRouteSource(
             return cached
         }
 
-        val fact = executeExternalSourceRequest("trailsplits", "route") {
-            val response = http.client.get("${config.baseUrl.trimEnd('/')}/v1/routes/hiking") {
-                parameter("to", "${query.destination.latitude},${query.destination.longitude}")
-                query.origin?.let { parameter("from", "${it.latitude},${it.longitude}") }
+        val fact = executeExternalSourceRequest(logger, "trailsplits", "route") {
+            val response = http.client.post("${config.baseUrl.trimEnd('/')}/route/v1") {
+                contentType(ContentType.Application.Json)
+                setBody(query.toTrailSplitsRequestBody())
             }
             response.rejectKnownExternalSourceStatus("trailsplits", "route")
             val observedAt = clock.instant()
-            response.body<TrailSplitsRouteResponse>()
-                .routes
+            (response.externalBody<TrailSplitsRouteResponse>().routes
+                ?: throw IllegalArgumentException("TrailSplits routes missing"))
                 .firstOrNull()
                 ?.toRouteFact(observedAt)
         }
@@ -308,7 +322,7 @@ class OpenMeteoWeatherSource(
             return cached
         }
 
-        val fact = executeExternalSourceRequest("open-meteo", "forecast") {
+        val fact = executeExternalSourceRequest(logger, "open-meteo", "forecast") {
             val response = http.client.get("${config.baseUrl.trimEnd('/')}/v1/forecast") {
                 parameter("latitude", query.point.latitude.toString())
                 parameter("longitude", query.point.longitude.toString())
@@ -316,7 +330,7 @@ class OpenMeteoWeatherSource(
                 parameter("forecast_days", "7")
             }
             response.rejectKnownExternalSourceStatus("open-meteo", "forecast")
-            response.body<OpenMeteoForecastResponse>().toWeatherFactOrNull(clock.instant())
+            response.externalBody<OpenMeteoForecastResponse>().toWeatherFactOrNull(clock.instant())
         }
 
         cacheStore?.put(key, WeatherFactNullableCacheCodec.encode(fact), cachePolicy.ttlFor(if (fact == null) SourceCacheResultKind.SuccessEmpty else SourceCacheResultKind.Success))
@@ -344,12 +358,13 @@ class MetNoWeatherSource(
             return fact
         }
 
-        val fact = executeExternalSourceRequest("met-no", "forecast") {
+        val fact = executeExternalSourceRequest(logger, "met-no", "forecast") {
+            requirePublicSourceContact(userAgent, "met-no", "forecast")
             val response = http.client.get("${config.baseUrl.trimEnd('/')}/weatherapi/locationforecast/2.0/compact") {
                 header(HttpHeaders.UserAgent, userAgent)
                 cached?.lastModified?.let { header(HttpHeaders.IfModifiedSince, it) }
-                parameter("lat", query.point.latitude.toString())
-                parameter("lon", query.point.longitude.toString())
+                parameter("lat", query.point.latitude.toMetCoordinate())
+                parameter("lon", query.point.longitude.toMetCoordinate())
             }
             if (response.status == HttpStatusCode.NotModified) {
                 val refreshed = cached ?: throw ExternalSourceUnavailableException("met-no", "forecast")
@@ -363,7 +378,7 @@ class MetNoWeatherSource(
                 return@executeExternalSourceRequest refreshedFact
             }
             response.rejectKnownExternalSourceStatus("met-no", "forecast")
-            val projected = response.body<MetNoForecastResponse>().toWeatherFactOrNull(clock.instant())
+            val projected = response.externalBody<MetNoForecastResponse>().toWeatherFactOrNull(clock.instant())
             val document = MetNoWeatherCacheDocument.from(
                 fact = projected,
                 expiresAt = response.providerExpiresAt(now, projected.weatherResultKind()),
@@ -454,6 +469,25 @@ private fun RouteQuery.toOpenRouteServiceRequestBody(): String {
     return """
         {"coordinates":[[${start.longitude},${start.latitude}],[${destination.longitude},${destination.latitude}]]}
     """.trimIndent()
+}
+
+private fun RouteQuery.toTrailSplitsRequestBody(): String {
+    val start = requireNotNull(origin) { "TrailSplits routing requires a typed origin" }
+    return """{"locations":[{"lat":${start.latitude},"lon":${start.longitude}},{"lat":${destination.latitude},"lon":${destination.longitude}}],"costing":"pedestrian"}"""
+}
+
+private fun Double.toMetCoordinate(): String =
+    BigDecimal.valueOf(this).setScale(4, RoundingMode.DOWN).stripTrailingZeros().toPlainString()
+
+private fun com.nexusflow.backend.feature.task.domain.source.GeoPoint.withinMeters(
+    center: com.nexusflow.backend.feature.task.domain.source.GeoPoint,
+    radiusMeters: Int,
+): Boolean {
+    val latDifference = Math.toRadians(latitude - center.latitude)
+    val lonDifference = Math.toRadians(longitude - center.longitude)
+    val a = sin(latDifference / 2).pow(2) +
+        cos(Math.toRadians(center.latitude)) * cos(Math.toRadians(latitude)) * sin(lonDifference / 2).pow(2)
+    return 2 * 6_371_000 * asin(min(1.0, sqrt(a))) <= radiusMeters
 }
 
 private fun String.normalized(): String =

@@ -131,7 +131,7 @@ data class BackendRuntimeConfig(
                     ?.also { require(it > 0) { "EXTERNAL_SOURCE_REQUEST_TIMEOUT_MS must be positive" } }
                     ?.let(Duration::ofMillis)
                     ?: Duration.ofSeconds(8),
-                userAgent = environment["EXTERNAL_SOURCE_USER_AGENT"]?.takeIf(String::isNotBlank)
+                userAgent = environment["EXTERNAL_SOURCE_USER_AGENT"]?.trim()?.takeIf(String::isNotBlank)
                     ?: "NexusFlow/0.1",
                 tavily = environment["TAVILY_API_KEY"]
                     ?.takeIf(String::isNotBlank)

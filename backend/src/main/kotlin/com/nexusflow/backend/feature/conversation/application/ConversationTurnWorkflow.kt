@@ -18,6 +18,7 @@ import com.nexusflow.contracts.backendai.conversation.ConversationMessageRole
 import com.nexusflow.contracts.backendai.conversation.ConversationTurnCapability
 import com.nexusflow.contracts.backendai.conversation.ConversationTurnRequest
 import com.nexusflow.contracts.backendai.conversation.ConversationTurnResult
+import com.nexusflow.contracts.backendai.common.InvalidCapabilityResultException
 import com.nexusflow.contracts.backendai.understanding.TurnIntent
 import com.nexusflow.contracts.backendai.understanding.UnderstandingMetadata
 import com.nexusflow.contracts.backendai.understanding.UnderstandMessageResult as AiUnderstandMessageResult
@@ -56,22 +57,43 @@ internal class ConversationTurnWorkflow(
         logTurnStep(context, branch = null, step = "turn_started", outcome = "started")
         var streamingStarted = false
         var firstDeltaLogged = false
-        val result = capability.execute(
-            request = context.toTurnRequest(conversationAnswerService),
-            onAnswerDelta = { delta ->
-                realtimeHub?.let { hub ->
-                    if (!streamingStarted) {
-                        hub.streamingStarted(context.claim.run)
-                        streamingStarted = true
+        val result = try {
+            capability.execute(
+                request = context.toTurnRequest(conversationAnswerService),
+                onAnswerDelta = { delta ->
+                    realtimeHub?.let { hub ->
+                        if (!streamingStarted) {
+                            hub.streamingStarted(context.claim.run)
+                            streamingStarted = true
+                        }
+                        if (!firstDeltaLogged) {
+                            logTurnStep(context, branch = CONVERSATION_BRANCH_DIRECT_ANSWER, step = "first_answer_delta", outcome = "streaming")
+                            firstDeltaLogged = true
+                        }
+                        hub.delta(context.claim.run, delta)
                     }
-                    if (!firstDeltaLogged) {
-                        logTurnStep(context, branch = CONVERSATION_BRANCH_DIRECT_ANSWER, step = "first_answer_delta", outcome = "streaming")
-                        firstDeltaLogged = true
-                    }
-                    hub.delta(context.claim.run, delta)
-                }
-            },
-        )
+                },
+            )
+        } catch (error: InvalidCapabilityResultException) {
+            logger?.warn(
+                component = "conversation_turn",
+                event = "conversation_turn_recovered",
+                fields = logFields {
+                    "response_run_id" value context.claim.run.id.value.toString()
+                    "ai_request_id" value context.userMessage.aiRequestId
+                    "attempt" value context.claim.run.attempt
+                    "failure_category" value "invalid_turn_candidate"
+                    "failure_stage" value error.failureStage
+                    "recovery_action" value "safe_reply"
+                    "recovery_outcome" value "committable_fallback"
+                },
+            )
+            return payloadMapper.conversationAnswerPayload(
+                result = ConversationAnswerResult.invalidAiResult(MessageId(uuidFactory())),
+                detail = context.detail,
+                userMessage = context.userMessage,
+            )
+        }
         return when (result) {
             is ConversationTurnResult.Answer -> {
                 logTurnStep(context, branch = CONVERSATION_BRANCH_DIRECT_ANSWER, step = "turn_answer", outcome = "answer")

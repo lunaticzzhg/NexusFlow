@@ -65,6 +65,9 @@ import com.nexusflow.backend.feature.task.domain.source.WebDiscoverySource
 import com.nexusflow.backend.feature.task.domain.source.WebExtractedPage
 import com.nexusflow.backend.feature.task.domain.source.WebSearchHit
 import com.nexusflow.backend.feature.task.domain.source.WebSearchQuery
+import com.nexusflow.observability.LogFields
+import com.nexusflow.observability.LogLevel
+import com.nexusflow.observability.StructuredLogger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -83,6 +86,42 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ReadToolFoundationTest {
+    @Test
+    fun `executor logs failed tool identity and stage without arguments`() =
+        runBlocking {
+            val key = ReadToolKey("test.failing")
+            val error = IllegalStateException("private provider payload")
+            var loggedFields: LogFields? = null
+            var loggedCause: Throwable? = null
+            val logger = object : StructuredLogger {
+                override fun log(level: LogLevel, component: String, event: String, fields: LogFields, cause: Throwable?) {
+                    if (event == "read_tool_execution_failed") {
+                        assertEquals(LogLevel.ERROR, level)
+                        assertEquals("read_tool", component)
+                        loggedFields = fields
+                        loggedCause = cause
+                    }
+                }
+            }
+            val tool = object : ReadTool {
+                override val definition = ReadToolDefinition(key, "Failing read-only tool.", "No arguments.")
+                override suspend fun execute(proposedArguments: JsonObject, context: ReadToolExecutionContext): ReadToolOutcome = throw error
+            }
+            val executor = ReadToolExecutor(ReadToolCatalog(listOf(tool)), logger = logger)
+            val args = buildJsonObject { put("query", "private search text") }
+
+            assertFailsWith<IllegalStateException> {
+                executor.execute(listOf(ReadToolCall(key, args)), context.copy(responseRunId = "run-123"))
+            }
+
+            assertEquals(error, loggedCause)
+            assertEquals("run-123", loggedFields?.values?.get("response_run_id"))
+            assertEquals("test.failing", loggedFields?.values?.get("tool_key"))
+            assertEquals("1", loggedFields?.values?.get("tool_call_index"))
+            assertEquals("tool_execute", loggedFields?.values?.get("failure_stage"))
+            assertEquals(false, loggedFields?.values.toString().contains("private search text"))
+            assertEquals(false, loggedFields?.values.toString().contains("private provider payload"))
+        }
     private val now = Instant.parse("2026-09-06T00:00:00Z")
     private val context = ReadToolExecutionContext(referenceTime = now, timeZoneId = "Asia/Shanghai")
 

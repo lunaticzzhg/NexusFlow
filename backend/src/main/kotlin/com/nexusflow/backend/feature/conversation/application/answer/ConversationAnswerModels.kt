@@ -167,7 +167,7 @@ private const val MAX_RECENT_MESSAGES = 8
 private const val EXTERNAL_UNAVAILABLE_MESSAGE = "暂时无法获取这项实时资料，请稍后再试。"
 private const val CAPABILITY_UNAVAILABLE_MESSAGE = "当前还没有可用的信息源来查询这项实时资料。"
 private const val AI_UNAVAILABLE_MESSAGE = "暂时无法生成可靠回答，请稍后再试。"
-private const val INVALID_AI_RESULT_MESSAGE = "我暂时无法生成可靠回答，请换个说法再试一次。"
+private const val INVALID_AI_RESULT_MESSAGE = "为了准确回答，请补充你想确认的具体内容或范围。"
 private const val INVALID_TOOL_MESSAGE = "我无法安全使用这项资料来源，请换个说法再试一次。"
 
 private fun MessageRole.historyOrder(): Int =

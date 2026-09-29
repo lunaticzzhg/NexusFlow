@@ -16,7 +16,7 @@ import com.nexusflow.backend.feature.task.domain.source.GeneralSportsEventSource
 import com.nexusflow.backend.feature.research.infrastructure.source.CachedSourceRefDocument
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
-import io.ktor.client.call.body
+import com.nexusflow.backend.core.external.externalBody
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import kotlinx.serialization.Serializable
@@ -46,13 +46,13 @@ class TheSportsDbEventSource(
             return cached
         }
 
-        val candidates = executeExternalSourceRequest(PROVIDER, "search") {
+        val candidates = executeExternalSourceRequest(logger, PROVIDER, "search") {
             val response = http.client.get("${config.baseUrl.trimEnd('/')}/api/v1/json/${config.apiKey}/searchevents.php") {
                 parameter("e", query.keyword)
             }
             response.rejectKnownExternalSourceStatus(PROVIDER, "search")
             val observedAt = clock.instant()
-            response.body<TheSportsDbEventSearchResponse>()
+            response.externalBody<TheSportsDbEventSearchResponse>()
                 .events
                 .orEmpty()
                 .map { it.toGeneralSportsEventCandidate(observedAt) }

@@ -64,16 +64,12 @@ internal data class ConversationDecisionPayload(
 
 @Serializable
 internal data class InformationNeedPayload(
-    @SerialName("id")
-    val id: String,
     @SerialName("question")
     val question: String,
     @SerialName("mode")
     val mode: String,
     @SerialName("toolCalls")
     val toolCalls: List<ReadOnlyToolCallPayload> = emptyList(),
-    @SerialName("requestedCapabilityHint")
-    val requestedCapabilityHint: String? = null,
 )
 
 @Serializable

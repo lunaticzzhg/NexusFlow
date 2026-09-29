@@ -17,7 +17,7 @@ import com.nexusflow.backend.feature.task.domain.source.MovieMetadataQuery
 import com.nexusflow.backend.feature.task.domain.source.MovieMetadataSource
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
-import io.ktor.client.call.body
+import com.nexusflow.backend.core.external.externalBody
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
@@ -49,7 +49,7 @@ class TmdbMovieMetadataSource(
             return cached
         }
 
-        val candidates = executeExternalSourceRequest(PROVIDER, "search") {
+        val candidates = executeExternalSourceRequest(logger, PROVIDER, "search") {
             val response = http.client.get("${config.baseUrl.trimEnd('/')}/search/movie") {
                 bearerAuth(config.apiReadToken)
                 parameter("query", query.title)
@@ -57,7 +57,7 @@ class TmdbMovieMetadataSource(
                 query.language?.let { parameter("language", it) }
             }
             response.rejectKnownExternalSourceStatus(PROVIDER, "search")
-            val searchResponse = response.body<TmdbSearchResponse>()
+            val searchResponse = response.externalBody<TmdbSearchResponse>()
             val observedAt = clock.instant()
             val summaries = searchResponse.results ?: throw IllegalArgumentException("TMDB results missing")
             summaries.take(MAX_RESULTS).mapNotNull { summary ->
@@ -76,12 +76,12 @@ class TmdbMovieMetadataSource(
     }
 
     private suspend fun fetchDetail(movieId: Int): TmdbMovieDetailDto? =
-        executeExternalSourceRequest(PROVIDER, "detail") {
+        executeExternalSourceRequest(logger, PROVIDER, "detail") {
             val response = http.client.get("${config.baseUrl.trimEnd('/')}/movie/$movieId") {
                 bearerAuth(config.apiReadToken)
             }
             response.rejectKnownExternalSourceStatus(PROVIDER, "detail")
-            response.body<TmdbMovieDetailDto>()
+            response.externalBody<TmdbMovieDetailDto>()
         }
 
     private fun logAcquisition(

@@ -76,6 +76,29 @@ class StructuredCapabilityRunnerTest {
         }
 
     @Test
+    fun `preserves provider structured failure stage over operation fallback`() =
+        runBlocking {
+            val runner = StructuredCapabilityRunner(
+                provider = FailingProvider(
+                    InvalidStructuredOutputException(
+                        "provider response was invalid",
+                        failureStage = "invalid_stream_json",
+                    ),
+                ),
+            )
+
+            val error = assertFailsWith<InvalidCapabilityResultException> {
+                runner.execute(
+                    operation = operation(providerInvalidOutputFailureStage = "provider_invalid"),
+                    request = ::request,
+                    decode = { "unused" },
+                )
+            }
+
+            assertEquals("invalid_stream_json", error.failureStage)
+        }
+
+    @Test
     fun `maps provider dependency failures without repair retry`() =
         runBlocking {
             val provider = FailingProvider(ProviderRateLimitedException())

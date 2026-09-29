@@ -37,8 +37,11 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.charsets.TooLongLineException
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerialName
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
@@ -51,7 +54,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.IOException
@@ -196,7 +198,12 @@ internal class OpenAiCompatibleStructuredTransport(
                     logger?.debug(
                         component = AI_COMPONENT,
                         event = "ai_request_finished",
-                        fields = request.safeLogFields(started, result),
+                        fields = request.safeLogFields(
+                            started,
+                            result,
+                            chatToolNameFragmentCount = if (mode == OpenAiCompatibleMode.Responses) null else accumulator.chatToolNameFragmentCount,
+                            firstChatToolNameFragmentMatchesOffered = if (mode == OpenAiCompatibleMode.Responses) null else accumulator.firstChatToolNameFragmentMatchesOffered,
+                        ),
                     )
                 }
             }
@@ -315,6 +322,8 @@ internal class OpenAiCompatibleStructuredTransport(
     private fun TurnModelRequest.safeLogFields(
         started: TimeMark? = null,
         result: TurnModelResult? = null,
+        chatToolNameFragmentCount: Int? = null,
+        firstChatToolNameFragmentMatchesOffered: Boolean? = null,
     ): LogFields {
         val metadata = when (result) {
             is TurnModelResult.Text -> result.metadata
@@ -344,6 +353,13 @@ internal class OpenAiCompatibleStructuredTransport(
             metadata?.usage?.totalTokens?.let { "total_tokens" value it }
             metadata?.finishCategory?.let { "finish_category" value it.name.toSnakeCase() }
             metadata?.providerRequestId?.let { "provider_request_id" value it }
+            if (result is TurnModelResult.ToolCall) {
+                "turn_result_type" value "tool_call"
+                "tool_name_chars" value result.name.length
+                "tool_name_matches_offered" value tools.any { it.name == result.name }
+                chatToolNameFragmentCount?.let { "tool_name_fragment_count" value it }
+                firstChatToolNameFragmentMatchesOffered?.let { "first_tool_name_fragment_matches_offered" value it }
+            }
         }
     }
 
@@ -359,7 +375,11 @@ internal class OpenAiCompatibleStructuredTransport(
             }
             else -> emptyMap()
         }
-        return LogFields.from(values + ("failure_category" to failureCategory) + safeDiagnostics)
+        val failureStage = (failure as? InvalidStructuredOutputException)?.failureStage
+        return LogFields.from(
+            values + ("failure_category" to failureCategory) + safeDiagnostics +
+                (failureStage?.let { mapOf("failure_stage" to it) } ?: emptyMap()),
+        )
     }
 
     private fun decodeResponses(
@@ -369,7 +389,7 @@ internal class OpenAiCompatibleStructuredTransport(
         val response = try {
             json.decodeFromString<OpenAiResponsesResponse>(body)
         } catch (error: SerializationException) {
-            throw InvalidStructuredOutputException("Provider response envelope was not valid structured output", error)
+            throw InvalidStructuredOutputException("Provider response envelope was not valid structured output", error, failureStage = "invalid_response_envelope")
         }
         response.output
             .flatMap { it.content }
@@ -380,7 +400,7 @@ internal class OpenAiCompatibleStructuredTransport(
             ?: response.output
                 .flatMap { it.content }
                 .firstNotNullOfOrNull { content -> content.text?.takeIf(String::isNotBlank) }
-            ?: throw InvalidStructuredOutputException("Provider response did not contain structured output text")
+            ?: throw InvalidStructuredOutputException("Provider response did not contain structured output text", failureStage = "missing_output_text")
         return StructuredModelResult(
             outputText = outputText,
             metadata = StructuredModelResultMetadata(
@@ -402,15 +422,15 @@ internal class OpenAiCompatibleStructuredTransport(
         val response = try {
             json.decodeFromString<OpenAiChatCompletionResponse>(body)
         } catch (error: SerializationException) {
-            throw InvalidStructuredOutputException("Provider response envelope was not valid structured output", error)
+            throw InvalidStructuredOutputException("Provider response envelope was not valid structured output", error, failureStage = "invalid_response_envelope")
         }
         val choice = response.choices.firstOrNull()
-            ?: throw InvalidStructuredOutputException("Provider response did not contain a chat completion choice")
+            ?: throw InvalidStructuredOutputException("Provider response did not contain a chat completion choice", failureStage = "missing_chat_choice")
         if (!choice.message.refusal.isNullOrBlank() || choice.finishReason == "content_filter") {
             throw ProviderRefusedException()
         }
         val outputText = choice.message.content?.takeIf(String::isNotBlank)
-            ?: throw InvalidStructuredOutputException("Provider response did not contain structured output text")
+            ?: throw InvalidStructuredOutputException("Provider response did not contain structured output text", failureStage = "missing_output_text")
         return StructuredModelResult(
             outputText = outputText,
             metadata = StructuredModelResultMetadata(
@@ -438,12 +458,24 @@ internal class OpenAiCompatibleStructuredTransport(
         }
         try {
             while (true) {
-                val line = body.readUTF8Line() ?: break
+                val line = try {
+                    body.readUTF8Line(MAX_SSE_EVENT_CHARS + 1)
+                } catch (error: TooLongLineException) {
+                    throw InvalidStructuredOutputException("Provider stream event exceeded the maximum length", failureStage = "stream_event_too_large")
+                } ?: break
+                if (line.length > MAX_SSE_EVENT_CHARS) {
+                    throw InvalidStructuredOutputException("Provider stream event exceeded the maximum length", failureStage = "stream_event_too_large")
+                }
                 if (line.isBlank()) {
                     flushData()
                 } else if (line.startsWith("data:")) {
-                    if (dataBuffer.isNotEmpty()) dataBuffer.append('\n')
-                    dataBuffer.append(line.removePrefix("data:").trimStart())
+                    val data = line.removePrefix("data:").trimStart()
+                    val separatorLength = if (dataBuffer.isEmpty()) 0 else 1
+                    if (dataBuffer.length + separatorLength + data.length > MAX_SSE_EVENT_CHARS) {
+                        throw InvalidStructuredOutputException("Provider stream event exceeded the maximum length", failureStage = "stream_event_too_large")
+                    }
+                    if (separatorLength != 0) dataBuffer.append('\n')
+                    dataBuffer.append(data)
                 }
             }
             flushData()
@@ -513,24 +545,24 @@ internal class OpenAiCompatibleStructuredTransport(
             onDelta: suspend (String) -> Unit,
         ) {
             val event = try {
-                json.decodeFromString<JsonElement>(payload).jsonObject
+                json.decodeFromString<JsonElement>(payload).streamEventObject()
             } catch (error: SerializationException) {
-                throw InvalidStructuredOutputException("Provider stream event was not valid JSON", error)
+                throw InvalidStructuredOutputException("Provider stream event was not valid JSON", error, failureStage = "invalid_stream_json")
             }
-            event["id"]?.jsonPrimitive?.contentOrNull?.let { providerRequestId = it }
+            event["id"]?.streamEventPrimitive()?.contentOrNull?.let { providerRequestId = it }
             event["usage"]?.toUsageOrNull()?.let { usage = it }
             event["response"]?.jsonObjectOrNull()?.let { response ->
-                response["id"]?.jsonPrimitive?.contentOrNull?.let { providerRequestId = it }
+                response["id"]?.streamEventPrimitive()?.contentOrNull?.let { providerRequestId = it }
                 response["usage"]?.toUsageOrNull()?.let { usage = it }
             }
-            val type = event["type"]?.jsonPrimitive?.contentOrNull
+            val type = event["type"]?.streamEventPrimitive()?.contentOrNull
             if (type != null) {
                 if ("refusal" in type || type == "response.refused") throw ProviderRefusedException()
                 if (type == "response.failed" || type == "error") {
                     throw ProviderUnavailableException()
                 }
                 if (type.contains("function_call") || type == "response.output_item.added") {
-                    throw InvalidStructuredOutputException("Provider text stream emitted a tool call")
+                    throw InvalidStructuredOutputException("Provider text stream emitted a tool call", failureStage = "unexpected_tool_call")
                 }
                 if (type == "response.output_text.delta") {
                     event["delta"]?.jsonPrimitiveOrNull()?.contentOrNull?.let { emit(it, onDelta) }
@@ -544,17 +576,17 @@ internal class OpenAiCompatibleStructuredTransport(
                 }
             }
             event["choices"]?.jsonArrayOrNull()?.forEach { choiceElement ->
-                val choice = choiceElement.jsonObject
+                val choice = choiceElement.streamEventObject()
                 val choiceIndex = choice["index"]?.jsonPrimitiveOrNull()?.contentOrNull
                 if (choiceIndex != null && choiceIndex != "0") {
-                    throw InvalidStructuredOutputException("Provider emitted multiple chat choices")
+                    throw InvalidStructuredOutputException("Provider emitted multiple chat choices", failureStage = "multiple_chat_choices")
                 }
-                val finishReason = choice["finish_reason"]?.jsonPrimitive?.contentOrNull
+                val finishReason = choice["finish_reason"]?.streamEventPrimitive()?.contentOrNull
                 if (finishReason == "content_filter") throw ProviderRefusedException()
                 val delta = choice["delta"]?.jsonObjectOrNull()
                 if (delta?.get("refusal") != null) throw ProviderRefusedException()
                 if (delta?.get("tool_calls") != null || finishReason == "tool_calls") {
-                    throw InvalidStructuredOutputException("Provider text stream emitted a tool call")
+                    throw InvalidStructuredOutputException("Provider text stream emitted a tool call", failureStage = "unexpected_tool_call")
                 }
                 finishReason?.toFinishCategory()?.let {
                     finishCategory = it
@@ -562,7 +594,7 @@ internal class OpenAiCompatibleStructuredTransport(
                 }
                 delta
                     ?.get("content")
-                    ?.jsonPrimitive
+                    ?.streamEventPrimitive()
                     ?.contentOrNull
                     ?.let { emit(it, onDelta) }
             }
@@ -574,10 +606,10 @@ internal class OpenAiCompatibleStructuredTransport(
         fun result(): TextModelResult {
             val category = finishCategory
             if (!sawCompleted || category != StructuredModelFinishCategory.Complete) {
-                throw InvalidStructuredOutputException("Provider stream ended before a complete answer")
+                throw InvalidStructuredOutputException("Provider stream ended before a complete answer", failureStage = "incomplete_stream")
             }
             if (text.isBlank()) {
-                throw InvalidStructuredOutputException("Provider stream did not contain answer text")
+                throw InvalidStructuredOutputException("Provider stream did not contain answer text", failureStage = "missing_output_text")
             }
             return TextModelResult(
                 outputText = text.toString(),
@@ -599,7 +631,7 @@ internal class OpenAiCompatibleStructuredTransport(
         ) {
             if (delta.isEmpty()) return
             if (text.length + delta.length > MAX_STREAM_TEXT_CHARS) {
-                throw InvalidStructuredOutputException("Provider stream text exceeded the maximum length")
+                throw InvalidStructuredOutputException("Provider stream text exceeded the maximum length", failureStage = "text_length_exceeded")
             }
             text.append(delta)
             onDelta(delta)
@@ -611,6 +643,11 @@ internal class OpenAiCompatibleStructuredTransport(
     ) {
         private val text = StringBuilder()
         private val toolArguments = StringBuilder()
+        private val chatToolName = StringBuilder()
+        var chatToolNameFragmentCount: Int = 0
+            private set
+        var firstChatToolNameFragmentMatchesOffered: Boolean? = null
+            private set
         private var providerRequestId: String? = null
         private var usage: StructuredModelUsage? = null
         private var finishCategory: StructuredModelFinishCategory? = null
@@ -625,19 +662,19 @@ internal class OpenAiCompatibleStructuredTransport(
             onTextDelta: suspend (String) -> Unit,
         ) {
             val event = try {
-                json.decodeFromString<JsonElement>(payload).jsonObject
+                json.decodeFromString<JsonElement>(payload).streamEventObject()
             } catch (error: SerializationException) {
-                throw InvalidStructuredOutputException("Provider stream event was not valid JSON", error)
+                throw InvalidStructuredOutputException("Provider stream event was not valid JSON", error, failureStage = "invalid_stream_json")
             }
-            event["id"]?.jsonPrimitive?.contentOrNull?.let { providerRequestId = it }
+            event["id"]?.streamEventPrimitive()?.contentOrNull?.let { providerRequestId = it }
             event["usage"]?.toUsageOrNull()?.let { usage = it }
             event["response"]?.jsonObjectOrNull()?.let { response ->
-                response["id"]?.jsonPrimitive?.contentOrNull?.let { providerRequestId = it }
+                response["id"]?.streamEventPrimitive()?.contentOrNull?.let { providerRequestId = it }
                 response["usage"]?.toUsageOrNull()?.let { usage = it }
             }
-            val type = event["type"]?.jsonPrimitive?.contentOrNull
+            val type = event["type"]?.streamEventPrimitive()?.contentOrNull
             if (type != null) consumeResponsesEvent(type, event, onTextDelta)
-            event["choices"]?.jsonArrayOrNull()?.forEach { choiceElement -> consumeChatChoice(choiceElement.jsonObject, onTextDelta) }
+            event["choices"]?.jsonArrayOrNull()?.forEach { choiceElement -> consumeChatChoice(choiceElement.streamEventObject(), onTextDelta) }
         }
 
         private suspend fun consumeResponsesEvent(
@@ -653,8 +690,8 @@ internal class OpenAiCompatibleStructuredTransport(
                 "response.output_text.delta" -> emitText(event["delta"]?.jsonPrimitiveOrNull()?.contentOrNull.orEmpty(), onTextDelta)
                 "response.output_item.added" -> {
                     val item = event["item"]?.jsonObjectOrNull() ?: return
-                    val itemType = item["type"]?.jsonPrimitive?.contentOrNull
-                    val name = item["name"]?.jsonPrimitive?.contentOrNull
+                    val itemType = item["type"]?.streamEventPrimitive()?.contentOrNull
+                    val name = item["name"]?.streamEventPrimitive()?.contentOrNull
                     val identity = event.responsesToolIdentity(item)
                     if (itemType == "function_call" && !name.isNullOrBlank()) startTool(name, identity.key, identity.providerId)
                 }
@@ -670,11 +707,11 @@ internal class OpenAiCompatibleStructuredTransport(
                     event["arguments"]?.jsonPrimitiveOrNull()?.contentOrNull?.let { doneArguments ->
                         if (toolArguments.isBlank()) {
                             if (doneArguments.length > MAX_TOOL_ARGUMENT_CHARS) {
-                                throw InvalidStructuredOutputException("Provider tool arguments exceeded the maximum length")
+                                throw InvalidStructuredOutputException("Provider tool arguments exceeded the maximum length", failureStage = "tool_arguments_length_exceeded")
                             }
                             toolArguments.append(doneArguments)
                         } else if (toolArguments.toString() != doneArguments) {
-                            throw InvalidStructuredOutputException("Provider tool arguments done event did not match streamed arguments")
+                            throw InvalidStructuredOutputException("Provider tool arguments done event did not match streamed arguments", failureStage = "tool_arguments_mismatch")
                         }
                     }
                 }
@@ -692,9 +729,9 @@ internal class OpenAiCompatibleStructuredTransport(
         ) {
             val choiceIndex = choice["index"]?.jsonPrimitiveOrNull()?.contentOrNull
             if (choiceIndex != null && choiceIndex != "0") {
-                throw InvalidStructuredOutputException("Provider emitted multiple chat choices")
+                throw InvalidStructuredOutputException("Provider emitted multiple chat choices", failureStage = "multiple_chat_choices")
             }
-            val finishReason = choice["finish_reason"]?.jsonPrimitive?.contentOrNull
+            val finishReason = choice["finish_reason"]?.streamEventPrimitive()?.contentOrNull
             if (finishReason == "content_filter") throw ProviderRefusedException()
             finishReason?.toFinishCategory()?.let {
                 finishCategory = it
@@ -708,12 +745,31 @@ internal class OpenAiCompatibleStructuredTransport(
             if (delta["refusal"] != null) throw ProviderRefusedException()
             delta["content"]?.jsonPrimitiveOrNull()?.contentOrNull?.let { emitText(it, onTextDelta) }
             delta["tool_calls"]?.jsonArrayOrNull()?.forEach { element ->
-                val call = element.jsonObject
-                val identity = call.chatToolIdentity()
+                val call = element.streamEventObject()
+                val toolIndex = call["index"]?.jsonPrimitiveOrNull()?.contentOrNull
+                    ?: throw InvalidStructuredOutputException("Provider chat tool call was missing an index", failureStage = "missing_tool_index")
+                val identity = "chat-choice:${choiceIndex ?: "0"}:tool-index:$toolIndex"
+                validateToolIdentity(identity, null)
+                if (branch == TurnBranch.Text) {
+                    throw InvalidStructuredOutputException("Provider mixed a tool call with text", failureStage = "mixed_text_and_tool")
+                }
+                branch = TurnBranch.Tool
+                toolIdentity = identity
                 call["function"]?.jsonObjectOrNull()?.let { function ->
-                    function["name"]?.jsonPrimitiveOrNull()?.contentOrNull?.let { startTool(it, identity.key, identity.providerId) }
+                    function["name"]?.jsonPrimitiveOrNull()?.contentOrNull?.let { nameFragment ->
+                        if (chatToolName.length + nameFragment.length > MAX_TOOL_NAME_CHARS) {
+                            throw InvalidStructuredOutputException("Provider tool name exceeded the maximum length", failureStage = "tool_name_length_exceeded")
+                        }
+                        if (nameFragment.isNotEmpty()) {
+                            if (chatToolNameFragmentCount == 0) {
+                                firstChatToolNameFragmentMatchesOffered = request.tools.any { it.name == nameFragment }
+                            }
+                            chatToolNameFragmentCount++
+                        }
+                        chatToolName.append(nameFragment)
+                    }
                     function["arguments"]?.jsonPrimitiveOrNull()?.contentOrNull?.let {
-                        emitToolArguments(it, identity.key, identity.providerId)
+                        emitToolArguments(it, identity, null)
                     }
                 }
             }
@@ -722,7 +778,7 @@ internal class OpenAiCompatibleStructuredTransport(
         fun result(): TurnModelResult {
             val category = finishCategory
             if (!sawCompleted || category != StructuredModelFinishCategory.Complete) {
-                throw InvalidStructuredOutputException("Provider stream ended before a complete turn result")
+                throw InvalidStructuredOutputException("Provider stream ended before a complete turn result", failureStage = "incomplete_stream")
             }
             val metadata = TurnModelResultMetadata(
                 provider = provider,
@@ -735,16 +791,17 @@ internal class OpenAiCompatibleStructuredTransport(
             )
             return when (branch) {
                 TurnBranch.Text -> {
-                    if (text.isBlank()) throw InvalidStructuredOutputException("Provider turn text was blank")
+                    if (text.isBlank()) throw InvalidStructuredOutputException("Provider turn text was blank", failureStage = "missing_output_text")
                     TurnModelResult.Text(text.toString(), metadata)
                 }
                 TurnBranch.Tool -> {
-                    val name = toolName ?: throw InvalidStructuredOutputException("Provider tool call was missing a name")
+                    val name = if (chatToolName.isNotEmpty()) chatToolName.toString() else toolName
+                    if (name.isNullOrBlank()) throw InvalidStructuredOutputException("Provider tool call was missing a name", failureStage = "missing_tool_name")
                     val arguments = toolArguments.toString().trim()
-                    if (arguments.isBlank()) throw InvalidStructuredOutputException("Provider tool call arguments were blank")
+                    if (arguments.isBlank()) throw InvalidStructuredOutputException("Provider tool call arguments were blank", failureStage = "missing_tool_arguments")
                     TurnModelResult.ToolCall(name, arguments, metadata)
                 }
-                null -> throw InvalidStructuredOutputException("Provider turn stream did not contain text or a tool call")
+                null -> throw InvalidStructuredOutputException("Provider turn stream did not contain text or a tool call", failureStage = "missing_turn_output")
             }
         }
 
@@ -754,10 +811,10 @@ internal class OpenAiCompatibleStructuredTransport(
         ) {
             if (delta.isEmpty()) return
             if (branch == TurnBranch.Tool) {
-                throw InvalidStructuredOutputException("Provider mixed text with a tool call")
+                throw InvalidStructuredOutputException("Provider mixed text with a tool call", failureStage = "mixed_text_and_tool")
             }
             if (text.length + delta.length > MAX_STREAM_TEXT_CHARS) {
-                throw InvalidStructuredOutputException("Provider turn text exceeded the maximum length")
+                throw InvalidStructuredOutputException("Provider turn text exceeded the maximum length", failureStage = "text_length_exceeded")
             }
             branch = TurnBranch.Text
             text.append(delta)
@@ -771,17 +828,17 @@ internal class OpenAiCompatibleStructuredTransport(
         ) {
             if (name.isBlank()) return
             if (branch == TurnBranch.Text) {
-                throw InvalidStructuredOutputException("Provider mixed a tool call with text")
+                throw InvalidStructuredOutputException("Provider mixed a tool call with text", failureStage = "mixed_text_and_tool")
             }
             val normalizedIdentity = identity ?: "single"
             if (toolIdentity != null && toolIdentity != normalizedIdentity) {
-                throw InvalidStructuredOutputException("Provider emitted multiple tool calls")
+                throw InvalidStructuredOutputException("Provider emitted multiple tool calls", failureStage = "multiple_tool_calls")
             }
             if (providerId != null && toolProviderId != null && toolProviderId != providerId) {
-                throw InvalidStructuredOutputException("Provider changed tool call identity")
+                throw InvalidStructuredOutputException("Provider changed tool call identity", failureStage = "tool_identity_changed")
             }
             if (toolName != null && toolName != name) {
-                throw InvalidStructuredOutputException("Provider emitted multiple tool calls")
+                throw InvalidStructuredOutputException("Provider emitted multiple tool calls", failureStage = "multiple_tool_calls")
             }
             branch = TurnBranch.Tool
             toolName = name
@@ -795,12 +852,12 @@ internal class OpenAiCompatibleStructuredTransport(
             providerId: String?,
         ) {
             if (branch == TurnBranch.Text) {
-                throw InvalidStructuredOutputException("Provider mixed tool arguments with text")
+                throw InvalidStructuredOutputException("Provider mixed tool arguments with text", failureStage = "mixed_text_and_tool")
             }
             validateToolIdentity(identity, providerId)
             if (delta.isEmpty()) return
             if (toolArguments.length + delta.length > MAX_TOOL_ARGUMENT_CHARS) {
-                throw InvalidStructuredOutputException("Provider tool arguments exceeded the maximum length")
+                throw InvalidStructuredOutputException("Provider tool arguments exceeded the maximum length", failureStage = "tool_arguments_length_exceeded")
             }
             branch = TurnBranch.Tool
             toolIdentity = identity ?: toolIdentity ?: "single"
@@ -814,19 +871,12 @@ internal class OpenAiCompatibleStructuredTransport(
         ) {
             val normalizedIdentity = identity ?: toolIdentity ?: "single"
             if (toolIdentity != null && toolIdentity != normalizedIdentity) {
-                throw InvalidStructuredOutputException("Provider emitted multiple tool calls")
+                throw InvalidStructuredOutputException("Provider emitted multiple tool calls", failureStage = "multiple_tool_calls")
             }
             if (providerId != null && toolProviderId != null && toolProviderId != providerId) {
-                throw InvalidStructuredOutputException("Provider changed tool call identity")
+                throw InvalidStructuredOutputException("Provider changed tool call identity", failureStage = "tool_identity_changed")
             }
         }
-
-        private fun JsonObject.chatToolIdentity(): ToolEventIdentity =
-            ToolEventIdentity(
-                key = this["index"]?.jsonPrimitiveOrNull()?.contentOrNull?.let { "chat-index:$it" }
-                    ?: this["id"]?.jsonPrimitiveOrNull()?.contentOrNull?.let { "chat-id:$it" },
-                providerId = this["id"]?.jsonPrimitiveOrNull()?.contentOrNull,
-            )
 
         private fun JsonObject.responsesToolIdentity(item: JsonObject? = null): ToolEventIdentity =
             ToolEventIdentity(
@@ -884,6 +934,8 @@ private fun StructuredModelCapability.toLogOperation(): String =
 private const val AI_COMPONENT = "ai"
 private const val MAX_STREAM_TEXT_CHARS = 24_000
 private const val MAX_TOOL_ARGUMENT_CHARS = 16_000
+private const val MAX_TOOL_NAME_CHARS = 256
+private const val MAX_SSE_EVENT_CHARS = 256 * 1024
 private const val MAX_PROVIDER_ERROR_BODY_CHARS = 4_096
 
 private fun OpenAiCompatibleMode.body(
@@ -961,6 +1013,7 @@ private fun OpenAiCompatibleMode.streamingBody(
                     OpenAiChatMessage(role = "user", content = userPayload),
                 ),
                 stream = true,
+                streamOptions = OpenAiChatStreamOptions(includeUsage = true),
                 enableThinking = enableThinking,
             )
         }
@@ -992,6 +1045,7 @@ private fun OpenAiCompatibleMode.turnStreamingBody(
                     OpenAiChatMessage(role = "user", content = userPayload),
                 ),
                 stream = true,
+                streamOptions = OpenAiChatStreamOptions(includeUsage = true),
                 tools = request.tools.map { it.toChatTool() },
                 toolChoice = "auto",
                 parallelToolCalls = false,
@@ -1046,6 +1100,20 @@ private fun String?.toFinishCategory(): StructuredModelFinishCategory =
 
 private fun JsonElement.jsonObjectOrNull(): JsonObject? =
     this as? JsonObject
+
+private fun JsonElement.streamEventPrimitive(): JsonPrimitive =
+    this as? JsonPrimitive
+        ?: throw InvalidStructuredOutputException(
+            "Provider stream event field was not a primitive",
+            failureStage = "invalid_stream_event_shape",
+        )
+
+private fun JsonElement.streamEventObject(): JsonObject =
+    this as? JsonObject
+        ?: throw InvalidStructuredOutputException(
+            "Provider stream event item was not an object",
+            failureStage = "invalid_stream_event_shape",
+        )
 
 private fun JsonElement.jsonArrayOrNull() =
     runCatching { jsonArray }.getOrNull()
@@ -1163,6 +1231,7 @@ private data class OpenAiOutputContent(
 )
 
 @Serializable
+@OptIn(ExperimentalSerializationApi::class)
 private data class OpenAiChatCompletionRequest(
     @SerialName("model")
     val model: String,
@@ -1172,6 +1241,9 @@ private data class OpenAiChatCompletionRequest(
     val responseFormat: OpenAiChatResponseFormat? = null,
     @SerialName("stream")
     val stream: Boolean? = null,
+    @SerialName("stream_options")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val streamOptions: OpenAiChatStreamOptions? = null,
     @SerialName("tools")
     val tools: List<OpenAiChatTool>? = null,
     @SerialName("tool_choice")
@@ -1180,6 +1252,12 @@ private data class OpenAiChatCompletionRequest(
     val parallelToolCalls: Boolean? = null,
     @SerialName("enable_thinking")
     val enableThinking: Boolean? = null,
+)
+
+@Serializable
+private data class OpenAiChatStreamOptions(
+    @SerialName("include_usage")
+    val includeUsage: Boolean,
 )
 
 @Serializable

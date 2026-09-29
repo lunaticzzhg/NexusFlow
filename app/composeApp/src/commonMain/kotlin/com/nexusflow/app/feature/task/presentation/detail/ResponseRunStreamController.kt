@@ -228,7 +228,10 @@ internal class ResponseRunStreamController(
                     connection = _state.value.connection,
                 )
                 _events.emit(ResponseRunControllerEvent.SnapshotResolved(snapshot))
-                if (reconnectAfterSnapshot && snapshot.run.status.isOpenForStreaming()) {
+                if (snapshot.run.status == ResponseRunStatus.FailedRetryable) {
+                    closeSessionOnly()
+                    startSnapshotFallback(generationAtStart, conversationId, runId)
+                } else if (reconnectAfterSnapshot && snapshot.run.status.isOpenForStreaming()) {
                     connect(generationAtStart, conversationId, runId)
                 } else {
                     closeSessionOnly()
@@ -408,7 +411,7 @@ internal class ResponseRunStreamController(
                 is ResponseRunEventPayload.Delta -> nextBase.copy(partialText = nextBase.partialText + payload.text)
                 is ResponseRunEventPayload.Completed -> nextBase.copy(terminalStatus = ResponseRunStatus.Completed)
                 is ResponseRunEventPayload.Failed ->
-                    nextBase.copy(terminalStatus = if (payload.retryable) ResponseRunStatus.FailedRetryable else ResponseRunStatus.Failed)
+                    nextBase.copy(terminalStatus = if (payload.retryable) null else ResponseRunStatus.Failed)
                 ResponseRunEventPayload.Cancelled -> nextBase.copy(terminalStatus = ResponseRunStatus.Cancelled)
                 ResponseRunEventPayload.TimedOut -> nextBase.copy(terminalStatus = ResponseRunStatus.TimedOut)
                 is ResponseRunEventPayload.Snapshot -> {
@@ -426,7 +429,20 @@ internal class ResponseRunStreamController(
                 connection = _state.value.connection,
             )
             activeRunId?.let(::recoverTerminalSnapshot)
+        } else if ((envelope.payload as? ResponseRunEventPayload.Failed)?.retryable == true) {
+            activeRunId?.let(::recoverRetryableSnapshot)
         }
+    }
+
+    private fun recoverRetryableSnapshot(runId: ResponseRunId) {
+        val conversationId = activeConversationId ?: return
+        if (activeRunId != runId) return
+        val currentGeneration = generation
+        recoveryJob?.cancel()
+        recoveryJob =
+            scope.launch {
+                recoverSnapshotAndConnect(currentGeneration, conversationId, runId, reconnectAfterSnapshot = true)
+            }
     }
 
     private fun applySnapshot(snapshot: ResponseRunSnapshot) {
@@ -521,6 +537,13 @@ internal class ResponseRunStreamController(
                                 connection = _state.value.connection,
                             )
                             _events.emit(ResponseRunControllerEvent.SnapshotResolved(snapshot))
+                            if (snapshot.run.status != ResponseRunStatus.FailedRetryable &&
+                                snapshot.run.status.isOpenForStreaming()
+                            ) {
+                                snapshotFallbackJob = null
+                                connect(generationAtStart, conversationId, runId)
+                                return@launch
+                            }
                         },
                         onFailure = {
                             if (!isCurrent(generationAtStart, conversationId, runId)) return@fold
@@ -738,9 +761,9 @@ private fun ResponseRunStatus.isOpenForStreaming(): Boolean =
         ResponseRunStatus.Queued,
         ResponseRunStatus.Processing,
         ResponseRunStatus.Streaming,
+        ResponseRunStatus.FailedRetryable,
         -> true
         ResponseRunStatus.Completed,
-        ResponseRunStatus.FailedRetryable,
         ResponseRunStatus.Failed,
         ResponseRunStatus.TimedOut,
         ResponseRunStatus.Cancelled,

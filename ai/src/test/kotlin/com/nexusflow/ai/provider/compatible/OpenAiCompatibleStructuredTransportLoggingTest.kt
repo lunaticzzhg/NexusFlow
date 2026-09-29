@@ -194,6 +194,157 @@ class OpenAiCompatibleStructuredTransportLoggingTest {
         }
 
     @Test
+    fun `invalid structured output logs only a fixed failure stage`() =
+        runBlocking {
+            val logger = RecordingLogger()
+            val transport = transport(
+                logger = logger,
+                engine = MockEngine {
+                    respond(
+                        content = """{"choices":[{"message":{"content":" "},"finish_reason":"stop"}],"raw":"secret response"}""",
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+                },
+            )
+
+            val error = assertFailsWith<com.nexusflow.ai.provider.InvalidStructuredOutputException> {
+                transport.generate(request())
+            }
+
+            assertEquals("missing_output_text", error.failureStage)
+            val failure = logger.entries.last()
+            assertEquals("ai_request_failed", failure.event)
+            assertEquals("missing_output_text", failure.fields["failure_stage"])
+            assertEquals("invalid_structured_output", failure.fields["failure_category"])
+            assertNoSensitiveLogContent(logger)
+            assertFalse(failure.fields.toString().contains("secret response"))
+        }
+
+    @Test
+    fun `non object stream event logs fixed shape stage`() =
+        runBlocking {
+            val logger = RecordingLogger()
+            val transport = transport(
+                logger = logger,
+                engine = MockEngine {
+                    respond(
+                        content = "data: [\"private model text\"]\n\n",
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "text/event-stream"),
+                    )
+                },
+            )
+
+            val error = assertFailsWith<com.nexusflow.ai.provider.InvalidStructuredOutputException> {
+                transport.streamTurn(turnRequest()) { }
+            }
+
+            assertEquals("invalid_stream_event_shape", error.failureStage)
+            assertEquals(listOf("ai_request_started", "ai_request_failed"), logger.entries.map { it.event })
+            val failure = logger.entries.last()
+            assertEquals("invalid_structured_output", failure.fields["failure_category"])
+            assertEquals("invalid_stream_event_shape", failure.fields["failure_stage"])
+            assertFalse(failure.fields.toString().contains("private model text"))
+            assertNoSensitiveLogContent(logger)
+        }
+
+    @Test
+    fun `empty chat tool call id does not log identity conflict`() =
+        runBlocking {
+            val logger = RecordingLogger()
+            val transport = transport(
+                logger = logger,
+                engine = MockEngine {
+                    respond(
+                        content = """
+                            data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"first-secret-id","function":{"name":"research","arguments":"{\"q\""}}]}}]}
+
+                            data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","function":{"arguments":":\"private text\"}"}}]}}]}
+
+                            data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+                        """.trimIndent(),
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "text/event-stream"),
+                    )
+                },
+            )
+
+            transport.streamTurn(turnRequest()) { }
+
+            assertEquals(listOf("ai_request_started", "ai_request_finished"), logger.entries.map { it.event })
+            val finished = logger.entries.last().fields
+            assertEquals("tool_call", finished["turn_result_type"])
+            assertEquals("8", finished["tool_name_chars"])
+            assertEquals("1", finished["tool_name_fragment_count"])
+            assertEquals("true", finished["tool_name_matches_offered"])
+            assertEquals("true", finished["first_tool_name_fragment_matches_offered"])
+            assertFalse(logger.entries.any { it.level == LogLevel.WARN })
+            assertFalse(logger.entries.toString().contains("first-secret-id"))
+            assertFalse(logger.entries.toString().contains("private text"))
+            assertNoSensitiveLogContent(logger)
+        }
+
+    @Test
+    fun `unknown streamed tool name logs only safe diagnostics`() = runBlocking {
+        val logger = RecordingLogger()
+        val transport = transport(
+            logger = logger,
+            engine = MockEngine {
+                respond(
+                    content = """
+                        data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"research","arguments":"{"}}]}}]}
+
+                        data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"private_tool_name","arguments":"}"}}]}}]}
+
+                        data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+                    """.trimIndent(),
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "text/event-stream"),
+                )
+            },
+        )
+
+        transport.streamTurn(turnRequest()) { }
+
+        val finished = logger.entries.last().fields
+        assertEquals("tool_call", finished["turn_result_type"])
+        assertEquals("25", finished["tool_name_chars"])
+        assertEquals("2", finished["tool_name_fragment_count"])
+        assertEquals("false", finished["tool_name_matches_offered"])
+        assertEquals("true", finished["first_tool_name_fragment_matches_offered"])
+        assertFalse(logger.entries.toString().contains("private_tool_name"))
+        assertNoSensitiveLogContent(logger)
+    }
+
+    @Test
+    fun `oversized stream event logs fixed stage without raw payload`() = runBlocking {
+        val logger = RecordingLogger()
+        val transport = transport(
+            logger = logger,
+            engine = MockEngine {
+                respond(
+                    content = "data: " + "private SSE payload".repeat(16_000) + "\n\n",
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "text/event-stream"),
+                )
+            },
+        )
+
+        val error = assertFailsWith<com.nexusflow.ai.provider.InvalidStructuredOutputException> {
+            transport.streamTurn(turnRequest()) { }
+        }
+
+        assertEquals("stream_event_too_large", error.failureStage)
+        assertEquals(listOf("ai_request_started", "ai_request_failed"), logger.entries.map { it.event })
+        assertEquals("stream_event_too_large", logger.entries.last().fields["failure_stage"])
+        assertFalse(logger.entries.toString().contains("private SSE payload"))
+        assertNoSensitiveLogContent(logger)
+    }
+
+    @Test
     fun `does not infer retry events from attempt numbers`() =
         runBlocking {
             val logger = RecordingLogger()
@@ -261,6 +412,7 @@ class OpenAiCompatibleStructuredTransportLoggingTest {
             transport.generate(request())
 
             assertTrue(requestBody.contains(""""enable_thinking":false"""))
+            assertFalse(requestBody.contains("stream_options"))
         }
 
     private fun transport(

@@ -98,7 +98,7 @@ class StructuredCapabilityRunner(
             is InvalidStructuredOutputException -> InvalidCapabilityResultException(
                 message = message ?: operation.providerInvalidOutputFallbackMessage,
                 cause = this,
-                failureStage = operation.providerInvalidOutputFailureStage,
+                failureStage = failureStage ?: operation.providerInvalidOutputFailureStage,
             )
             else -> CapabilityUnavailableException(this)
         }

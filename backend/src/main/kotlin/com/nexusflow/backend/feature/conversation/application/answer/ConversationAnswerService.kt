@@ -6,6 +6,7 @@ import com.nexusflow.backend.feature.research.application.ReadToolExecutor
 import com.nexusflow.contracts.backendai.answer.ConversationAnsweringCapability
 import com.nexusflow.contracts.backendai.answer.StreamingConversationAnsweringCapability
 import com.nexusflow.contracts.backendai.conversation.InformationNeedProposal
+import com.nexusflow.contracts.backendai.conversation.InformationNeedMode
 import com.nexusflow.contracts.backendai.conversation.ReadOnlyToolDefinitionPayload
 import com.nexusflow.observability.StructuredLogger
 import com.nexusflow.observability.logFields
@@ -55,7 +56,10 @@ class ConversationAnswerService(
     ): ConversationAnswerResult {
         val validatedNeeds = validator.validateInformationNeeds(
             com.nexusflow.contracts.backendai.conversation.ConversationDecisionResult(needs),
-        ) ?: return ConversationAnswerResult.invalidAiResult(request.assistantMessageId)
+        ) ?: run {
+            logSafeFallback(request, "invalid_information_needs", needs.size)
+            return ConversationAnswerResult.invalidAiResult(request.assistantMessageId)
+        }
         val research = try {
             researchCoordinator.execute(request, validatedNeeds)
         } catch (_: IllegalArgumentException) {
@@ -64,15 +68,41 @@ class ConversationAnswerService(
         // The current decision contract exposes information needs only, so MODEL_ONLY still uses answer synthesis.
         val answer = when (val generated = answerStep.generate(request, validatedNeeds, research)) {
             ConversationAnswerStepResult.AiUnavailable -> return ConversationAnswerResult.aiUnavailable(request.assistantMessageId)
-            ConversationAnswerStepResult.InvalidAiResult -> return ConversationAnswerResult.invalidAiResult(request.assistantMessageId)
+            ConversationAnswerStepResult.InvalidAiResult -> {
+                logSafeFallback(request, "invalid_answer_output", validatedNeeds.size)
+                return ConversationAnswerResult.invalidAiResult(request.assistantMessageId)
+            }
             is ConversationAnswerStepResult.Success -> generated.answer
         }
         logAnswerGenerated(request, answer.answer.length, research.size)
         return if (validator.validateNeedCoverage(answer, validatedNeeds, research)) {
             validator.resultFromAnswer(request, answer, validatedNeeds, research)
+        } else if (answer.answer.isNotBlank() &&
+            validatedNeeds.all { it.mode == InformationNeedMode.MODEL_ONLY } &&
+            research.all { it.evidence.isEmpty() }
+        ) {
+            logSafeFallback(request, "coverage_metadata_ignored", validatedNeeds.size)
+            ConversationAnswerResult.assistant(request.assistantMessageId, answer.answer.trim())
         } else {
+            logSafeFallback(request, "invalid_answer_coverage", validatedNeeds.size)
             ConversationAnswerResult.invalidAiResult(request.assistantMessageId)
         }
+    }
+
+    private fun logSafeFallback(request: ConversationAnswerTurnRequest, stage: String, needCount: Int) {
+        logger?.warn(
+            component = "answer",
+            event = "conversation_answer_recovered",
+            fields = logFields {
+                "response_run_id" value request.operationLogContext?.operationId
+                "ai_request_id" value request.aiRequestId
+                "failure_stage" value stage
+                "failure_category" value "invalid_ai_result"
+                "information_need_count" value needCount
+                "recovery_action" value if (stage == "coverage_metadata_ignored") "accept_model_only_answer" else "safe_clarification"
+                "recovery_outcome" value if (stage == "coverage_metadata_ignored") "answered" else "committable_fallback"
+            },
+        )
     }
 
     private fun logStarted(request: ConversationAnswerTurnRequest) {

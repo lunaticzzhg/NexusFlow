@@ -90,18 +90,11 @@ class StructuredConversationDecision(
             )
         }
         val offeredToolKeys = request.availableReadTools.mapTo(linkedSetOf()) { tool -> tool.toolKey }
-        val needs = informationNeeds.map { payload ->
-            val id = payload.id.trim()
+        val needs = informationNeeds.mapIndexed { index, payload ->
+            val id = "need-${index + 1}"
             val question = payload.question.trim()
             val mode = payload.mode.toInformationNeedMode()
             val proposals = payload.toolCalls.toToolProposals(offeredToolKeys)
-            val hint = payload.requestedCapabilityHint?.trim()?.takeIf(String::isNotBlank)
-            if (id.isBlank() || id.length > MAX_NEED_ID_CHARS) {
-                throw RepairableConversationDecisionException(
-                    ConversationDecisionFailureStage.InvalidInformationNeed,
-                    "Conversation decision contained an invalid information need id",
-                )
-            }
             if (question.isBlank() || question.length > MAX_NEED_QUESTION_CHARS) {
                 throw RepairableConversationDecisionException(
                     ConversationDecisionFailureStage.InvalidInformationNeed,
@@ -110,21 +103,14 @@ class StructuredConversationDecision(
             }
             when (mode) {
                 InformationNeedMode.MODEL_ONLY -> {
-                    if (proposals.isNotEmpty() || hint != null) {
+                    if (proposals.isNotEmpty()) {
                         throw RepairableConversationDecisionException(
                             ConversationDecisionFailureStage.InvalidModeCombination,
                             "MODEL_ONLY information needs must not include tool calls or capability hints",
                         )
                     }
                 }
-                InformationNeedMode.TOOL_REQUIRED -> {
-                    if (proposals.isEmpty() && hint == null) {
-                        throw RepairableConversationDecisionException(
-                            ConversationDecisionFailureStage.InvalidModeCombination,
-                            "TOOL_REQUIRED information needs without tool calls must include requestedCapabilityHint",
-                        )
-                    }
-                }
+                InformationNeedMode.TOOL_REQUIRED -> Unit
                 InformationNeedMode.TOOL_ENHANCED -> Unit
             }
             InformationNeedProposal(
@@ -132,7 +118,7 @@ class StructuredConversationDecision(
                 question = question,
                 mode = mode,
                 toolCalls = proposals,
-                requestedCapabilityHint = hint,
+                requestedCapabilityHint = null,
             )
         }
         val duplicateNeedId = needs.groupBy { need -> need.id }.entries.firstOrNull { it.value.size > 1 }?.key
@@ -205,9 +191,9 @@ class StructuredConversationDecision(
             Use model_only for greetings, thanks, conceptual explanations, coding concept explanations, stable advice, and other parts that do not require real-time, local, latest, availability, showtime, event, credential, or external facts.
             Use tool_enhanced when external facts would improve specificity or freshness but a useful lower-specificity answer still exists without them.
             Use tool_required when the need itself must be confirmed from current, local, private, latest, availability, price, schedule, showtime, score, event, weather, or external facts.
-            For model_only needs, set toolCalls to an empty array and requestedCapabilityHint to null.
+            For model_only needs, set toolCalls to an empty array.
             For tool_required needs with a suitable offered tool, propose the minimum read-only tool calls needed.
-            For tool_required needs without a suitable offered tool, set toolCalls to an empty array and requestedCapabilityHint to a short diagnostic capability label.
+            For tool_required needs without a suitable offered tool, set toolCalls to an empty array.
             For tool_enhanced needs, propose useful minimum tool calls when a suitable offered tool exists; otherwise leave toolCalls empty without rejecting the whole turn.
             Choose toolKey values only from coreContext.availableReadTools[].toolKey. Do not invent tool keys.
             Do not choose an unrelated tool just to satisfy the schema; for example, do not use weather.forecast for sports fixtures.
@@ -284,7 +270,6 @@ class StructuredConversationDecision(
 }
 
 private const val MAX_ATTEMPTS = 2
-private const val MAX_NEED_ID_CHARS = 80
 private const val MAX_NEED_QUESTION_CHARS = 500
 
 private val CONVERSATION_DECISION_OPERATION = StructuredCapabilityOperation(
